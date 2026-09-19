@@ -1,0 +1,98 @@
+[
+  {
+    "file": "cristal-start.wav",
+    "seconds": 0.48,
+    "peak": 0.26807505085069955,
+    "rms": 0.065
+  },
+  {
+    "file": "cristal-stop.wav",
+    "seconds": 0.48,
+    "peak": 0.27358676046196057,
+    "rms": 0.065
+  },
+  {
+    "file": "gota-start.wav",
+    "seconds": 0.26,
+    "peak": 0.24100880163934288,
+    "rms": 0.065
+  },
+  {
+    "file": "gota-stop.wav",
+    "seconds": 0.26,
+    "peak": 0.24885960996390893,
+    "rms": 0.065
+  },
+  {
+    "file": "madera-start.wav",
+    "seconds": 0.24,
+    "peak": 0.3324332893523517,
+    "rms": 0.065
+  },
+  {
+    "file": "madera-stop.wav",
+    "seconds": 0.24,
+    "peak": 0.3442709935719466,
+    "rms": 0.065
+  },
+  {
+    "file": "seda-start.wav",
+    "seconds": 0.55,
+    "peak": 0.236734327912766,
+    "rms": 0.065
+  },
+  {
+    "file": "seda-stop.wav",
+    "seconds": 0.55,
+    "peak": 0.2414254576545388,
+    "rms": 0.065
+  },
+  {
+    "file": "pulso-start.wav",
+    "seconds": 0.3,
+    "peak": 0.22041663679964243,
+    "rms": 0.065
+  },
+  {
+    "file": "pulso-stop.wav",
+    "seconds": 0.3,
+    "peak": 0.2199400317904152,
+    "rms": 0.065
+  },
+  {
+    "file": "orbita-start.wav",
+    "seconds": 0.46,
+    "peak": 0.25975187830961577,
+    "rms": 0.065
+  },
+  {
+    "file": "orbita-stop.wav",
+    "seconds": 0.46,
+    "peak": 0.24722229491341097,
+    "rms": 0.065
+  },
+  {
+    "file": "tecla-start.wav",
+    "seconds": 0.18,
+    "peak": 0.38,
+    "rms": 0.06178749097503199
+  },
+  {
+    "file": "tecla-stop.wav",
+    "seconds": 0.18,
+    "peak": 0.38,
+    "rms": 0.05855156082111665
+  },
+  {
+    "file": "destello-start.wav",
+    "seconds": 0.58,
+    "peak": 0.24338044138609638,
+    "rms": 0.065
+  },
+  {
+    "file": "destello-stop.wav",
+    "seconds": 0.58,
+    "peak": 0.226411914511434,
+    "rms": 0.065
+  }
+]

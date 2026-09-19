@@ -1,0 +1,16 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "jsx": "react-jsx",
+    "strict": true,
+    "skipLibCheck": true,
+    "esModuleInterop": true,
+    "noEmit": true,
+    "baseUrl": ".",
+    "paths": { "@/*": ["./vendor/*"], "react": ["./node_modules/@types/react"], "react/*": ["./node_modules/@types/react/*"], "motion/react": ["./node_modules/motion/dist/react.d.ts"], "clsx": ["./node_modules/clsx"], "tailwind-merge": ["./node_modules/tailwind-merge"] }
+  },
+  "include": ["src", "vite.config.ts"]
+}

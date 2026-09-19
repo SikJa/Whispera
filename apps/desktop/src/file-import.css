@@ -1,0 +1,13 @@
+.file-import { max-width:700px; margin:auto; padding:24px; color:#eeedf1; font-family:'Instrument Sans Variable',sans-serif; text-align:center; }
+.file-import header { display:flex; justify-content:space-between; align-items:center; gap:20px; }
+.file-import header a { display:flex; gap:6px; align-items:center; color:#bdb8c9; font-size:12px; text-decoration:none; }
+.file-import h1 { font-size:18px; letter-spacing:0; margin:0; }
+.import-folder { height:290px; display:flex; justify-content:center; align-items:flex-end; padding-bottom:22px; }
+.import-status { font-size:12px; color:#aba5b6; margin:12px; }
+.import-primary { display:flex; align-items:center; justify-content:center; gap:8px; margin:18px auto 8px; width:220px; height:44px; border-radius:8px; background:#efedf2; border:0; color:#1d1a22; box-shadow:0 4px 16px #0005; }
+.import-edit { display:inline-flex; gap:5px; align-items:center; background:transparent; border:0; color:#c4bdce; font-size:12px; padding:10px; }
+.import-drop { padding:18px; margin:20px auto; max-width:300px; border:1px dashed #47424d; border-radius:8px; font-size:12px; color:#9e96ad; }
+.file-import textarea { display:block; width:100%; min-height:220px; margin-top:20px; padding:16px; border:1px solid #46404d; background:#18161d; color:#eee; border-radius:8px; font:14px/1.65 'Instrument Sans Variable',sans-serif; }
+.file-import [role=alert] { color:#efadb3; font-size:13px; }
+.rule-tools { display:flex; gap:2px; }
+.desktop-app .rule-row { grid-template-columns: minmax(0,1fr) minmax(0,1.2fr) 50px 76px; }

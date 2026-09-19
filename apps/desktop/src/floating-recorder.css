@@ -1,0 +1,28 @@
+:root[data-floating="true"], :root[data-floating="true"] body, :root[data-floating="true"] #root { background: transparent !important; margin: 0; width: 100%; height: 100%; min-width: 0; overflow: hidden; }
+.floating-recorder { position: relative; width: 520px; height: 520px; max-width: none; margin: 0; padding: 0; background: transparent; user-select: none; font-family: 'Instrument Sans Variable', sans-serif; }
+.float-rig { position: absolute; left: 100px; top: 220px; width: 321px; height: 270px; transform: scale(.78); transform-origin: top left; cursor: grab; }
+.float-rig:active { cursor: grabbing; }
+.float-readout { position: absolute; left: 24px; bottom: 27px; z-index: 8; color: var(--folder-ink); pointer-events: none; text-shadow: 0 1px 8px #0002; }
+.float-readout > span { display: flex; align-items: center; gap: 5px; height: 18px; font-size: 10px; }
+.float-readout i { width: 5px; height: 5px; border-radius: 50%; background: currentColor; }
+.float-readout i[data-phase="recording"] { background: #ff5f62; }
+.float-readout output { display: block; margin-top: 5px; font-size: 25px; font-variant-numeric: tabular-nums; }
+.float-actions { position: absolute; right: 18px; bottom: 27px; z-index: 9; display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; width: 168px; }
+.float-actions button { width: 36px; height: 36px; padding: 7px; display: grid; place-items: center; color: var(--folder-ink); border: 1px solid #ffffff50; border-radius: 12px; background: color-mix(in srgb, var(--folder-color) 30%, transparent); box-shadow: inset 0 1px #ffffff38,0 3px 9px #0002; backdrop-filter: blur(8px); transition: background var(--duration-quick, 150ms) ease, transform var(--duration-quick, 150ms) ease; }
+.float-actions button:hover { background: color-mix(in srgb, var(--folder-color) 65%, white 15%); }
+.float-actions button:active { transform: scale(.94); }
+.float-actions svg { width: 18px; height: 18px; }
+.float-actions button:disabled { opacity: .4; cursor: default; }
+.float-rig .glass-control:focus-visible, .float-actions button:focus-visible { outline: 2px solid var(--folder-ink); outline-offset: 2px; }
+.float-error { position: absolute; left: 24px; top: 276px; display: flex; align-items: center; gap: 6px; width: 275px; border: 1px solid #ffffff30; background: #201718ed; color: #ffd6d0; padding: 8px 10px; border-radius: 8px; font-size: 11px; text-align: left; }
+.float-error span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.float-rig .control-tooltip { display: none; }
+.float-cancel { position:absolute; left:20px; top:145px; z-index:30; width:280px; padding:12px; border-radius:12px; background:#18151ff2; color:#fff; box-shadow:0 6px 24px #0007; }
+.float-cancel span { display:block; margin-bottom:8px; font-size:13px; }
+.float-cancel button { padding:8px; border:0; border-radius:7px; background:#ebe9ef; color:#18151f; font-size:11px; margin-right:5px; }
+.float-rig { --folder-edge-opacity: .62; --folder-back-edge: inset 0 0 5px 1px #ffffff30; }
+.float-rig .folder-controls .glass-control:not([aria-pressed="true"]) { border-color: color-mix(in srgb, var(--custom-edge, #ffffff) 38%, transparent); box-shadow: none; }
+.float-rig .folder-controls .glass-control[aria-hidden="true"] { border-color: transparent; }
+.float-actions button { border-color: #ffffff30; box-shadow: 0 3px 9px #0002; }
+.float-actions button:hover, .float-rig .glass-control:hover { filter:brightness(1.08); box-shadow:0 4px 12px #0003; }
+@media (prefers-reduced-motion: reduce) { .float-actions button { transition: none; } }

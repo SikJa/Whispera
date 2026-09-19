@@ -1,0 +1,22 @@
+.setup-shell { width:min(620px,100%); margin:0 auto; min-height:100dvh; padding:28px; box-sizing:border-box; display:flex; flex-direction:column; color:#f2f0f5; background:#101011; font-family:'Instrument Sans Variable',sans-serif; }
+.setup-shell header { display:flex; align-items:center; gap:12px; }
+.setup-shell header strong { font-size:23px; }
+.setup-shell header select { margin-left:auto; width:auto; }
+.setup-shell nav { display:flex; flex-wrap:wrap; gap:12px; padding:24px 0; font-size:12px; color:#96929d; }
+.setup-shell nav [aria-current] { color:#c5a7f5; }
+.setup-step { flex:1; animation:setup-enter 160ms ease-out; }
+.setup-step h1 { font-size:26px; line-height:1.2; margin:18px 0; }
+.setup-step p { font-size:15px; line-height:1.65; color:#c0bcc6; overflow-wrap:anywhere; }
+.setup-step label { display:block; margin-top:16px; margin-bottom:7px; }
+.setup-shell input:not([type=checkbox]),.setup-shell select { box-sizing:border-box; max-width:100%; padding:10px; border:1px solid #45414b; border-radius:8px; color:#eee; background:#1c1b1f; }
+.setup-step input:not([type=checkbox]), .setup-step select { width:100%; }
+.setup-shell button { display:inline-flex; align-items:center; justify-content:center; gap:8px; padding:10px 14px; margin-top:12px; background:#e9e5ef; color:#19171c; border:0; border-radius:8px; cursor:pointer; }
+.setup-shell button:disabled { opacity:.45; cursor:default; }
+.setup-shell :focus-visible { outline:2px solid #bb97ec; outline-offset:3px; }
+.setup-shell footer { display:flex; justify-content:space-between; gap:12px; padding-top:24px; }
+.setup-step .setup-check { display:flex; align-items:center; gap:10px; line-height:1.4; }
+.setup-error { color:#ffb8b8; overflow-wrap:anywhere; }
+.setup-shell kbd { font-size:18px; overflow-wrap:anywhere; }
+@keyframes setup-enter { from { opacity:0; transform:translateY(6px); } to { opacity:1; transform:translateY(0); } }
+@media(max-width:460px) { .setup-shell { padding:20px; } .setup-step h1 {font-size:23px;} }
+@media(prefers-reduced-motion:reduce) { .setup-step {animation:none;} }

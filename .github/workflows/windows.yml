@@ -1,0 +1,39 @@
+name: Windows beta
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: apps/desktop/package-lock.json
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Check source
+        run: node scripts/check-source.mjs
+      - name: Install frontend dependencies
+        working-directory: apps/desktop
+        run: npm ci
+      - name: Rust tests
+        working-directory: apps/desktop/src-tauri
+        run: cargo test --locked
+      - name: Build installer
+        working-directory: apps/desktop
+        run: npm run tauri build -- --bundles nsis
+      - name: Checksums
+        shell: pwsh
+        run: Get-ChildItem apps/desktop/src-tauri/target/release/bundle/nsis/*.exe | ForEach-Object { "$((Get-FileHash $_.FullName -Algorithm SHA256).Hash)  $($_.Name)" } | Out-File apps/desktop/src-tauri/target/release/bundle/nsis/SHA256SUMS.txt -Encoding ascii
+      - uses: actions/upload-artifact@v4
+        with:
+          name: whispera-windows-x64-unsigned
+          path: apps/desktop/src-tauri/target/release/bundle/nsis/
+          retention-days: 14

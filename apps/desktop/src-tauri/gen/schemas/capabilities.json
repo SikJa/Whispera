@@ -1,0 +1,1 @@
+{"main-window":{"identifier":"main-window","description":"Local settings window and native file selection only.","local":true,"windows":["main","recorder","details","import"],"permissions":["core:default","core:window:allow-start-dragging","core:window:allow-hide","dialog:allow-open"]}}

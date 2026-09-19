@@ -1,5 +1,5 @@
 use cpal::traits::{DeviceTrait, HostTrait};
-use tauri::{Manager, State};
+use tauri::State;
 use tauri_plugin_autostart::ManagerExt;
 use crate::{groq, storage::Store};
 

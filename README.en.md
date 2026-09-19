@@ -39,6 +39,7 @@ It shows up as a **transparent floating folder** on top of any window. Record, t
 |---|---|
 | 🎨 **Customizable folder** | Color, scale, control placement, animations |
 | ⏸️ **Pause & cancel** | With confirmation and system audio restore |
+| 📂 **Transcribe files** | Open an audio file and transcribe it without recording |
 | 📖 **Personal dictionary** | Names and terms the recognizer should respect |
 | 📋 **History** | Every transcription, editable and copyable |
 | 🔊 **Sounds** | Custom start/stop themes (cristal, marimba, pop…) |
@@ -59,6 +60,61 @@ It shows up as a **transparent floating folder** on top of any window. Record, t
 | ✅ | **Ready** — Whispera minimizes to the tray, ready to dictate |
 
 4. Click a text field, press `Ctrl+Shift+Space`, speak, and press again
+
+---
+
+### 🔑 How to get your Groq key (step by step)
+
+<details>
+<summary>See guide with screenshots</summary>
+
+<br/>
+
+**Step 1 — Create a Groq account**
+
+Go to [console.groq.com](https://console.groq.com) and sign up with Google or your email. It's free.
+
+<img src="docs/groq-setup/01-login.png" width="520" alt="GroqCloud login page" />
+
+<br/><br/>
+
+**Step 2 — Go to API Keys**
+
+Once logged in, click **API Keys** in the navigation menu.
+
+<img src="docs/groq-setup/02-api-keys.png" width="520" alt="Groq API Keys page" />
+
+<br/><br/>
+
+**Step 3 — Create a new key**
+
+Click the **Create API Key** button.
+
+<img src="docs/groq-setup/03-create-key.png" width="520" alt="Create API Key button" />
+
+<br/><br/>
+
+**Step 4 — Name your key**
+
+Type a name for your key (e.g. "Whispera") and confirm.
+
+<img src="docs/groq-setup/04-name-key.png" width="520" alt="Name dialog for the API Key" />
+
+<br/><br/>
+
+**Step 5 — Copy the key**
+
+Your key is shown only once. Copy it and paste it in Whispera. It starts with `gsk_`.
+
+<img src="docs/groq-setup/05-copy-key.png" width="520" alt="Generated API key to copy" />
+
+<br/><br/>
+
+> ⚠️ **Important:** the key is not shown again. If you lose it, create a new one.
+
+</details>
+
+---
 
 ## What each user configures
 

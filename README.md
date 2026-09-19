@@ -39,6 +39,7 @@ Aparece como una **carpeta flotante transparente** sobre cualquier ventana. Grab
 |---|---|
 | 🎨 **Carpeta personalizable** | Color, escala, posición de controles, animaciones |
 | ⏸️ **Pausa y cancelación** | Con confirmación y restauración del audio del sistema |
+| 📂 **Transcribir archivos** | Abrí un audio desde el explorador y transcribilo sin grabar |
 | 📖 **Diccionario personal** | Nombres y términos que el reconocimiento tiene que respetar |
 | 📋 **Historial** | Todas tus transcripciones, editables y copiables |
 | 🔊 **Sonidos** | Temas de inicio/fin personalizables (cristal, marimba, pop…) |
@@ -59,6 +60,61 @@ Aparece como una **carpeta flotante transparente** sobre cualquier ventana. Grab
 | ✅ | **Listo** — Whispera se minimiza a la bandeja, lista para dictar |
 
 4. Hacé clic en un campo de texto, pulsá `Ctrl+Shift+Space`, hablá, y pulsá de nuevo
+
+---
+
+### 🔑 Cómo obtener tu clave de Groq (paso a paso)
+
+<details>
+<summary>Ver guía con imágenes</summary>
+
+<br/>
+
+**Paso 1 — Crear una cuenta en Groq**
+
+Andá a [console.groq.com](https://console.groq.com) y registrate con Google o tu email. Es gratis.
+
+<img src="docs/groq-setup/01-login.png" width="520" alt="Página de login de GroqCloud" />
+
+<br/><br/>
+
+**Paso 2 — Ir a API Keys**
+
+Una vez adentro, hacé clic en **API Keys** en el menú de navegación.
+
+<img src="docs/groq-setup/02-api-keys.png" width="520" alt="Página de API Keys en Groq" />
+
+<br/><br/>
+
+**Paso 3 — Crear una nueva clave**
+
+Hacé clic en el botón **Create API Key**.
+
+<img src="docs/groq-setup/03-create-key.png" width="520" alt="Botón Create API Key" />
+
+<br/><br/>
+
+**Paso 4 — Ponerle un nombre**
+
+Escribí un nombre para identificar tu clave (por ejemplo "Whispera") y confirmá.
+
+<img src="docs/groq-setup/04-name-key.png" width="520" alt="Dialog para nombrar la API Key" />
+
+<br/><br/>
+
+**Paso 5 — Copiar la clave**
+
+Tu clave aparece una sola vez. Copiala y pegala en Whispera. Empieza con `gsk_`.
+
+<img src="docs/groq-setup/05-copy-key.png" width="520" alt="Clave API generada para copiar" />
+
+<br/><br/>
+
+> ⚠️ **Importante:** la clave no se vuelve a mostrar. Si la perdés, podés crear una nueva.
+
+</details>
+
+---
 
 ## Qué configura cada persona
 

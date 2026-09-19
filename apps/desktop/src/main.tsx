@@ -82,6 +82,37 @@ function SettingsApp() {
           <div className="form-row"><label htmlFor="model">Modelo</label><select id="model" value={data.settings.model} onChange={e => patch({ model: e.target.value })}><option value="whisper-large-v3-turbo">Whisper Large v3 Turbo</option><option value="whisper-large-v3">Whisper Large v3</option></select></div>
           <div className="form-row"><label htmlFor="language">Idioma del audio</label><select id="language" value={data.settings.language} onChange={e => patch({ language: e.target.value })}><option value="es">Español</option><option value="en">English</option><option value="pt">Português</option><option value="auto">Detectar automáticamente</option></select></div>
           <h3>Conexión</h3><div className="key-line"><label htmlFor="key">Clave API de Groq <span>Almacenada en Windows</span></label><div><input id="key" type="password" autoComplete="off" value={key} placeholder={data.keyConfigured ? "••••••••••••••••" : "gsk_…"} onChange={e => setKey(e.target.value)} /><Button variant="secondary" size="lg" disabled={busy || !key || !api.native} onClick={() => run(async () => { await api.saveKey(key); setKey(""); }, "Clave guardada en el almacén de Windows")}>Guardar clave</Button></div></div>
+          
+          <details className="groq-guide">
+            <summary>¿Cómo obtener tu clave de Groq?</summary>
+            <div className="groq-guide-content">
+              <div className="guide-step">
+                <strong>1. Crear una cuenta</strong>
+                <p>Ingresá a <a href="https://console.groq.com" target="_blank" rel="noreferrer">console.groq.com</a> y registrate (es gratis).</p>
+                <img src="/groq-setup/01-login.png" alt="Login GroqCloud" />
+              </div>
+              <div className="guide-step">
+                <strong>2. Ir a API Keys</strong>
+                <p>En el menú lateral, hacé clic en la sección API Keys.</p>
+                <img src="/groq-setup/02-api-keys.png" alt="API Keys" />
+              </div>
+              <div className="guide-step">
+                <strong>3. Crear una nueva clave</strong>
+                <p>Hacé clic en el botón "Create API Key".</p>
+                <img src="/groq-setup/03-create-key.png" alt="Create Key" />
+              </div>
+              <div className="guide-step">
+                <strong>4. Ponerle nombre</strong>
+                <p>Dale un nombre para identificarla (ej. Whispera).</p>
+                <img src="/groq-setup/04-name-key.png" alt="Name Key" />
+              </div>
+              <div className="guide-step">
+                <strong>5. Copiar la clave</strong>
+                <p>Copiala y pegala acá arriba. Empieza con <code>gsk_</code> y no se vuelve a mostrar.</p>
+                <img src="/groq-setup/05-copy-key.png" alt="Copy Key" />
+              </div>
+            </div>
+          </details>
 
           <h3>Al terminar</h3><div className="form-row"><label htmlFor="copy">Copiar automáticamente<span>El texto queda en tu portapapeles.</span></label><SettingsSwitch id="copy" label="Copiar al finalizar" checked={data.settings.autoCopy} onChange={checked => patch({ autoCopy: checked })} /></div>
           <div className="form-row"><label htmlFor="paste">Pegar en el destino original</label><SettingsSwitch id="paste" label="Pegar al finalizar dictado" checked={data.settings.autoPaste} onChange={checked=>patch({autoPaste:checked})}/></div>

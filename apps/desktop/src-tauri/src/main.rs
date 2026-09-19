@@ -283,12 +283,13 @@ fn main() {
             if let Err(e) = shortcuts::register(app.handle(), &settings.hotkey) {
                 let _ = app.state::<Store>().event(&e);
             }
-            use tauri::menu::{Menu, MenuItem};
+            use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
             let show = MenuItem::with_id(app, "settings", "Configuracion", true, None::<&str>)?;
-            let quit =
-                MenuItem::with_id(app, "quit", "Salir / Quit Whispera", true, None::<&str>)?;
             let record = MenuItem::with_id(app, "recorder", "Abrir grabadora", true, None::<&str>)?;
-            let menu = Menu::with_items(app, &[&record, &show, &quit])?;
+            let import = MenuItem::with_id(app, "import", "Transcribir archivo...", true, None::<&str>)?;
+            let quit = MenuItem::with_id(app, "quit", "Salir / Quit Whispera", true, None::<&str>)?;
+            let sep = PredefinedMenuItem::separator(app)?;
+            let menu = Menu::with_items(app, &[&record, &import, &show, &sep, &quit])?;
             tauri::tray::TrayIconBuilder::new()
                 .icon(app.default_window_icon().unwrap().clone())
                 .tooltip("Whispera")
@@ -304,6 +305,12 @@ fn main() {
                         let app = app.clone();
                         tauri::async_runtime::spawn_blocking(move || {
                             let _ = show_recorder(app);
+                        });
+                    }
+                    "import" => {
+                        let app = app.clone();
+                        tauri::async_runtime::spawn_blocking(move || {
+                            let _ = open_import(app);
                         });
                     }
                     "quit" => {

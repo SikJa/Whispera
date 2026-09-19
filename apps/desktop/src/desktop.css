@@ -55,6 +55,18 @@
 .key-line > div { display: flex; gap: 9px; align-items: center; }
 .key-line input { flex: 1; width: 0; }
 .key-line button { font-size: 12px; min-height: 40px; padding-inline: 13px; }
+
+.groq-guide { margin-top: 16px; background: #171b15; border-radius: 8px; overflow: hidden; font-size: 13px; }
+.groq-guide summary { padding: 12px 16px; font-weight: 500; cursor: pointer; color: #d5e0cc; display: flex; align-items: center; outline: none; }
+.groq-guide summary:hover { background: rgba(255, 255, 255, 0.03); }
+.groq-guide-content { padding: 8px 16px 20px; display: flex; flex-direction: column; gap: 20px; }
+.guide-step strong { display: block; margin-bottom: 4px; color: #e8e9df; }
+.guide-step p { margin: 0 0 10px; font-size: 12px; color: #848d79; }
+.guide-step a { color: var(--accent); text-decoration: none; }
+.guide-step a:hover { text-decoration: underline; }
+.guide-step img { max-width: 100%; border-radius: 6px; border: 1px solid #23281f; }
+.guide-step code { background: #23281f; padding: 2px 6px; border-radius: 4px; font-family: monospace; }
+
 .page-actions { margin-top: 25px; }
 .page-actions button { font-size: 12px; }
 .notice { display: flex; justify-content: space-between; align-items: center; gap: 12px; background: #1f251c; color: #d5e0cc; padding: 10px 12px; border-radius: 8px; font-size: 12px; margin-bottom: 16px; overflow-wrap: anywhere; }

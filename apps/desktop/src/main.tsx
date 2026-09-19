@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { Dialog, Modal, ModalOverlay } from "react-aria-components";
-import { AudioLines, BookOpen, Palette, Keyboard, History, Activity, ArrowUpRight, Search, Plus, Trash2, Check, Upload, X, Paintbrush, Download } from "lucide-react";
+import { AudioLines, BookOpen, Palette, Keyboard, History, Activity, ArrowUpRight, Search, Plus, Trash2, Check, Upload, X, Paintbrush, HelpCircle, ExternalLink } from "lucide-react";
 import { CopyButton, SaveButton, SectionReveal, SettingsSwitch } from "./ResourceControls";
 import { Button } from "../vendor/components/ui/button";
 import "@fontsource-variable/instrument-sans";
@@ -46,6 +46,7 @@ function SettingsApp() {
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
   const [key, setKey] = useState("");
+  const [showKeyGuide, setShowKeyGuide] = useState(false);
   const [search, setSearch] = useState("");
   const [source, setSource] = useState("");
   const [target, setTarget] = useState("");
@@ -81,7 +82,7 @@ function SettingsApp() {
           <h3>Voz e idioma</h3>
           <div className="form-row"><label htmlFor="model">Modelo</label><select id="model" value={data.settings.model} onChange={e => patch({ model: e.target.value })}><option value="whisper-large-v3-turbo">Whisper Large v3 Turbo</option><option value="whisper-large-v3">Whisper Large v3</option></select></div>
           <div className="form-row"><label htmlFor="language">Idioma del audio</label><select id="language" value={data.settings.language} onChange={e => patch({ language: e.target.value })}><option value="es">Español</option><option value="en">English</option><option value="pt">Português</option><option value="auto">Detectar automáticamente</option></select></div>
-          <h3>Conexión</h3><div className="key-line"><label htmlFor="key">Clave API de Groq <span>Almacenada en Windows</span></label><div><input id="key" type="password" autoComplete="off" value={key} placeholder={data.keyConfigured ? "••••••••••••••••" : "gsk_…"} onChange={e => setKey(e.target.value)} /><Button variant="secondary" size="lg" disabled={busy || !key || !api.native} onClick={() => run(async () => { await api.saveKey(key); setKey(""); }, "Clave guardada en el almacén de Windows")}>Guardar clave</Button></div></div>
+          <h3>Conexión</h3><div className="key-line"><label htmlFor="key">Clave API de Groq <span>Almacenada en Windows</span></label><div><input id="key" type="password" autoComplete="off" value={key} placeholder={data.keyConfigured ? "••••••••••••••••" : "gsk_…"} onChange={e => setKey(e.target.value)} /><Button variant="secondary" size="lg" disabled={busy || !key || !api.native} onClick={() => run(async () => { await api.saveKey(key); setKey(""); }, "Clave guardada en el almacén de Windows")}>Guardar clave</Button></div><button className="key-help" type="button" onClick={() => setShowKeyGuide(true)}><HelpCircle size={15} />¿Cómo obtengo mi clave?</button></div>
 
           <h3>Al terminar</h3><div className="form-row"><label htmlFor="copy">Copiar automáticamente<span>El texto queda en tu portapapeles.</span></label><SettingsSwitch id="copy" label="Copiar al finalizar" checked={data.settings.autoCopy} onChange={checked => patch({ autoCopy: checked })} /></div>
           <div className="form-row"><label htmlFor="paste">Pegar en el destino original</label><SettingsSwitch id="paste" label="Pegar al finalizar dictado" checked={data.settings.autoPaste} onChange={checked=>patch({autoPaste:checked})}/></div>
@@ -117,6 +118,7 @@ function SettingsApp() {
         </SectionReveal>
       </section>
     </div>
+    <ModalOverlay className="modal-backdrop desktop-app-modal" isOpen={showKeyGuide} isDismissable onOpenChange={setShowKeyGuide}><Modal className="key-guide-modal"><Dialog aria-label="Cómo obtener una API key de Groq"><div className="modal-heading"><div><h2>Cómo obtener tu clave de Groq</h2><p>Son 5 pasos y la cuenta es gratuita.</p></div><button aria-label="Cerrar guía" onClick={() => setShowKeyGuide(false)}><X size={18} /></button></div><div className="key-guide-steps"><article><span>1</span><div><h3>Creá una cuenta en Groq</h3><p>Entrá a console.groq.com y registrate con Google o con tu email.</p><img src="/groq-setup/01-login.png" alt="Pantalla de inicio de sesión de GroqCloud" /></div></article><article><span>2</span><div><h3>Abrí API Keys</h3><p>Una vez dentro de GroqCloud, elegí <strong>API Keys</strong> en el menú.</p><img src="/groq-setup/02-api-keys.png" alt="Sección API Keys de GroqCloud" /></div></article><article><span>3</span><div><h3>Creá una nueva clave</h3><p>Hacé clic en <strong>Create API Key</strong>.</p><img src="/groq-setup/03-create-key.png" alt="Botón Create API Key de GroqCloud" /></div></article><article><span>4</span><div><h3>Poné un nombre</h3><p>Usá un nombre fácil de reconocer, por ejemplo <strong>Whispera</strong>, y confirmá.</p><img src="/groq-setup/04-name-key.png" alt="Ventana para nombrar la API key" /></div></article><article><span>5</span><div><h3>Copiá la clave en Whispera</h3><p>Groq la muestra una sola vez. Copiala, volvé a esta pantalla y pegala arriba. Empieza con <code>gsk_</code>.</p><img src="/groq-setup/05-copy-key.png" alt="API key generada lista para copiar" /><p className="key-guide-warning">Guardala en un lugar seguro. Si la perdés, generá una nueva.</p></div></article></div><a className="key-guide-link" href="https://console.groq.com/keys" target="_blank" rel="noreferrer">Abrir GroqCloud <ExternalLink size={15} /></a></Dialog></Modal></ModalOverlay>
     <ModalOverlay className="modal-backdrop desktop-app-modal" isOpen={!!selected} isDismissable onOpenChange={open => { if (!open) setSelected(undefined); }}><Modal className="transcript-modal"><Dialog aria-label="Transcripción">{selected && <><div className="modal-heading"><h2>Transcripción</h2><button aria-label="Cerrar transcripción" onClick={() => setSelected(undefined)}><X size={18} /></button></div><textarea aria-label="Texto de transcripción" value={selected.text} onChange={e => setSelected({ ...selected, text: e.target.value })} /><CopyButton text={selected.text} /></>}</Dialog></Modal></ModalOverlay>
   </div>;
 }

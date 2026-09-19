@@ -10,6 +10,7 @@
 </p>
 
 <p align="center">
+  <a href="https://github.com/SikJa/Whispera/releases"><kbd>⬇ Descargar</kbd></a>&ensp;·&ensp;
   <a href="README.en.md">English</a>&ensp;·&ensp;
   <a href="https://console.groq.com/keys">Obtener clave Groq</a>&ensp;·&ensp;
   <a href="docs/PRIVACY.md">Privacidad</a>

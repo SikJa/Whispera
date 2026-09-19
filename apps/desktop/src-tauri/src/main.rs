@@ -288,7 +288,8 @@ fn main() {
             let quit =
                 MenuItem::with_id(app, "quit", "Salir / Quit Whispera", true, None::<&str>)?;
             let record = MenuItem::with_id(app, "recorder", "Abrir grabadora", true, None::<&str>)?;
-            let menu = Menu::with_items(app, &[&record, &show, &quit])?;
+            let import = MenuItem::with_id(app, "import", "Transcribir archivo", true, None::<&str>)?;
+            let menu = Menu::with_items(app, &[&record, &import, &show, &quit])?;
             tauri::tray::TrayIconBuilder::new()
                 .icon(app.default_window_icon().unwrap().clone())
                 .tooltip("Whispera")
@@ -304,6 +305,12 @@ fn main() {
                         let app = app.clone();
                         tauri::async_runtime::spawn_blocking(move || {
                             let _ = show_recorder(app);
+                        });
+                    }
+                    "import" => {
+                        let app = app.clone();
+                        tauri::async_runtime::spawn(async move {
+                            let _ = open_import(app).await;
                         });
                     }
                     "quit" => {

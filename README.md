@@ -36,6 +36,13 @@ Aparece como una **carpeta flotante transparente** sobre cualquier ventana. Grab
 
 ## Características
 
+**Nuevo: transcripción mientras hablás.** Whispera adelanta el procesamiento de audios largos
+en tramos de 60 segundos. Está activado por defecto y puede desactivarse en Configuración.
+En una prueba de 3 minutos, la espera final bajó de **2,67 s a 0,92 s (65,5 %)**.
+Es una medición puntual, no una garantía de velocidad ni de precisión.
+Consultá la [mejora, sus protecciones y la metodología](docs/INCREMENTAL-TRANSCRIPTION.md).
+Cancelar no retira el audio que ya se envió a Groq.
+
 | | |
 |---|---|
 | 🎨 **Carpeta personalizable** | Color, escala, posición de controles, animaciones |

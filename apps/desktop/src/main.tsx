@@ -116,7 +116,8 @@ function SettingsApp() {
 
           <h3>Al terminar</h3><div className="form-row"><label htmlFor="copy">Copiar automáticamente<span>El texto queda en tu portapapeles.</span></label><SettingsSwitch id="copy" label="Copiar al finalizar" checked={data.settings.autoCopy} onChange={checked => patch({ autoCopy: checked })} /></div>
           <div className="form-row"><label htmlFor="paste">Pegar en el destino original</label><SettingsSwitch id="paste" label="Pegar al finalizar dictado" checked={data.settings.autoPaste} onChange={checked=>patch({autoPaste:checked})}/></div>
-          <div className="form-row"><label htmlFor="trim">Reducir silencios en el envío</label><SettingsSwitch id="trim" label="Recortar silencios" checked={data.settings.trimSilence} onChange={checked=>patch({trimSilence:checked})}/></div>
+          <div className="form-row"><label htmlFor="incremental">Transcribir mientras grabo<span>Tramos de 60 s. Cancelar no retira el audio ya enviado.</span></label><SettingsSwitch id="incremental" label="Transcripción anticipada" checked={data.settings.incrementalTranscription} onChange={checked=>patch({incrementalTranscription:checked})}/></div>
+          <div className="form-row"><label htmlFor="trim">Reducir silencios en el envío{data.settings.incrementalTranscription&&<span>No se aplica a los tramos anticipados para conservar sus tiempos.</span>}</label><SettingsSwitch id="trim" label="Recortar silencios" disabled={data.settings.incrementalTranscription} checked={data.settings.trimSilence} onChange={checked=>patch({trimSilence:checked})}/></div>
           <div className="page-actions"><Button variant="secondary" size="lg" disabled={busy || !api.native} onClick={() => run(()=>invoke('open_import'), "Ventana de audio abierta") }><Upload data-icon="inline-start" />Transcribir archivo</Button></div>
         </>}
 

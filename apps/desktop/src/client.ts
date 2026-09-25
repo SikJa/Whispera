@@ -1,10 +1,10 @@
 import { invoke } from "@tauri-apps/api/core";
 export const native = "__TAURI_INTERNALS__" in window;
-export type Settings = { model: string; language: string; hotkey: string; color: string; pattern: "wave" | "stairs"; placement: "right" | "left" | "top" | "bottom"; autoCopy: boolean; autoPaste: boolean; soundTheme: string; sounds: boolean; recorderScale: number; trimSilence: boolean; watchdog: boolean };
+export type Settings = { model: string; language: string; hotkey: string; color: string; pattern: "wave" | "stairs"; placement: "right" | "left" | "top" | "bottom"; autoCopy: boolean; autoPaste: boolean; soundTheme: string; sounds: boolean; recorderScale: number; trimSilence: boolean; watchdog: boolean; incrementalTranscription: boolean };
 export type Rule = { id: string; source: string; target: string; enabled: boolean };
 export type Transcript = { id: string; timestamp: string; text: string };
 export type Snapshot = { settings: Settings; rules: Rule[]; history: Transcript[]; keyConfigured: boolean; logs: string[]; native: boolean };
-const defaults: Snapshot = { settings: { model: "whisper-large-v3-turbo", language: "es", hotkey: "|", color: "#9024DC", pattern: "wave", placement: "right", autoCopy: true, autoPaste: true, soundTheme: 'cristal', sounds: true, recorderScale: .85, trimSilence: true, watchdog: true }, rules: [], history: [], keyConfigured: false, logs: [], native: false };
+const defaults: Snapshot = { settings: { model: "whisper-large-v3-turbo", language: "es", hotkey: "|", color: "#9024DC", pattern: "wave", placement: "right", autoCopy: true, autoPaste: true, soundTheme: 'cristal', sounds: true, recorderScale: .85, trimSilence: true, watchdog: true, incrementalTranscription: true }, rules: [], history: [], keyConfigured: false, logs: [], native: false };
 let preview: Snapshot = structuredClone(defaults);
 try { const stored = localStorage.getItem("whispera-v2-preview"); if (stored) preview = { ...defaults, ...JSON.parse(stored), native: false, keyConfigured: false }; } catch { /* Keep empty preview on invalid storage. */ }
 const persist = () => { try { localStorage.setItem("whispera-v2-preview", JSON.stringify(preview)); } catch { /* Optional preview persistence. */ } };

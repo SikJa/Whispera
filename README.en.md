@@ -35,6 +35,13 @@ It shows up as a **transparent floating folder** on top of any window. Record, t
 
 ## Features
 
+**New: transcription while you speak.** Whispera processes long recordings in the background
+using 60-second segments. Enabled by default; you can disable it in Settings.
+In a three-minute test, post-stop waiting fell from **2.67 s to 0.92 s (65.5%)**.
+This is a single measurement, not a speed or accuracy guarantee.
+Read about the [implementation, safeguards and methodology](docs/INCREMENTAL-TRANSCRIPTION.md).
+Cancelling cannot withdraw audio already sent to Groq.
+
 | | |
 |---|---|
 | 🎨 **Customizable folder** | Color, scale, control placement, animations |

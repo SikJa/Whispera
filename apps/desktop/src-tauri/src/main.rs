@@ -4,6 +4,7 @@ mod engine;
 mod floating_window;
 mod groq;
 mod health;
+mod incremental;
 mod legacy;
 mod paste;
 mod shortcuts;

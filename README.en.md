@@ -26,7 +26,7 @@
 
 ## What is it?
 
-**Whispera (K) 0.1.5** is a modified version of [SikJa's Whispera](https://github.com/SikJa/Whispera).
+**Whispera (K) 0.1.6** is a modified version of [SikJa's Whispera](https://github.com/SikJa/Whispera).
 It keeps the original dictation and animated folder, and adds region screenshots
 and screen recording. The original code retains its credits and MIT license.
 
@@ -56,7 +56,7 @@ It shows up as a **transparent floating folder** on top of any window. Record, t
 | ⌨️ **Press-to-set shortcuts** | Dictation, screenshots and video together in Shortcut settings |
 | 🔈 **Video audio** | None, system, microphone or both; saved as your preference |
 | 🕘 **Recent captures** | Copy any of the last 12 results again from History |
-| ⏯️ **Video controls** | Pause, resume and discard; draggable and collapsible controls |
+| ⏯️ **Video controls** | Pause, resume and discard; fixed side tools and controls below the capture |
 
 The capture frame defaults to white and has its own color setting. The folder
 hides after completed dictation even if no paste target was available. Edits

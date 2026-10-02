@@ -26,7 +26,7 @@
 
 ## ¿Qué es?
 
-**Whispera (K) 0.1.5** es una versión modificada de [Whispera de SikJa](https://github.com/SikJa/Whispera).
+**Whispera (K) 0.1.6** es una versión modificada de [Whispera de SikJa](https://github.com/SikJa/Whispera).
 Conserva el dictado y la carpeta animada del proyecto original, y agrega captura
 de imágenes y video por región. El código original mantiene sus créditos y su
 licencia MIT.
@@ -57,7 +57,7 @@ Aparece como una **carpeta flotante transparente** sobre cualquier ventana. Grab
 | ⌨️ **Atajos al presionar teclas** | Dictado, imagen y video juntos en Configuración → Atajos |
 | 🔈 **Audio del video** | Sin audio, computadora, micrófono o ambos; preferencia guardada |
 | 🕘 **Capturas recientes** | Volvé a copiar los últimos 12 resultados desde Historial |
-| ⏯️ **Controles de video** | Pausar, reanudar y descartar; carpeta y herramientas movibles y compactas |
+| ⏯️ **Controles de video** | Pausar, reanudar y descartar; herramientas fijas al costado y controles debajo del recorte |
 
 El recuadro de captura es blanco por defecto y su color se puede cambiar en
 Configuración. La carpeta desaparece al terminar el dictado, incluso cuando no

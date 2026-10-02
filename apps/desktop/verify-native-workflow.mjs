@@ -69,7 +69,7 @@ try {
   await tools.getByRole('button',{name:'Lápiz',exact:true}).evaluate(el=>el.click());
   await tools.getByRole('button',{name:'Contraer herramientas'}).evaluate(el=>el.click());
   await wait(async()=>(await invoke(main,'screen_editor_feedback_get')).tool==='pointer','collapse restores mouse');
-  assert.equal((await invoke(tools,'plugin:window|inner_size',{label:'screen-tools'})).height,Math.round(46*scale));
+  assert.equal((await invoke(tools,'plugin:window|inner_size',{label:'screen-tools'})).height,Math.round(96*scale));
   await invoke(main,'screen_pause');
   await wait(async()=>(await invoke(main,'screen_status')).phase==='paused','second pause');
   await invoke(main,'screen_escape');

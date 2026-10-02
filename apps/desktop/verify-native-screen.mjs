@@ -81,8 +81,8 @@ try{
   const imageContext=await invoke(main,'screen_editor_context');
   await ink.locator(`.screen-ink[data-session="${imageContext.id}"]`).waitFor();
   await tools.locator(`.capture-toolbar[data-session="${imageContext.id}"]`).waitFor();
-  assert.equal(await ink.locator('.screen-ink').evaluate(e=>getComputedStyle(e,'::after').borderColor),'rgb(255, 255, 255)','image editor keeps its white frame above the opaque canvas');
-  await ink.getByLabel('Editar captura').waitFor({timeout:15000});await tools.getByRole('button',{name:'Copiar',exact:true}).evaluate(el=>el.click());
+  assert.equal(await ink.locator('.screen-image-frame').evaluate(e=>getComputedStyle(e).borderColor),'rgb(255, 255, 255)','image editor keeps its white frame above the opaque canvas');
+  await ink.getByLabel('Editar captura').waitFor({timeout:15000});await (await findWindow('screen-hud')).getByRole('button',{name:'Copiar',exact:true}).evaluate(el=>el.click());
   await waitNative(async()=> (await invoke(main,'screen_status')).phase==='idle','image copied');
   const recents=await invoke(main,'screen_recent');const image=recents.find(e=>e.kind==='image');assert.ok(image);files.push(image.path);
   const png=PNG.sync.read(fs.readFileSync(image.path));assert.equal(png.width,reference.width);assert.equal(png.height,reference.height);

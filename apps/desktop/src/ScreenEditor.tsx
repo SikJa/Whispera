@@ -1,16 +1,16 @@
 import { useEffect, useRef, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
-import { getCurrentWindow } from '@tauri-apps/api/window';
 import { MotionConfig } from 'motion/react';
 import ControlledFolder from './ControlledFolder';
 import { contrastInk } from './palette';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
-import { ArrowUpRight, ChevronDown, ChevronUp, GripHorizontal, Maximize2, Pause, Play, Copy, Highlighter, Minus, MousePointer2, Pencil, Printer, Redo2, RotateCcw, Save, Square, SquareDashed, Trash2, Type, Undo2, X } from 'lucide-react';
+import { ArrowUpRight, ChevronLeft, ChevronRight, Maximize2, Pause, Play, Copy, Highlighter, Minus, MousePointer2, Pencil, Printer, Redo2, RotateCcw, Save, Square, SquareDashed, Trash2, Type, Undo2, X } from 'lucide-react';
 import { blurredTile, bounds, commit, constrained, emptyHistory, hitTest, paint, redo, undo, type History, type Mark, type Point, type Tool } from './screen-annotations';
 import './screen-recorder.css';
 import { showWhenReady } from './screen-ready';
+import CaptureFrame from './CaptureFrame';
 
-type Context = { id: string; kind: 'image' | 'video'; width: number; height: number; scale: number; hud_scale?:number; frame_color?:string };
+type Context = { id: string; kind: 'image' | 'video'; width: number; height: number; scale: number; hud_scale?:number; hud_above?:boolean; frame_color?:string };
 type Action = { action: string; value?: string };
 type Feedback = { tool: Tool; color: string; width: number; canUndo: boolean; canRedo: boolean; count: number; busy: boolean; error: string };
 const defaults: Feedback = { tool: 'pointer', color: '#ff4545', width: 3, canUndo: false, canRedo: false, count: 0, busy: false, error: '' };
@@ -158,7 +158,8 @@ function Ink({ context }: { context: Context }) {
     void invoke('screen_editor_feedback',{ id:context.id,feedback:{ tool,...options,canUndo:!!history.current.past.length,canRedo:!!history.current.future.length,count:history.current.present.length,busy,error } }).catch(() => {});
   }, [version,tool,options,busy,error,context.id]);
   const point = (e: React.PointerEvent) => ({ x:Math.max(0,Math.min(context.width,e.clientX)),y:Math.max(0,Math.min(context.height,e.clientY)) });
-  return <div className="screen-ink" data-tool={tool} data-session={context.id} data-kind={context.kind} style={{'--capture-frame-color':context.frame_color??'#ffffff'} as React.CSSProperties}>
+  return <div className="screen-ink" data-tool={tool} data-session={context.id} data-kind={context.kind}>
+    {context.kind==='image'&&<CaptureFrame className="screen-image-frame" width={context.width} height={context.height} color={context.frame_color}/>}
     <canvas ref={canvas} aria-label={context.kind === 'image' ? 'Editar captura' : 'Dibujar sobre video'} width={Math.round(context.width*context.scale)} height={Math.round(context.height*context.scale)}
       onPointerDown={e => {
         if (e.button !== 0 || busy) return; e.preventDefault(); commitText(); const p = point(e); e.currentTarget.setPointerCapture(e.pointerId);
@@ -188,7 +189,7 @@ function Ink({ context }: { context: Context }) {
   </div>;
 }
 export function ScreenTools() { const context = useContext(); return context ? <Toolbar key={context.id} context={context}/> : null; }
-export function ScreenHud() { const context = useContext(); return context?.kind==='video' ? <VideoHud key={context.id} context={context}/> : null; }
+export function ScreenHud() { const context = useContext(); return context ? context.kind==='video' ? <VideoHud key={context.id} context={context}/> : <ImageActions key={context.id} context={context}/> : null; }
 type VideoStatus = {phase:string;seconds:number;error:string};
 function VideoHud({context}:{context:Context}) {
   const [status,setStatus]=useState<VideoStatus>({phase:'starting',seconds:0,error:''});
@@ -206,21 +207,19 @@ function VideoHud({context}:{context:Context}) {
   useEffect(()=>{if(compact||status.phase!=='recording')return;const timer=setInterval(()=>setStep(v=>v+1),650);return()=>clearInterval(timer);},[compact,status.phase]);
   const run=async(command:string)=>{setBusy(true);setError('');try{await invoke(command);}catch(e){setError(String(e));}finally{setBusy(false);}};
   const toggle=async()=>{try{await invoke('screen_overlay_layout',{id:context.id,compact:!compact});setCompact(!compact);try{localStorage.setItem('whispera.video.compact',String(!compact));}catch{/* Optional preference. */}}catch(e){setError(String(e));}};
-  const dragging=(e:React.PointerEvent)=>{if(e.button===0&&!(e.target as HTMLElement).closest('button'))void getCurrentWindow().startDragging().catch(e=>setError(String(e)));};
   const paused=status.phase==='paused';
   const label=paused?'En pausa':status.phase==='pausing'?'Pausando…':status.phase==='resuming'?'Reanudando…':status.phase==='saving'?'Preparando…':'Grabando';
   const time=`${Math.floor(status.seconds/60).toString().padStart(2,'0')}:${Math.floor(status.seconds%60).toString().padStart(2,'0')}`;
   const scale=context.hud_scale??.85;
-  return <div className="capture-hud" data-compact={compact} data-paused={paused} onPointerDown={dragging} aria-label="Controles de video">
-    {!compact&&<div className="capture-hud-folder" style={{top:180*scale,left:12,width:321,height:270,transform:`scale(${scale})`,transformOrigin:'top left'}}><MotionConfig reducedMotion="user"><ControlledFolder color="black" customColor={appearance.color} size="md" pattern={appearance.pattern} visualState={paused?'rest':'hover'} recordingStep={status.phase==='recording'?step:undefined}/></MotionConfig><div className="screen-folder-caption" style={{color:contrastInk(appearance.color)}}><span role="status"><i/>{label}</span><output aria-label="Tiempo grabado">{time}</output></div></div>}
-    <div className="capture-hud-controls"><span className="capture-hud-grip" title="Arrastrar controles"><GripHorizontal size={15}/></span>{compact&&<span className="capture-hud-time" title={label}><i/>{time}</span>}<button disabled={busy||!['recording','paused'].includes(status.phase)} aria-label={paused?'Reanudar video':'Pausar video'} title={paused?'Reanudar':'Pausar'} onClick={()=>void run('screen_pause')}>{paused?<Play size={16}/>:<Pause size={16}/>}</button><button disabled={busy||['saving','cancelling'].includes(status.phase)} aria-label="Cancelar video" title="Cancelar y descartar el video" onClick={()=>void run('screen_cancel')}><X size={16}/></button><button aria-label={compact?'Mostrar carpeta':'Ocultar carpeta'} title={compact?'Mostrar carpeta':'Ocultar carpeta'} onClick={()=>void toggle()}>{compact?<Maximize2 size={15}/>:<Minus size={15}/>}</button></div>
+  return <div className="capture-hud" data-compact={compact} data-paused={paused} data-above={context.hud_above&&!compact} aria-label="Controles de video">
+    {!compact&&<div className="capture-hud-folder" style={{top:(context.hud_above?0:58)+180*scale,left:(Math.max(250,321*scale+24)-321*scale)/2,width:321,height:270,transform:`scale(${scale})`,transformOrigin:'top left'}}><MotionConfig reducedMotion="user"><ControlledFolder color="black" customColor={appearance.color} size="md" pattern={appearance.pattern} visualState={paused?'rest':'hover'} recordingStep={status.phase==='recording'?step:undefined}/></MotionConfig><div className="screen-folder-caption" style={{color:contrastInk(appearance.color)}}><span role="status"><i/>{label}</span><output aria-label="Tiempo grabado">{time}</output></div></div>}
+    <div className="capture-hud-controls">{compact&&<span className="capture-hud-time" title={label}><i/>{time}</span>}<button disabled={busy||!['recording','paused'].includes(status.phase)} aria-label={paused?'Reanudar video':'Pausar video'} title={paused?'Reanudar':'Pausar'} onClick={()=>void run('screen_pause')}>{paused?<Play size={18}/>:<Pause size={18}/>}</button><button disabled={busy||['saving','cancelling'].includes(status.phase)} aria-label="Cancelar video" title="Cancelar y descartar el video" onClick={()=>void run('screen_cancel')}><X size={18}/></button><button aria-label={compact?'Mostrar carpeta':'Ocultar carpeta'} title={compact?'Mostrar carpeta':'Ocultar carpeta'} onClick={()=>void toggle()}>{compact?<Maximize2 size={17}/>:<Minus size={17}/>}</button></div>
     {(error||status.error)&&<div role="alert" className="capture-hud-error">{error||status.error}</div>}
   </div>;
 }
-function Toolbar({ context }: { context:Context }) {
+function useEditorControls(context:Context) {
   const [feedback,setFeedback] = useState<Feedback>({...defaults,...preferences()});
   const [error,setError] = useState('');
-  const [compact,setCompact] = useState(false);
   const send = (action:Action) => invoke('screen_editor_action',{ id:context.id,action }).catch(e => setError(String(e)));
   useEffect(() => {
     let alive = true; let remove:UnlistenFn|undefined;
@@ -234,28 +233,36 @@ function Toolbar({ context }: { context:Context }) {
     window.addEventListener('keydown',key);
     return()=>{alive=false;remove?.();window.removeEventListener('keydown',key);};
   },[context.id]);
+  return {feedback,send,setError,notice:(error||feedback.error)&&<div className="capture-error" role="alert">{error||feedback.error}<button aria-label="Cerrar aviso" onClick={()=>{setError('');setFeedback(f=>({...f,error:''}));}}>×</button></div>};
+}
+function ImageActions({context}:{context:Context}) {
+  const {feedback,send,notice}=useEditorControls(context);
+  return <div className="capture-image-actions" aria-label="Acciones de captura">
+    <button className="capture-copy" disabled={feedback.busy} title="Copiar (Ctrl+C)" onClick={()=>void send({action:'copy'})}><Copy size={17}/>Copiar</button>
+    <button disabled={feedback.busy} title="Guardar PNG (Ctrl+S)" aria-label="Guardar imagen" onClick={()=>void send({action:'save'})}><Save size={18}/></button>
+    <button disabled={feedback.busy} title="Imprimir" aria-label="Imprimir imagen" onClick={()=>void send({action:'print'})}><Printer size={18}/></button>
+    <button disabled={feedback.busy} title="Volver a seleccionar" aria-label="Volver a seleccionar" onClick={()=>void send({action:'reselect'})}><RotateCcw size={18}/></button>
+    {notice}
+  </div>;
+}
+function Toolbar({ context }: { context:Context }) {
+  const {feedback,send,setError,notice}=useEditorControls(context);
+  const [compact,setCompact] = useState(false);
   const toggleCompact=async()=>{
     try { if(!compact&&context.kind==='video')await send({action:'tool',value:'pointer'});await invoke('screen_overlay_layout',{id:context.id,compact:!compact});setCompact(!compact); }catch(e){setError(String(e));}
   };
   return <div className="capture-toolbar" data-session={context.id} data-compact={compact} aria-label="Herramientas de captura">
-    <div className="capture-tool-header"><button className="capture-drag" aria-label="Mover herramientas" title="Arrastrar herramientas" onPointerDown={e=>{if(e.button===0)void getCurrentWindow().startDragging().catch(e=>setError(String(e)));}}><GripHorizontal size={17}/></button><span>Herramientas</span><button aria-label="Usar mouse normal" title="Volver al mouse (V)" aria-pressed={feedback.tool==='pointer'} onClick={()=>void send({action:'tool',value:'pointer'})}><MousePointer2 size={15}/></button><button aria-label={compact?'Expandir herramientas':'Contraer herramientas'} title={compact?'Expandir':'Contraer'} onClick={()=>void toggleCompact()}>{compact?<ChevronDown size={15}/>:<ChevronUp size={15}/>}</button></div>
-    {!compact&&<>
-    <div className="capture-tool-row" role="toolbar" aria-label="Dibujo">{tools.map(([name,Icon,label,key])=><button key={name} title={`${label} (${key})`} aria-label={label} aria-pressed={feedback.tool===name} disabled={feedback.busy} onClick={()=>void send({action:'tool',value:name})}><Icon size={18}/></button>)}
+    <div className="capture-tool-header"><button aria-label={compact?'Expandir herramientas':'Contraer herramientas'} title={compact?'Expandir herramientas':'Contraer herramientas'} onClick={()=>void toggleCompact()}>{compact?<ChevronLeft size={17}/>:<ChevronRight size={17}/>}</button></div>
+    {compact ? <button className="capture-pointer" aria-label="Usar mouse normal" title="Volver al mouse (V)" aria-pressed={feedback.tool==='pointer'} onClick={()=>void send({action:'tool',value:'pointer'})}><MousePointer2 size={18}/></button> : <>
+      <div className="capture-tool-list" role="toolbar" aria-label="Dibujo" aria-orientation="vertical">{tools.map(([name,Icon,label,key])=><button key={name} title={`${label} (${key})`} aria-label={label} aria-pressed={feedback.tool===name} disabled={feedback.busy} onClick={()=>void send({action:'tool',value:name})}><Icon size={18}/></button>)}</div>
+      <div className="capture-colors" role="group" aria-label="Color del trazo">
+        {['#ff4545','#ffca3a','#4cdb91','#5da9ff','#ffffff'].map(color=><button className="capture-swatch" key={color} style={{background:color}} aria-label={`Color ${color}`} aria-pressed={feedback.color===color} onClick={()=>void send({action:'color',value:color})}/>)}
+        <input aria-label="Color personalizado" title="Color personalizado" type="color" value={feedback.color} onChange={e=>void send({action:'color',value:e.target.value})}/>
+      </div>
+      <div className="capture-widths" role="group" aria-label="Grosor del trazo">{([[2,'Fino'],[3,'Normal'],[5,'Medio'],[8,'Grueso']] as const).map(([width,label])=><button key={width} title={label} aria-label={`Grosor ${label.toLowerCase()}`} aria-pressed={feedback.width===width} onClick={()=>void send({action:'width',value:String(width)})}><span style={{width:width+2,height:width+2}}/></button>)}</div>
+      <div className="capture-history-actions"><button title="Deshacer (Ctrl+Z)" aria-label="Deshacer" disabled={!feedback.canUndo||feedback.busy} onClick={()=>void send({action:'undo'})}><Undo2 size={17}/></button><button title="Rehacer (Ctrl+Y / Ctrl+Shift+Z)" aria-label="Rehacer" disabled={!feedback.canRedo||feedback.busy} onClick={()=>void send({action:'redo'})}><Redo2 size={17}/></button></div>
       <button title="Borrar todas las marcas (se puede deshacer)" aria-label="Borrar todas las marcas" disabled={!feedback.count||feedback.busy} onClick={()=>void send({action:'clear'})}><Trash2 size={17}/></button>
-    </div>
-    <div className="capture-tool-row capture-options">
-      {['#ff4545','#ffca3a','#4cdb91','#5da9ff','#ffffff'].map(color=><button className="capture-swatch" key={color} style={{background:color}} aria-label={`Color ${color}`} aria-pressed={feedback.color===color} onClick={()=>void send({action:'color',value:color})}/>)}
-      <input aria-label="Color personalizado" title="Color personalizado" type="color" value={feedback.color} onChange={e=>void send({action:'color',value:e.target.value})}/>
-      <select aria-label="Grosor" value={feedback.width} onChange={e=>void send({action:'width',value:e.target.value})}>{[2,3,5,8].map(width=><option key={width} value={width}>{width} px</option>)}</select>
-      <button title="Deshacer (Ctrl+Z)" aria-label="Deshacer" disabled={!feedback.canUndo||feedback.busy} onClick={()=>void send({action:'undo'})}><Undo2 size={18}/></button>
-      <button title="Rehacer (Ctrl+Y / Ctrl+Shift+Z)" aria-label="Rehacer" disabled={!feedback.canRedo||feedback.busy} onClick={()=>void send({action:'redo'})}><Redo2 size={18}/></button>
-    </div>
-    {context.kind==='image'&&<div className="capture-tool-row capture-footer">
-      <button className="capture-copy" disabled={feedback.busy} title="Copiar (Ctrl+C)" onClick={()=>void send({action:'copy'})}><Copy size={15}/>Copiar</button>
-      <button disabled={feedback.busy} title="Guardar PNG (Ctrl+S)" aria-label="Guardar imagen" onClick={()=>void send({action:'save'})}><Save size={16}/></button>
-      <button disabled={feedback.busy} title="Imprimir" aria-label="Imprimir imagen" onClick={()=>void send({action:'print'})}><Printer size={16}/></button>
-      <button disabled={feedback.busy} title="Volver a seleccionar" aria-label="Volver a seleccionar" onClick={()=>void send({action:'reselect'})}><RotateCcw size={16}/></button>
-    </div>}</>}
-    {(error||feedback.error)&&<div className="capture-error" role="alert">{error||feedback.error}<button aria-label="Cerrar aviso" onClick={()=>{setError('');setFeedback(f=>({...f,error:''}));}}>×</button></div>}
+    </>}
+    {notice}
   </div>;
 }

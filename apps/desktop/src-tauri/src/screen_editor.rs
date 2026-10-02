@@ -23,12 +23,14 @@ pub struct Context {
     pub scale: f64,
     pub frame_color: String,
     pub hud_scale: f64,
+    pub hud_above: bool,
 }
 #[derive(Default)]
 pub struct Editor {
     configured: AtomicBool,
     context: Mutex<Option<Context>>,
     region: Mutex<Option<Region>>,
+    monitor: Mutex<Option<Region>>,
     image: Mutex<Vec<u8>>,
     feedback: Mutex<serde_json::Value>,
 }
@@ -72,12 +74,16 @@ fn window(
     if let Some(w) = app.get_webview_window(label) {
         return Ok(w);
     }
-    let window = tauri::WebviewWindowBuilder::new(
+    let builder = tauri::WebviewWindowBuilder::new(
         app,
         label,
         tauri::WebviewUrl::App(format!("overlay.html?view={label}").into()),
     )
-    .title("Whispera · Herramientas de captura")
+    .title(match label {
+        "screen-tools" => "Whispera · Herramientas de captura",
+        "screen-hud" => "Whispera · Controles de captura",
+        _ => "Whispera · Anotaciones",
+    })
     .transparent(true)
     .background_color(tauri::window::Color(0, 0, 0, 0))
     .content_protected(protected)
@@ -87,9 +93,21 @@ fn window(
     .skip_taskbar(true)
     .resizable(false)
     .visible(false)
-    .focused(false)
-    .build()
-    .map_err(|e| e.to_string())?;
+    .focused(false);
+    // Owned tool windows stay above the ink when it gains focus. Merely
+    // setting an already-topmost window topmost again does not establish this
+    // ordering; the ink could then intercept every subsequent toolbar click.
+    let builder = if protected {
+        builder
+            .parent(
+                &app.get_webview_window("screen-ink")
+                    .ok_or("Editor no disponible")?,
+            )
+            .map_err(|e| e.to_string())?
+    } else {
+        builder
+    };
+    let window = builder.build().map_err(|e| e.to_string())?;
     if label == "screen-ink" {
         let app = app.clone();
         window.on_window_event(move |event| {
@@ -108,6 +126,112 @@ fn raise_controls(app: &tauri::AppHandle) {
             }
         }
     }
+}
+fn pixels(value: f64, scale: f64) -> u32 {
+    (value * scale).round().max(1.) as u32
+}
+fn fit_start(value: i32, origin: i32, span: u32, size: u32, gap: i32) -> i32 {
+    value.clamp(
+        origin + gap,
+        (origin + span as i32 - size as i32 - gap).max(origin + gap),
+    )
+}
+fn tool_bounds(region: Region, monitor: Region, scale: f64, compact: bool) -> Region {
+    let gap = pixels(10., scale) as i32;
+    let width = pixels(76., scale).min(monitor.width.saturating_sub(2 * gap as u32));
+    let full_height = pixels(604., scale).min(monitor.height.saturating_sub(2 * gap as u32));
+    let right = region.x + region.width as i32 + gap;
+    let x = if right + width as i32 + gap <= monitor.x + monitor.width as i32 {
+        right
+    } else {
+        region.x + region.width as i32 - width as i32 - gap
+    };
+    Region {
+        x: fit_start(x, monitor.x, monitor.width, width, gap),
+        // Collapsing does not move the expand button to a different place.
+        y: fit_start(region.y, monitor.y, monitor.height, full_height, gap),
+        width,
+        height: if compact {
+            pixels(96., scale).min(full_height)
+        } else {
+            full_height
+        },
+    }
+}
+fn hud_anchor(region: Region, monitor: Region, scale: f64, hud_scale: f64) -> (Region, bool) {
+    let gap = pixels(10., scale) as i32;
+    let width = pixels((321. * hud_scale + 24.).max(250.), scale)
+        .min(monitor.width.saturating_sub(2 * gap as u32));
+    let height = pixels(56., scale);
+    let below = region.y + region.height as i32 + gap;
+    let y = if below + height as i32 + gap <= monitor.y + monitor.height as i32 {
+        below
+    } else {
+        region.y + region.height as i32 - height as i32 - gap
+    };
+    let tools = tool_bounds(region, monitor, scale, false);
+    let x = region.x + (region.width as i32 - width as i32) / 2;
+    // Keep both docks usable when the capture is small or next to the right edge.
+    let x = if y < tools.y + tools.height as i32 && y + height as i32 > tools.y {
+        x.min(tools.x - width as i32 - gap)
+    } else {
+        x
+    };
+    let anchor = Region {
+        x: fit_start(x, monitor.x, monitor.width, width, gap),
+        y: fit_start(y, monitor.y, monitor.height, height, gap),
+        width,
+        height,
+    };
+    let above = anchor.y + pixels(450. * hud_scale + 64., scale) as i32 + gap
+        > monitor.y + monitor.height as i32;
+    (anchor, above)
+}
+fn fit_hud_scale(region: Region, monitor: Region, scale: f64, preferred: f64) -> f64 {
+    let initial = preferred.min(0.85);
+    let (anchor, _) = hud_anchor(region, monitor, scale, initial);
+    let gap = pixels(10., scale) as i32;
+    let below = monitor.y + monitor.height as i32 - gap - anchor.y;
+    let above = anchor.y + anchor.height as i32 - monitor.y - gap;
+    initial.min(((above.max(below) as f64 / scale - 64.) / 450.).max(0.15))
+}
+fn dock_bounds(
+    ctx: &Context,
+    region: Region,
+    monitor: Region,
+    label: &str,
+    compact: bool,
+) -> Result<Region, String> {
+    if label == "screen-tools" {
+        return Ok(tool_bounds(region, monitor, ctx.scale, compact));
+    }
+    if label != "screen-hud" {
+        return Err("Vista incorrecta".into());
+    }
+    let (mut dock, above) = hud_anchor(region, monitor, ctx.scale, ctx.hud_scale);
+    if ctx.kind == "video" && !compact {
+        let height = pixels(450. * ctx.hud_scale + 64., ctx.scale);
+        if above {
+            dock.y -= height as i32 - dock.height as i32;
+        }
+        dock.height = height;
+    }
+    Ok(dock)
+}
+fn place_controls(
+    window: &tauri::WebviewWindow,
+    ctx: &Context,
+    region: Region,
+    monitor: Region,
+    compact: bool,
+) -> Result<(), String> {
+    let dock = dock_bounds(ctx, region, monitor, window.label(), compact)?;
+    window
+        .set_size(tauri::PhysicalSize::new(dock.width, dock.height))
+        .map_err(|e| e.to_string())?;
+    window
+        .set_position(tauri::PhysicalPosition::new(dock.x, dock.y))
+        .map_err(|e| e.to_string())
 }
 fn screenshot(app: &tauri::AppHandle, region: Region) -> Result<Vec<u8>, String> {
     let root = app
@@ -222,17 +346,31 @@ fn open_with_image(
         _ => Vec::new(),
     };
     let scale = source.scale_factor().map_err(|e| e.to_string())?;
+    let position = source.inner_position().map_err(|e| e.to_string())?;
+    let size = source.inner_size().map_err(|e| e.to_string())?;
+    let monitor = Region {
+        x: position.x,
+        y: position.y,
+        width: size.width,
+        height: size.height,
+    };
+    let hud_scale = fit_hud_scale(
+        region,
+        monitor,
+        scale,
+        app.state::<crate::storage::Store>()
+            .get::<crate::storage::Settings>("settings")?
+            .recorder_scale,
+    );
+    let hud_above = hud_anchor(region, monitor, scale, hud_scale).1;
     let ctx = Context {
         id: uuid::Uuid::new_v4().to_string(),
         kind: kind.into(),
         width: rect.width,
         height: rect.height,
         scale,
-        hud_scale: app
-            .state::<crate::storage::Store>()
-            .get::<crate::storage::Settings>("settings")?
-            .recorder_scale
-            .min(0.85),
+        hud_scale,
+        hud_above,
         frame_color: app
             .state::<crate::storage::Store>()
             .get::<screen::Preferences>("screen_preferences")
@@ -241,6 +379,7 @@ fn open_with_image(
     };
     let editor = app.state::<Editor>();
     *editor.region.lock().map_err(|_| "Editor ocupado")? = Some(region);
+    *editor.monitor.lock().map_err(|_| "Editor ocupado")? = Some(monitor);
     *editor.image.lock().map_err(|_| "Editor ocupado")? = bytes;
     *editor.context.lock().map_err(|_| "Editor ocupado")? = Some(ctx.clone());
     *editor.feedback.lock().map_err(|_| "Editor ocupado")? = serde_json::json!({});
@@ -255,50 +394,12 @@ fn open_with_image(
         .map_err(|e| e.to_string())?;
     let tools = window(app, "screen-tools", true)?;
     screen::protect(&tools)?;
-    let monitor = source.inner_position().map_err(|e| e.to_string())?;
-    let size = source.inner_size().map_err(|e| e.to_string())?;
-    let width = (360. * scale).round() as u32;
-    let height = (if kind == "video" { 128. } else { 168. } * scale).round() as u32;
-    let gap = (10. * scale).round() as i32;
-    let x = region.x.clamp(
-        monitor.x + gap,
-        (monitor.x + size.width as i32 - width as i32 - gap).max(monitor.x + gap),
-    );
-    let below = region.y + region.height as i32 + gap;
-    let y = if below + height as i32 <= monitor.y + size.height as i32 - gap {
-        below
-    } else if region.y - height as i32 - gap >= monitor.y + gap {
-        region.y - height as i32 - gap
-    } else {
-        (monitor.y + size.height as i32 - height as i32 - gap).max(monitor.y)
-    };
-    tools
-        .set_position(tauri::PhysicalPosition::new(x, y))
-        .map_err(|e| e.to_string())?;
-    tools
-        .set_size(tauri::PhysicalSize::new(width, height))
-        .map_err(|e| e.to_string())?;
-    for w in [&ink, &tools] {
+    place_controls(&tools, &ctx, region, monitor, false)?;
+    let hud = window(app, "screen-hud", true)?;
+    screen::protect(&hud)?;
+    place_controls(&hud, &ctx, region, monitor, false)?;
+    for w in [&ink, &tools, &hud] {
         w.emit("screen-editor-reset", &ctx)
-            .map_err(|e| e.to_string())?;
-    }
-    if kind == "video" {
-        let hud = window(app, "screen-hud", true)?;
-        screen::protect(&hud)?;
-        let hud_width = ((321. * ctx.hud_scale + 24.) * scale).round() as u32;
-        let hud_height = ((450. * ctx.hud_scale + 42.) * scale).round() as u32;
-        let right = region.x + region.width as i32 + gap;
-        let x = right
-            .min(monitor.x + size.width as i32 - hud_width as i32 - gap)
-            .max(monitor.x + gap);
-        let y = (region.y + gap)
-            .min(monitor.y + size.height as i32 - hud_height as i32 - gap)
-            .max(monitor.y + gap);
-        hud.set_size(tauri::PhysicalSize::new(hud_width, hud_height))
-            .map_err(|e| e.to_string())?;
-        hud.set_position(tauri::PhysicalPosition::new(x, y))
-            .map_err(|e| e.to_string())?;
-        hud.emit("screen-editor-reset", &ctx)
             .map_err(|e| e.to_string())?;
     }
     editor.configured.store(true, Ordering::SeqCst);
@@ -352,49 +453,20 @@ pub fn screen_overlay_layout(
     compact: bool,
 ) -> Result<(), String> {
     let ctx = context(&app, &id)?;
-    let (width, height) = match window.label() {
-        "screen-tools" => (
-            360.,
-            if compact {
-                46.
-            } else if ctx.kind == "video" {
-                128.
-            } else {
-                168.
-            },
-        ),
-        "screen-hud" if ctx.kind == "video" => {
-            if compact {
-                (250., 48.)
-            } else {
-                (321. * ctx.hud_scale + 24., 450. * ctx.hud_scale + 42.)
-            }
-        }
-        _ => return Err("Vista incorrecta".into()),
-    };
-    window
-        .set_size(tauri::LogicalSize::new(width, height))
-        .map_err(|e| e.to_string())?;
-    if let Some(monitor) = window.current_monitor().map_err(|e| e.to_string())? {
-        let position = window.outer_position().map_err(|e| e.to_string())?;
-        let size = window.outer_size().map_err(|e| e.to_string())?;
-        let origin = monitor.position();
-        let bounds = monitor.size();
-        window
-            .set_position(tauri::PhysicalPosition::new(
-                position.x.clamp(
-                    origin.x,
-                    (origin.x + bounds.width as i32 - size.width as i32).max(origin.x),
-                ),
-                position.y.clamp(
-                    origin.y,
-                    (origin.y + bounds.height as i32 - size.height as i32).max(origin.y),
-                ),
-            ))
-            .map_err(|e| e.to_string())?;
-    }
-    Ok(())
+    let editor = app.state::<Editor>();
+    let region = editor
+        .region
+        .lock()
+        .map_err(|_| "Editor ocupado")?
+        .ok_or("Captura no disponible")?;
+    let monitor = editor
+        .monitor
+        .lock()
+        .map_err(|_| "Editor ocupado")?
+        .ok_or("Monitor no disponible")?;
+    place_controls(&window, &ctx, region, monitor, compact)
 }
+
 #[tauri::command]
 pub fn screen_editor_action(
     app: tauri::AppHandle,
@@ -455,12 +527,15 @@ pub fn screen_editor_feedback(
         .feedback
         .lock()
         .map_err(|_| "Editor ocupado")? = feedback.clone();
-    app.emit_to(
-        "screen-tools",
-        "screen-editor-feedback",
-        serde_json::json!({"id":id,"feedback":feedback}),
-    )
-    .map_err(|e| e.to_string())
+    for label in ["screen-tools", "screen-hud"] {
+        app.emit_to(
+            label,
+            "screen-editor-feedback",
+            serde_json::json!({"id":id,"feedback":feedback}),
+        )
+        .map_err(|e| e.to_string())?;
+    }
+    Ok(())
 }
 #[tauri::command]
 pub fn screen_editor_feedback_get(editor: State<Editor>) -> serde_json::Value {
@@ -590,6 +665,68 @@ pub async fn screen_editor_sample(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn capture_docks_fit_edges_and_do_not_jump_when_collapsed() {
+        for scale in [1., 1.25, 1.5, 2.] {
+            for (x, y, width, height) in [
+                (0, 0, 1920, 1080),
+                (-1920, -500, 1920, 1080),
+                (0, 0, 800, 600),
+            ] {
+                let monitor = Region {
+                    x,
+                    y,
+                    width,
+                    height,
+                };
+                for (rx, ry, rw, rh) in [
+                    (x, y, width, height),
+                    (x + 20, y + 20, 180, 140),
+                    (x + width as i32 - 220, y + height as i32 - 160, 200, 140),
+                    (x + width as i32 / 2, y + height as i32 / 2, 64, 64),
+                ] {
+                    let region = Region {
+                        x: rx,
+                        y: ry,
+                        width: rw,
+                        height: rh,
+                    };
+                    let hud_scale = fit_hud_scale(region, monitor, scale, 0.85);
+                    let hud_above = hud_anchor(region, monitor, scale, hud_scale).1;
+                    let ctx = Context {
+                        id: "test".into(),
+                        kind: "video".into(),
+                        width: rw as f64 / scale,
+                        height: rh as f64 / scale,
+                        scale,
+                        frame_color: "#ffffff".into(),
+                        hud_scale,
+                        hud_above,
+                    };
+                    for label in ["screen-tools", "screen-hud"] {
+                        let full = dock_bounds(&ctx, region, monitor, label, false).unwrap();
+                        let small = dock_bounds(&ctx, region, monitor, label, true).unwrap();
+                        for dock in [full, small] {
+                            assert!(
+                                dock.x >= x
+                                    && dock.y >= y
+                                    && dock.x + dock.width as i32 <= x + width as i32
+                                    && dock.y + dock.height as i32 <= y + height as i32,
+                                "{label}: {dock:?} / {monitor:?} at {scale}"
+                            );
+                        }
+                        assert_eq!(full.x, small.x);
+                        let control_y = if label == "screen-hud" && hud_above {
+                            full.y + full.height as i32 - small.height as i32
+                        } else {
+                            full.y
+                        };
+                        assert_eq!(control_y, small.y, "compact toggle moves the control bar");
+                    }
+                }
+            }
+        }
+    }
     #[test]
     fn blur_sampling_stays_inside_capture_at_scaled_negative_origin() {
         let area = Region {

@@ -44,6 +44,10 @@ try {
   assert.equal(await page.getByRole('button').count(), 0);
   const frame = await page.getByTestId('recording-frame').boundingBox();
   assert.deepEqual(frame, { x: 200, y: 200, width: 400, height: 250 });
+  assert.equal(await page.getByTestId('recording-frame').evaluate(el=>getComputedStyle(el).borderRadius),'14px');
+  await page.emulateMedia({reducedMotion:'reduce'});
+  assert.equal(await page.locator('.capture-border-beam').evaluate(el=>getComputedStyle(el).display),'none');
+  await page.emulateMedia({reducedMotion:'no-preference'});
   assert.equal(await page.locator('[data-slot="folder"]').count(), 0);
   assert.equal(await page.locator('.screen-indicator').evaluate(el => getComputedStyle(el).pointerEvents), 'none');
   await page.evaluate(() => { window.videoStatus = { phase: 'saving', seconds: 65, path: '', error: '', copied: false }; });

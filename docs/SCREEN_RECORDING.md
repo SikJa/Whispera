@@ -19,16 +19,18 @@ Cada selección pertenece a un monitor; reconoce
 su escala de Windows y monitores colocados a la izquierda del principal.
 El área queda fija: no sigue a una ventana que se mueva.
 
-Mientras grabás, el borde sigue marcando el recorte y aparece al costado la misma
-carpeta animada del dictado, con el color y patrón que configuraste.
-El recuadro es blanco por defecto y tiene un selector de color independiente
-en Configuración, compartido por imagen y video.
-La barra de dibujo y la carpeta se pueden arrastrar. La barra se puede contraer;
-la carpeta se puede ocultar y deja un control pequeño con el tiempo de grabación.
+Mientras grabás, el borde redondeado sigue marcando el recorte y una luz recorre
+su contorno (border beam). Es blanco por defecto, con color configurable para
+imagen y video. Respeta la preferencia de movimiento reducido de Windows.
+La barra de dibujo queda fija a la derecha y los controles debajo del recuadro;
+si falta espacio, se ajustan dentro de los bordes de la pantalla. Los grosores se
+eligen con cuatro muestras visuales. La barra se puede contraer; la carpeta
+animada conserva tu color y patrón y se puede ocultar para dejar el contador.
 La preferencia de carpeta compacta se recuerda. No hay leyenda inferior de atajos.
-El borde deja pasar los clics y Windows excluye los controles de la captura. Si no hay
-espacio al costado (por ejemplo, pantalla completa), se ubica junto al borde
-de la pantalla. Al terminar de preparar el MP4, desaparece automáticamente.
+El borde deja pasar los clics y Windows excluye tanto el borde y su animación
+como los controles de la captura. Las esquinas visuales no recortan los archivos:
+el PNG y el MP4 conservan todos los píxeles del área rectangular seleccionada.
+Al terminar de preparar el MP4, los controles desaparecen automáticamente.
 
 Los controles junto a la carpeta permiten pausar, reanudar y cancelar. Pausar
 detiene tanto la imagen como el audio y congela el contador. Al reanudar se crea

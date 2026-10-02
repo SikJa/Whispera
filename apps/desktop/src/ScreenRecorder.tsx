@@ -5,6 +5,7 @@ import { native } from './client';
 import { type Settings } from './client';
 import './screen-recorder.css';
 import { showWhenReady } from './screen-ready';
+import CaptureFrame from './CaptureFrame';
 import { SettingsSwitch } from './ResourceControls';
 import { type CapturePreferences as Preferences, defaultCapturePreferences, VideoAudioSettings } from './CaptureSettings';
 
@@ -72,7 +73,7 @@ export function ScreenSelection({kind='video',frameColor='#ffffff',onPreparing}:
     await beginCapture(rect);
   }}>
     <div className="screen-selection-help" role="status">{busy ? 'Preparando…' : error || (kind==='image'?'Seleccioná el área para capturar.':'Seleccioná el área. Al soltar empieza a grabar.')} <kbd>Ctrl+A: pantalla completa</kbd><kbd>Esc: salir</kbd></div>
-    {rect && <div className="screen-selection-rect" style={{ left: rect.x, top: rect.y, width: rect.width, height: rect.height, borderColor:frameColor }}><span>{Math.round(rect.width)} × {Math.round(rect.height)}</span></div>}
+    {rect && <CaptureFrame className="screen-selection-rect" width={rect.width} height={rect.height} color={frameColor} style={{left:rect.x,top:rect.y}}><span>{Math.round(rect.width)} × {Math.round(rect.height)}</span></CaptureFrame>}
   </div>;
 }
 
@@ -81,7 +82,7 @@ export function ScreenIndicator({rect:area,kind='video'}:{rect?:Rect;kind?:'vide
   const rect = area ?? { x:Number(query.get('x')),y:Number(query.get('y')),width:Number(query.get('width')),height:Number(query.get('height')) };
   const [color,setColor]=useState('#ffffff');
   useEffect(()=>{let alive=true;void invoke<Appearance>('screen_appearance').then(settings=>{if(alive)setColor(settings.frameColor??'#ffffff');}).catch(()=>{});return()=>{alive=false;};},[]);
-  return <div className="screen-indicator" aria-label="Área de captura"><div className="screen-recording-frame" data-image={kind==='image'} data-testid="recording-frame" style={{left:rect.x,top:rect.y,width:rect.width,height:rect.height,borderColor:color}}/></div>;
+  return <div className="screen-indicator" aria-label="Área de captura"><CaptureFrame className="screen-recording-frame" image={kind==='image'} testId="recording-frame" width={rect.width} height={rect.height} color={color} style={{left:rect.x,top:rect.y}}/></div>;
 }
 
 export default function ScreenRecorder() {

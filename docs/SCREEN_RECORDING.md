@@ -1,9 +1,10 @@
 # Capturas y video
 
 En Configuración → Capturas y video elegí el audio predeterminado (sin audio,
-computadora, micrófono o ambos) y un atajo distinto del dictado. Guardá las
-preferencias. Hacé clic en el campo y presioná la combinación: las teclas y los
-signos «+» se completan solos. También funciona para dictado y captura de imagen.
+computadora, micrófono o ambos). Ahí también se muestra el micrófono detectado.
+En Configuración → Atajos configurá dictado, video e imagen en un mismo lugar.
+Hacé clic en el campo y presioná la combinación: las teclas y los signos «+» se
+completan solos. Guardá los cambios; cada función necesita un atajo distinto.
 Mientras editás el atajo se suspende su activación para que no empiece a grabar.
 Los atajos existentes se conservan. En instalaciones nuevas: **Control+Shift+F9**, sin audio.
 
@@ -19,16 +20,25 @@ su escala de Windows y monitores colocados a la izquierda del principal.
 El área queda fija: no sigue a una ventana que se mueva.
 
 Mientras grabás, el borde sigue marcando el recorte y aparece al costado la misma
-carpeta animada del dictado, con el color, patrón y escala que configuraste.
+carpeta animada del dictado, con el color y patrón que configuraste.
 El recuadro es blanco por defecto y tiene un selector de color independiente
 en Configuración, compartido por imagen y video.
-La barra de dibujo queda junto al recorte, sin ventana de Detener o Copiar video.
-El indicador deja pasar los clics y Windows lo excluye de la captura. Si no hay
+La barra de dibujo y la carpeta se pueden arrastrar. La barra se puede contraer;
+la carpeta se puede ocultar y deja un control pequeño con el tiempo de grabación.
+La preferencia de carpeta compacta se recuerda. No hay leyenda inferior de atajos.
+El borde deja pasar los clics y Windows excluye los controles de la captura. Si no hay
 espacio al costado (por ejemplo, pantalla completa), se ubica junto al borde
 de la pantalla. Al terminar de preparar el MP4, desaparece automáticamente.
 
+Los controles junto a la carpeta permiten pausar, reanudar y cancelar. Pausar
+detiene tanto la imagen como el audio y congela el contador. Al reanudar se crea
+otro tramo; al terminar se unen sin recomprimir la imagen. El mismo atajo o
+Escape también termina un video pausado. Cancelar descarta únicamente esa sesión,
+sin copiarla ni agregarla al historial. El botón del puntero o **V** permite usar
+el mouse normalmente después de dibujar; contraer las herramientas también lo hace.
+
 Formato: MP4, H.264 CRF 18, 30 FPS, resolución del recorte (se agrega como máximo un
-píxel de borde para dimensiones pares). Audio opcional AAC 192 kbps. El audio
+píxel de borde para dimensiones pares). Audio opcional AAC 192 kbps, 48 kHz estéreo. El audio
 de computadora usa el dispositivo de reproducción predeterminado de Windows;
 el micrófono usa el dispositivo de entrada predeterminado. Cambiar de dispositivo
 durante la grabación no está soportado. No se graba audio sin elegirlo.
@@ -53,13 +63,18 @@ El atajo de imagen predeterminado es **Control+Shift+F10** y se configura aparte
 Seleccioná el área, anotá si querés y copiá con **Ctrl+C** o guardá con **Ctrl+S**.
 Las imágenes usan PNG sin pérdida y la resolución física del recorte.
 
+La opción **Copiar al soltar la selección**, en Capturas y video, envía el PNG
+directamente al portapapeles y cierra el recuadro al soltar el mouse. Está desactivada
+inicialmente para conservar el editor. Si el portapapeles falla, se abre la misma
+imagen en el editor para poder reintentar sin perder la captura.
+
 Ambos modos incluyen lápiz, línea, flecha, recuadro, resaltador, texto y bloque
 difuminado con esquinas redondeadas. **Ctrl+Z** deshace; **Ctrl+Y** o
 **Ctrl+Shift+Z** rehace; **Shift** alinea; **V** vuelve al puntero para usar la
 pantalla normalmente. El difuminado de video es una máscara fija opaca de una
 muestra suavizada; no sigue objetos. Deshacer no cambia cuadros ya grabados.
 
-«Capturas recientes» permite volver a copiar los últimos 12 PNG/MP4. El historial
+**Historial → Capturas y videos** permite volver a copiar los últimos 12 PNG/MP4. El historial
 de transcripciones permite guardar las correcciones, además de copiar el texto.
 
 ## Desarrollo

@@ -11,10 +11,8 @@ import RecorderPreview from "./RecorderPreview";
 import Recorder from "./Recorder";
 import FloatingRecorder from "./FloatingRecorder";
 import FileImport from './FileImport';
-import HotkeyInput from "./HotkeyInput";
-import { formatHotkey } from "./hotkey-capture";
 import ScreenRecorder, { ScreenOverlay, ScreenIndicator } from './ScreenRecorder';
-import { ScreenInk, ScreenTools } from './ScreenEditor';
+import { ScreenInk, ScreenTools, ScreenHud } from './ScreenEditor';
 import SoundLab, { soundPairs } from "./SoundLab";
 import { Pencil, Volume2, RotateCcw, Play } from 'lucide-react';
 import { invoke } from "@tauri-apps/api/core";
@@ -22,14 +20,16 @@ import { selectionHex } from "./palette";
 import * as api from "./client";
 import "./style.css";
 import "./desktop.css";
-import Onboarding, { SetupGate } from './Onboarding';
+import { SetupGate } from './Onboarding';
+import GroqKeyGuide from './GroqKeyGuide';
+import { ShortcutSettings, CaptureHistory } from './CaptureSettings';
 
 const routes = [
   { id: "transcription", name: "Transcripción", icon: AudioLines, group: "Preferencias" },
   { id: "dictionary", name: "Diccionario personal", icon: BookOpen },
   { id: "appearance", name: "Apariencia", icon: Palette },
   { id: "color", name: "Personalizado", icon: Paintbrush },
-  { id: "hotkey", name: "Atajo de grabación", icon: Keyboard },
+  { id: "hotkey", name: "Atajos", icon: Keyboard },
   { id: "screen", name: "Capturas y video", icon: Play },
   { id: "sounds", name: "Sonidos", icon: Volume2 },
   { id: "history", name: "Historial", icon: History, group: "Tu espacio" },
@@ -39,14 +39,14 @@ type Route = typeof routes[number]["id"];
 const descriptions: Record<Route, string> = {
   transcription: "Tu voz, con tus preferencias.", dictionary: "Las palabras que tienen que salir bien.",
   appearance: "Una carpeta a tu manera.", color: "Encontrá tu color.",
-  hotkey: "Tu próximo dictado, a una tecla.", history: "Todo lo que dijiste, en un lugar.",
+  hotkey: "Dictado, video y capturas, cada uno con su combinación.", history: "Transcripciones, capturas y videos, en un lugar.",
   diagnostics: "El estado de Whispera.",
   sounds: "Inicio y fin del dictado.",
   screen: "Seleccioná, marcá y pegá. Imagen o video, con tus atajos.",
 };
 
 function SettingsApp() {
-  const [setup, setSetup] = useState(false);
+  const [historyKind,setHistoryKind] = useState<'text'|'captures'>('text');
   const [data, setData] = useState<api.Snapshot>();
   const [route, setRoute] = useState<Route>("transcription");
   const [message, setMessage] = useState("");
@@ -68,7 +68,6 @@ function SettingsApp() {
   },[route]);
   const run = async (work: () => Promise<unknown>, success: string) => { setBusy(true); try { await work(); await refresh(); setMessage(success); return true; } catch (error) { setMessage(String(error)); return false; } finally { setBusy(false); } };
   if (!data) return <div className="desktop-loading" role="status">{message || "Cargando configuración…"}</div>;
-  if (setup) return <Onboarding onDone={() => { setSetup(false); void refresh(); }} />;
   const patch = (change: Partial<api.Settings>) => setData({ ...data, settings: { ...data.settings, ...change } });
   const save = () => run(() => api.saveSettings(data.settings), api.native ? "Configuración guardada" : "Borrador de vista previa guardado");
   const rules = data.rules.filter(r => `${r.source} ${r.target}`.toLowerCase().includes(search.toLowerCase()));
@@ -77,14 +76,13 @@ function SettingsApp() {
 
   return <div className="desktop-app" style={{ "--accent": data.settings.color } as React.CSSProperties}>
     <aside className="desktop-sidebar">
-      <button onClick={() => setSetup(true)}>Guía inicial / Setup</button>
       <a className="desktop-brand" href="?view=settings"><span className="brand-mark"><img src="/cristal/128x128.png" alt="" /></span><span className="brand-copy"><strong>Whispera</strong><small>Voz, capturas y video</small></span></a>
       <nav aria-label="Configuración">{routes.map(item => <React.Fragment key={item.id}>{"group" in item && <p className="nav-group">{item.group}</p>}<button aria-label={item.name} title={item.name} aria-current={route === item.id ? "page" : undefined} className={route === item.id ? "active" : ""} onClick={() => { setRoute(item.id); setSearch(""); setMessage(""); }}><item.icon size={17} /><span>{item.name}</span>{item.id === "dictionary" && <small>{data.rules.length}</small>}</button></React.Fragment>)}</nav>
       <div className="sidebar-bottom"><a className="recorder-link" href="?view=record" onClick={e=>{if(api.native){e.preventDefault();void run(()=>invoke('open_recorder'),'Grabadora abierta');}}}><AudioLines size={18} /><span>Abrir grabadora</span><ArrowUpRight size={15} /></a><span className="engine-status"><i />{api.native ? "Whispera 2" : "Vista previa"}<small>Groq</small></span></div>
     </aside>
     <div className="desktop-main">
       <section className="desktop-content">
-        <div className="page-heading"><div><h1>{title}</h1><p>{descriptions[route]}</p></div>{["transcription", "appearance", "color", "hotkey", "sounds", "diagnostics"].includes(route) && <SaveButton key={route} busy={busy} onSave={save} />}</div>
+        <div className="page-heading"><div><h1>{title}</h1><p>{descriptions[route]}</p></div>{["transcription", "appearance", "color", "sounds", "diagnostics"].includes(route) && <SaveButton key={route} busy={busy} onSave={save} />}</div>
         {message && <div className="notice" role="status">{message}<button aria-label="Cerrar aviso" onClick={() => setMessage("")}><X size={14} /></button></div>}
         <SectionReveal key={route}>
         {route === 'screen' && <ScreenRecorder />}
@@ -97,36 +95,7 @@ function SettingsApp() {
           <div className="form-row"><label htmlFor="language">Idioma del audio</label><select id="language" value={data.settings.language} onChange={e => patch({ language: e.target.value })}><option value="es">Español</option><option value="en">English</option><option value="pt">Português</option><option value="auto">Detectar automáticamente</option></select></div>
           <h3>Conexión</h3><div className="key-line"><label htmlFor="key">Clave API de Groq <span>Almacenada en Windows</span></label><div><input id="key" type="password" autoComplete="off" value={key} placeholder={data.keyConfigured ? "••••••••••••••••" : "gsk_…"} onChange={e => setKey(e.target.value)} /><Button variant="secondary" size="lg" disabled={busy || !key || !api.native} onClick={() => run(async () => { await api.saveKey(key); setKey(""); }, "Clave guardada en el almacén de Windows")}>Guardar clave</Button></div></div>
           
-          <details className="groq-guide">
-            <summary>¿Cómo obtener tu clave de Groq?</summary>
-            <div className="groq-guide-content">
-              <div className="guide-step">
-                <strong>1. Crear una cuenta</strong>
-                <p>Ingresá a <a href="https://console.groq.com" target="_blank" rel="noreferrer">console.groq.com</a> y registrate (es gratis).</p>
-                <img src="/groq-setup/01-login.png" alt="Login GroqCloud" />
-              </div>
-              <div className="guide-step">
-                <strong>2. Ir a API Keys</strong>
-                <p>En el menú lateral, hacé clic en la sección API Keys.</p>
-                <img src="/groq-setup/02-api-keys.png" alt="API Keys" />
-              </div>
-              <div className="guide-step">
-                <strong>3. Crear una nueva clave</strong>
-                <p>Hacé clic en el botón "Create API Key".</p>
-                <img src="/groq-setup/03-create-key.png" alt="Create Key" />
-              </div>
-              <div className="guide-step">
-                <strong>4. Ponerle nombre</strong>
-                <p>Dale un nombre para identificarla (ej. Whispera).</p>
-                <img src="/groq-setup/04-name-key.png" alt="Name Key" />
-              </div>
-              <div className="guide-step">
-                <strong>5. Copiar la clave</strong>
-                <p>Copiala y pegala acá arriba. Empieza con <code>gsk_</code> y no se vuelve a mostrar.</p>
-                <img src="/groq-setup/05-copy-key.png" alt="Copy Key" />
-              </div>
-            </div>
-          </details>
+          <GroqKeyGuide />
 
           <h3>Al terminar</h3><div className="form-row"><label htmlFor="copy">Copiar automáticamente<span>El texto queda en tu portapapeles.</span></label><SettingsSwitch id="copy" label="Copiar al finalizar" checked={data.settings.autoCopy} onChange={checked => patch({ autoCopy: checked })} /></div>
           <div className="form-row"><label htmlFor="paste">Pegar en el destino original</label><SettingsSwitch id="paste" label="Pegar al finalizar dictado" checked={data.settings.autoPaste} onChange={checked=>patch({autoPaste:checked})}/></div>
@@ -154,9 +123,9 @@ function SettingsApp() {
           </>}
         </>}
 
-        {route === "hotkey" && <><div className="shortcut-display"><Keyboard size={24} /><kbd>{formatHotkey(data.settings.hotkey)}</kbd></div><h3>Acceso global</h3><div className="form-row"><label htmlFor="hotkey">Atajo de grabación<span>Iniciar y detener desde otras aplicaciones</span></label><HotkeyInput id="hotkey" value={data.settings.hotkey} onChange={hotkey => patch({ hotkey })} /></div><p className="muted-note">Hacé clic en el campo, presioná tu combinación y guardá los cambios.</p></>}
+        {route === "hotkey" && <ShortcutSettings voice={data.settings.hotkey} onSaved={()=>void refresh()}/>}
 
-        {route === "history" && <><div className="list-toolbar"><label className="search-field"><Search size={16} /><input aria-label="Buscar transcripción" placeholder="Buscar en transcripciones" value={search} onChange={e => setSearch(e.target.value)} /></label><span>{history.length} elementos</span></div>{history.slice(0,historyLimit).map(item => <button className="history-row" key={item.id} onClick={() => {setSelected(item);setMessage('');}}><time>{new Date(item.timestamp).toLocaleString("es-AR")}</time><span>{item.text}</span><ArrowUpRight size={16} /></button>)}{history.length>historyLimit&&<button className="history-more" onClick={()=>setHistoryLimit(n=>n+50)}>Mostrar 50 más</button>}{!history.length && <div className="empty-state"><History size={26} /><h2>{search?'Sin coincidencias':'Sin transcripciones'}</h2><p>{search?'Probá con otra palabra.':'Tus próximos dictados van a aparecer acá.'}</p></div>}</>}
+        {route === "history" && <><div className="history-tabs" role="group" aria-label="Tipo de historial"><button aria-pressed={historyKind==='text'} onClick={()=>setHistoryKind('text')}>Transcripciones</button><button aria-pressed={historyKind==='captures'} onClick={()=>setHistoryKind('captures')}>Capturas y videos</button></div>{historyKind==='captures'?<CaptureHistory/>:<><div className="list-toolbar"><label className="search-field"><Search size={16} /><input aria-label="Buscar transcripción" placeholder="Buscar en transcripciones" value={search} onChange={e => setSearch(e.target.value)} /></label><span>{history.length} elementos</span></div>{history.slice(0,historyLimit).map(item => <button className="history-row" key={item.id} onClick={() => {setSelected(item);setMessage('');}}><time>{new Date(item.timestamp).toLocaleString("es-AR")}</time><span>{item.text}</span><ArrowUpRight size={16} /></button>)}{history.length>historyLimit&&<button className="history-more" onClick={()=>setHistoryLimit(n=>n+50)}>Mostrar 50 más</button>}{!history.length && <div className="empty-state"><History size={26} /><h2>{search?'Sin coincidencias':'Sin transcripciones'}</h2><p>{search?'Probá con otra palabra.':'Tus próximos dictados van a aparecer acá.'}</p></div>}</>}</>}
 
         {route === "diagnostics" && <><div className="diagnostic-line"><span>Interfaz</span><strong>React + Motion</strong><Check size={16} /></div><div className="diagnostic-line"><span>Motor nativo</span><strong>{api.native ? "Tauri / Rust" : "No conectado"}</strong></div><div className="diagnostic-line"><span>Proveedor</span><strong>Groq</strong></div><h3>Eventos</h3><pre className="log-view">{data.logs.join("\n") || "Sin eventos en esta sesión."}</pre></>}
         </SectionReveal>
@@ -170,4 +139,4 @@ const view=new URLSearchParams(location.search).get("view");
 if (view?.startsWith('screen-')) document.documentElement.dataset.screenSelect = 'true';
 if (view === "record") document.documentElement.dataset.floating = "true";
 if(api.native){ const heartbeat=()=>void invoke('ui_heartbeat').catch(()=>{}); heartbeat();setInterval(heartbeat,2000); }
-createRoot(document.getElementById("root")!).render(view === 'screen-select' ? <ScreenOverlay /> : view === 'screen-ink' ? <ScreenInk/> : view === 'screen-tools' ? <ScreenTools/> : view === 'screen-indicator' ? <ScreenIndicator /> : view === "import" ? <FileImport/> : view === "sounds" ? <SoundLab /> : view === "recorder" ? <RecorderPreview /> : view === "record" ? <FloatingRecorder /> : view === "details" ? <Recorder /> : <SetupGate><SettingsApp /></SetupGate>);
+createRoot(document.getElementById("root")!).render(view === 'screen-select' ? <ScreenOverlay /> : view === 'screen-ink' ? <ScreenInk/> : view === 'screen-hud' ? <ScreenHud/> : view === 'screen-tools' ? <ScreenTools/> : view === 'screen-indicator' ? <ScreenIndicator /> : view === "import" ? <FileImport/> : view === "sounds" ? <SoundLab /> : view === "recorder" ? <RecorderPreview /> : view === "record" ? <FloatingRecorder /> : view === "details" ? <Recorder /> : <SetupGate><SettingsApp /></SetupGate>);

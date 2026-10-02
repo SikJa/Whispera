@@ -20,7 +20,7 @@ try{
   await page.getByRole('button',{name:'Guardar',exact:true}).click();await page.getByRole('dialog').getByText('Cambios guardados en el historial').waitFor();
   await page.getByRole('button',{name:'Cerrar transcripción'}).click();assert.equal(await page.evaluate(()=>window.transcripts[0].text),'Texto corregido');
   await page.getByLabel('Buscar transcripción').fill('corregido');assert.equal(await page.locator('.history-row').count(),1);
-  await page.getByRole('button',{name:'Capturas y video',exact:true}).click();await page.getByText('Capturas recientes',{exact:false}).click();
+  await page.getByRole('button',{name:'Capturas y videos',exact:true}).click();
   await page.locator('.capture-recent-row').waitFor();await page.locator('.capture-recent-row').getByRole('button',{name:'Copiar',exact:true}).click();
   assert.ok(await page.evaluate(()=>window.calls.some(c=>c.command==='screen_recent_copy'&&c.args.id==='recent-1')));
   console.log('PASS: history pagination, search, persisted transcript corrections and copying a recent capture (mocked IPC).');

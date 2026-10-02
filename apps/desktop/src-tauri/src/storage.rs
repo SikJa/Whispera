@@ -157,6 +157,17 @@ impl Store {
             .map_err(|e| e.to_string())?;
         Ok(())
     }
+    pub fn put_many(&self, values: &[(&str, serde_json::Value)]) -> Result<(), String> {
+        let mut conn = self.0.lock().map_err(|_| "Base de datos ocupada")?;
+        let transaction = conn.transaction().map_err(|e| e.to_string())?;
+        for (key, value) in values {
+            transaction.execute(
+                "INSERT INTO kv VALUES(?1,?2) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                params![key, value.to_string()],
+            ).map_err(|e| e.to_string())?;
+        }
+        transaction.commit().map_err(|e| e.to_string())
+    }
     pub fn history(&self) -> Result<Vec<Transcript>, String> {
         let conn = self.0.lock().map_err(|_| "Base de datos ocupada")?;
         let mut stmt = conn

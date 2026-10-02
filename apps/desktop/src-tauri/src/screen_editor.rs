@@ -22,6 +22,7 @@ pub struct Context {
     pub height: f64,
     pub scale: f64,
     pub frame_color: String,
+    pub hud_scale: f64,
 }
 #[derive(Default)]
 pub struct Editor {
@@ -47,7 +48,7 @@ fn context(app: &tauri::AppHandle, id: &str) -> Result<Context, String> {
         .ok_or_else(|| "La captura ya termino".into())
 }
 pub fn hide(app: &tauri::AppHandle) {
-    for label in ["screen-ink", "screen-tools"] {
+    for label in ["screen-ink", "screen-tools", "screen-hud"] {
         if let Some(w) = app.get_webview_window(label) {
             let _ = w.hide();
             let _ = w.emit("screen-editor-reset", Option::<Context>::None);
@@ -71,7 +72,7 @@ fn window(
     if let Some(w) = app.get_webview_window(label) {
         return Ok(w);
     }
-    tauri::WebviewWindowBuilder::new(
+    let window = tauri::WebviewWindowBuilder::new(
         app,
         label,
         tauri::WebviewUrl::App(format!("overlay.html?view={label}").into()),
@@ -88,7 +89,25 @@ fn window(
     .visible(false)
     .focused(false)
     .build()
-    .map_err(|e| e.to_string())
+    .map_err(|e| e.to_string())?;
+    if label == "screen-ink" {
+        let app = app.clone();
+        window.on_window_event(move |event| {
+            if matches!(event, tauri::WindowEvent::Focused(true)) {
+                raise_controls(&app);
+            }
+        });
+    }
+    Ok(window)
+}
+fn raise_controls(app: &tauri::AppHandle) {
+    for label in ["screen-tools", "screen-hud"] {
+        if let Some(window) = app.get_webview_window(label) {
+            if window.is_visible().unwrap_or(false) {
+                let _ = window.set_always_on_top(true);
+            }
+        }
+    }
 }
 fn screenshot(app: &tauri::AppHandle, region: Region) -> Result<Vec<u8>, String> {
     let root = app
@@ -154,11 +173,53 @@ pub fn open(
     region: Region,
     kind: &str,
 ) -> Result<(), String> {
+    open_with_image(app, source, rect, region, kind, None)
+}
+pub fn copy_immediately(
+    app: &tauri::AppHandle,
+    source: &tauri::WebviewWindow,
+    rect: Rect,
+    region: Region,
+) -> Result<bool, String> {
+    let bytes = screenshot(app, region)?;
+    let copy = (|| -> Result<(), String> {
+        let root = app
+            .path()
+            .app_cache_dir()
+            .map_err(|e| e.to_string())?
+            .join("screenshots");
+        fs::create_dir_all(&root).map_err(|e| e.to_string())?;
+        let path = root.join(format!("{}.png", uuid::Uuid::new_v4()));
+        fs::write(&path, &bytes).map_err(|e| e.to_string())?;
+        crate::capture_history::remember(&app.state::<crate::storage::Store>(), "image", &path)?;
+        let image = tauri::image::Image::from_bytes(&bytes).map_err(|e| e.to_string())?;
+        app.clipboard()
+            .write_image(&image)
+            .map_err(|e| e.to_string())
+    })();
+    if let Err(error) = copy {
+        open_with_image(app, source, rect, region, "image", Some(bytes))?;
+        *app.state::<Editor>()
+            .feedback
+            .lock()
+            .map_err(|_| "Editor ocupado")? = serde_json::json!({"error": format!("No se pudo copiar automaticamente: {error}. La imagen sigue abierta para reintentar.")});
+        return Ok(false);
+    }
+    Ok(true)
+}
+fn open_with_image(
+    app: &tauri::AppHandle,
+    source: &tauri::WebviewWindow,
+    rect: Rect,
+    region: Region,
+    kind: &str,
+    image: Option<Vec<u8>>,
+) -> Result<(), String> {
     hide(app);
-    let bytes = if kind == "image" {
-        screenshot(app, region)?
-    } else {
-        Vec::new()
+    let bytes = match image {
+        Some(bytes) => bytes,
+        None if kind == "image" => screenshot(app, region)?,
+        _ => Vec::new(),
     };
     let scale = source.scale_factor().map_err(|e| e.to_string())?;
     let ctx = Context {
@@ -167,6 +228,11 @@ pub fn open(
         width: rect.width,
         height: rect.height,
         scale,
+        hud_scale: app
+            .state::<crate::storage::Store>()
+            .get::<crate::storage::Settings>("settings")?
+            .recorder_scale
+            .min(0.85),
         frame_color: app
             .state::<crate::storage::Store>()
             .get::<screen::Preferences>("screen_preferences")
@@ -192,7 +258,7 @@ pub fn open(
     let monitor = source.inner_position().map_err(|e| e.to_string())?;
     let size = source.inner_size().map_err(|e| e.to_string())?;
     let width = (360. * scale).round() as u32;
-    let height = (148. * scale).round() as u32;
+    let height = (if kind == "video" { 128. } else { 168. } * scale).round() as u32;
     let gap = (10. * scale).round() as i32;
     let x = region.x.clamp(
         monitor.x + gap,
@@ -214,6 +280,25 @@ pub fn open(
         .map_err(|e| e.to_string())?;
     for w in [&ink, &tools] {
         w.emit("screen-editor-reset", &ctx)
+            .map_err(|e| e.to_string())?;
+    }
+    if kind == "video" {
+        let hud = window(app, "screen-hud", true)?;
+        screen::protect(&hud)?;
+        let hud_width = ((321. * ctx.hud_scale + 24.) * scale).round() as u32;
+        let hud_height = ((450. * ctx.hud_scale + 42.) * scale).round() as u32;
+        let right = region.x + region.width as i32 + gap;
+        let x = right
+            .min(monitor.x + size.width as i32 - hud_width as i32 - gap)
+            .max(monitor.x + gap);
+        let y = (region.y + gap)
+            .min(monitor.y + size.height as i32 - hud_height as i32 - gap)
+            .max(monitor.y + gap);
+        hud.set_size(tauri::PhysicalSize::new(hud_width, hud_height))
+            .map_err(|e| e.to_string())?;
+        hud.set_position(tauri::PhysicalPosition::new(x, y))
+            .map_err(|e| e.to_string())?;
+        hud.emit("screen-editor-reset", &ctx)
             .map_err(|e| e.to_string())?;
     }
     editor.configured.store(true, Ordering::SeqCst);
@@ -249,21 +334,66 @@ pub fn screen_editor_ready(
     if !app.state::<Editor>().configured.load(Ordering::SeqCst) {
         return Ok(false);
     }
-    if !["screen-tools", "screen-ink"].contains(&window.label()) {
+    if !["screen-tools", "screen-ink", "screen-hud"].contains(&window.label()) {
         return Err("Vista incorrecta".into());
     }
     window.show().map_err(|e| e.to_string())?;
-    if window.label() == "screen-ink" {
-        if let Some(tools) = app.get_webview_window("screen-tools") {
-            if tools.is_visible().unwrap_or(false) {
-                tools.set_always_on_top(true).map_err(|e| e.to_string())?;
-            }
-        }
-    }
+    raise_controls(&app);
     if window.label() == "screen-ink" && ctx.kind == "image" {
         window.set_focus().map_err(|e| e.to_string())?;
     }
     Ok(true)
+}
+#[tauri::command]
+pub fn screen_overlay_layout(
+    app: tauri::AppHandle,
+    window: tauri::WebviewWindow,
+    id: String,
+    compact: bool,
+) -> Result<(), String> {
+    let ctx = context(&app, &id)?;
+    let (width, height) = match window.label() {
+        "screen-tools" => (
+            360.,
+            if compact {
+                46.
+            } else if ctx.kind == "video" {
+                128.
+            } else {
+                168.
+            },
+        ),
+        "screen-hud" if ctx.kind == "video" => {
+            if compact {
+                (250., 48.)
+            } else {
+                (321. * ctx.hud_scale + 24., 450. * ctx.hud_scale + 42.)
+            }
+        }
+        _ => return Err("Vista incorrecta".into()),
+    };
+    window
+        .set_size(tauri::LogicalSize::new(width, height))
+        .map_err(|e| e.to_string())?;
+    if let Some(monitor) = window.current_monitor().map_err(|e| e.to_string())? {
+        let position = window.outer_position().map_err(|e| e.to_string())?;
+        let size = window.outer_size().map_err(|e| e.to_string())?;
+        let origin = monitor.position();
+        let bounds = monitor.size();
+        window
+            .set_position(tauri::PhysicalPosition::new(
+                position.x.clamp(
+                    origin.x,
+                    (origin.x + bounds.width as i32 - size.width as i32).max(origin.x),
+                ),
+                position.y.clamp(
+                    origin.y,
+                    (origin.y + bounds.height as i32 - size.height as i32).max(origin.y),
+                ),
+            ))
+            .map_err(|e| e.to_string())?;
+    }
+    Ok(())
 }
 #[tauri::command]
 pub fn screen_editor_action(
@@ -305,6 +435,7 @@ pub fn screen_editor_action(
                 w.set_focus().map_err(|e| e.to_string())?;
             }
         }
+        raise_controls(&app);
     }
     app.emit_to(
         "screen-ink",

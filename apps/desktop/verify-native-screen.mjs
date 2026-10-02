@@ -7,6 +7,7 @@ import {DatabaseSync} from 'node:sqlite';
 import {spawnSync} from 'node:child_process';
 import {chromium} from 'playwright';
 import {PNG} from 'pngjs';
+import {restoreCaptureHistory} from './tests/native-history.mjs';
 const root=path.resolve('../..'),out=path.join(root,'.local/native-check');fs.mkdirSync(out,{recursive:true});
 const db=new DatabaseSync(path.join(process.env.APPDATA,'app.whispera.desktop','whispera.sqlite'),{readOnly:true});
 const historyBefore=db.prepare('SELECT value FROM kv WHERE key=?').get('capture_history')?.value??null;db.close();
@@ -17,9 +18,11 @@ async function waitNative(check,description){for(let i=0;i<150;i++){if(await che
 async function findWindow(label){for(let tries=0;tries<100;tries++){for(const page of context.pages()){try{if(await page.evaluate(()=>window.__TAURI_INTERNALS__?.metadata?.currentWindow?.label)===label)return page;}catch{}}await new Promise(r=>setTimeout(r,100));}throw Error(`Window ${label} did not open`);}
 const main=await findWindow('main');
 const files=[];
+const previousPreferences=await invoke(main,'screen_preferences');
 assert.equal((await invoke(main,'screen_status')).phase,'idle','test requires idle screen capture');
 assert.ok(!['recording','paused','processing'].includes((await invoke(main,'recording_state')).phase),'test requires idle dictation');
 try{
+  await invoke(main,'screen_save_preferences',{preferences:{...previousPreferences,audio:'none',image_auto_copy:false,frame_color:'#ffffff'}});
   await invoke(main,'open_settings');
   const pattern=await main.evaluate(()=>{
     const width=Math.min(640,innerWidth-160),height=Math.min(400,innerHeight-160),scale=devicePixelRatio;
@@ -37,6 +40,7 @@ try{
   async function select(kind){
     await invoke(main,kind==='image'?'screen_select_image':'screen_select');
     const overlay=await findWindow('screen-select-0');await overlay.locator('.screen-selection').waitFor({timeout:10000});
+    await waitNative(async()=>await invoke(overlay,'plugin:window|is_visible',{label:'screen-select-0'})&&await invoke(overlay,'plugin:window|is_focused',{label:'screen-select-0'}),'selector ready');
     const origin=await invoke(overlay,'plugin:window|inner_position',{label:'screen-select-0'});
     const scale=await invoke(overlay,'plugin:window|scale_factor',{label:'screen-select-0'});
     const x=(position.x+80*pattern.scale-origin.x)/scale,y=(position.y+80*pattern.scale-origin.y)/scale;
@@ -94,8 +98,10 @@ try{
   throw error;
 }finally{
   try{await invoke(main,'screen_cancel_selection');await invoke(main,'screen_stop');}catch{}
+  await invoke(main,'screen_save_preferences',{preferences:previousPreferences});
   const latest=await invoke(main,'screen_status');if(latest.path&&!files.includes(latest.path))files.push(latest.path);
   fs.writeFileSync(path.join(out,'state.json'),JSON.stringify({historyBefore,files},null,2));
+  restoreCaptureHistory(historyBefore,files);
   try{await main.reload();}catch{}
   await browser.close();
 }

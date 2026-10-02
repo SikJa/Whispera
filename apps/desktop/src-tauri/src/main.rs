@@ -1,22 +1,44 @@
 #![cfg_attr(target_os = "windows", windows_subsystem = "windows")]
 mod audio;
+mod capture_history;
 mod engine;
 mod floating_window;
 mod groq;
 mod health;
 mod legacy;
+mod onboarding;
 mod paste;
+mod screen;
+mod screen_editor;
 mod shortcuts;
 mod sounds;
 mod storage;
 mod system_audio;
-mod onboarding;
-mod screen;
-mod screen_editor;
-mod capture_history;
 use storage::{Rule, Settings, Snapshot, Store};
 use tauri::{Manager, State};
 use tauri_plugin_clipboard_manager::ClipboardExt;
+
+#[tauri::command]
+fn open_groq_console() -> Result<(), String> {
+    use windows::{
+        core::w,
+        Win32::UI::{Shell::ShellExecuteW, WindowsAndMessaging::SW_SHOWNORMAL},
+    };
+    let result = unsafe {
+        ShellExecuteW(
+            None,
+            w!("open"),
+            w!("https://console.groq.com/keys"),
+            None,
+            None,
+            SW_SHOWNORMAL,
+        )
+    };
+    if result.0 as isize <= 32 {
+        return Err("No se pudo abrir el navegador".into());
+    }
+    Ok(())
+}
 
 #[tauri::command]
 fn snapshot(store: State<Store>) -> Result<Snapshot, String> {
@@ -32,13 +54,26 @@ fn snapshot(store: State<Store>) -> Result<Snapshot, String> {
     })
 }
 #[tauri::command]
-fn read_settings(store: State<Store>) -> Result<Settings, String> { store.get("settings") }
+fn read_settings(store: State<Store>) -> Result<Settings, String> {
+    store.get("settings")
+}
 #[tauri::command]
-fn read_history(store: State<Store>) -> Result<Vec<storage::Transcript>, String> { store.history() }
+fn read_history(store: State<Store>) -> Result<Vec<storage::Transcript>, String> {
+    store.history()
+}
 #[tauri::command]
-fn save_transcript(id:String,text:String,store:State<Store>,engine:State<engine::Engine>)->Result<(),String>{
-    store.update_transcript(&id,&text)?;
-    engine.recorder.change(|state| { if state.session==id && state.phase=="done" {state.text=text;} });
+fn save_transcript(
+    id: String,
+    text: String,
+    store: State<Store>,
+    engine: State<engine::Engine>,
+) -> Result<(), String> {
+    store.update_transcript(&id, &text)?;
+    engine.recorder.change(|state| {
+        if state.session == id && state.phase == "done" {
+            state.text = text;
+        }
+    });
     Ok(())
 }
 #[tauri::command]
@@ -50,7 +85,12 @@ fn save_settings(
     settings.validate()?;
     let old: Settings = store.get("settings")?;
     let video: screen::Preferences = store.get("screen_preferences").unwrap_or_default();
-    if [shortcuts::parse(&video.hotkey)?, shortcuts::parse(&video.image_hotkey)?].contains(&shortcuts::parse(&settings.hotkey)?) {
+    if [
+        shortcuts::parse(&video.hotkey)?,
+        shortcuts::parse(&video.image_hotkey)?,
+    ]
+    .contains(&shortcuts::parse(&settings.hotkey)?)
+    {
         return Err("El atajo de dictado debe ser distinto de los de video y captura".into());
     }
     shortcuts::update(&app, &old.hotkey, &settings.hotkey)?;
@@ -248,7 +288,10 @@ async fn open_import(app: tauri::AppHandle) -> Result<(), String> {
 
 fn main() {
     tauri::Builder::default()
-        .plugin(tauri_plugin_autostart::init(tauri_plugin_autostart::MacosLauncher::LaunchAgent, Some(vec!["--autostart"])))
+        .plugin(tauri_plugin_autostart::init(
+            tauri_plugin_autostart::MacosLauncher::LaunchAgent,
+            Some(vec!["--autostart"]),
+        ))
         // Launching again must not turn the background dictation tool into a visible window.
         .plugin(tauri_plugin_single_instance::init(|_, _, _| {}))
         .plugin(tauri_plugin_dialog::init())
@@ -256,21 +299,46 @@ fn main() {
         .plugin(
             tauri_plugin_global_shortcut::Builder::new()
                 .with_handler(|app, shortcut, event| {
-                    if app.state::<shortcuts::Capture>().active.load(std::sync::atomic::Ordering::SeqCst) { return; }
+                    if app
+                        .state::<shortcuts::Capture>()
+                        .active
+                        .load(std::sync::atomic::Ordering::SeqCst)
+                    {
+                        return;
+                    }
                     if event.state == tauri_plugin_global_shortcut::ShortcutState::Pressed {
                         let app = app.clone();
-                        if shortcuts::parse("Escape").map(|key|key==*shortcut).unwrap_or(false) && app.state::<screen::Screen>().busy() {
-                            tauri::async_runtime::spawn_blocking(move||{if let Err(error)=screen::escape(&app) { screen::report_error(&app,error); }});
-                            return;
-                        }
-                        let preferences: screen::Preferences = app.state::<Store>().get("screen_preferences").unwrap_or_default();
-                        if shortcuts::parse(&preferences.image_hotkey).map(|key| key == *shortcut).unwrap_or(false) {
+                        if shortcuts::parse("Escape")
+                            .map(|key| key == *shortcut)
+                            .unwrap_or(false)
+                            && app.state::<screen::Screen>().busy()
+                        {
                             tauri::async_runtime::spawn_blocking(move || {
-                                if let Err(error) = screen::select_image(&app) { screen::report_error(&app, error); }
+                                if let Err(error) = screen::escape(&app) {
+                                    screen::report_error(&app, error);
+                                }
                             });
                             return;
                         }
-                        if shortcuts::parse(&preferences.hotkey).map(|key| key == *shortcut).unwrap_or(false) {
+                        let preferences: screen::Preferences = app
+                            .state::<Store>()
+                            .get("screen_preferences")
+                            .unwrap_or_default();
+                        if shortcuts::parse(&preferences.image_hotkey)
+                            .map(|key| key == *shortcut)
+                            .unwrap_or(false)
+                        {
+                            tauri::async_runtime::spawn_blocking(move || {
+                                if let Err(error) = screen::select_image(&app) {
+                                    screen::report_error(&app, error);
+                                }
+                            });
+                            return;
+                        }
+                        if shortcuts::parse(&preferences.hotkey)
+                            .map(|key| key == *shortcut)
+                            .unwrap_or(false)
+                        {
                             tauri::async_runtime::spawn_blocking(move || {
                                 if let Err(error) = screen::toggle(&app) {
                                     screen::report_error(&app, error);
@@ -278,8 +346,16 @@ fn main() {
                             });
                             return;
                         }
-                        let settings: Settings = match app.state::<Store>().get("settings") { Ok(value)=>value,Err(_)=>return };
-                        if shortcuts::parse(&settings.hotkey).map(|key|key!=*shortcut).unwrap_or(true) { return; }
+                        let settings: Settings = match app.state::<Store>().get("settings") {
+                            Ok(value) => value,
+                            Err(_) => return,
+                        };
+                        if shortcuts::parse(&settings.hotkey)
+                            .map(|key| key != *shortcut)
+                            .unwrap_or(true)
+                        {
+                            return;
+                        }
                         tauri::async_runtime::spawn_blocking(move || {
                             let phase = app.state::<engine::Engine>().recorder.snapshot().phase;
                             if phase == "processing" {
@@ -325,7 +401,10 @@ fn main() {
             if let Err(e) = shortcuts::register(app.handle(), &settings.hotkey) {
                 let _ = app.state::<Store>().event(&e);
             }
-            let video: screen::Preferences = app.state::<Store>().get("screen_preferences").unwrap_or_default();
+            let video: screen::Preferences = app
+                .state::<Store>()
+                .get("screen_preferences")
+                .unwrap_or_default();
             if let Err(e) = shortcuts::register(app.handle(), &video.hotkey) {
                 let _ = app.state::<Store>().event(&e);
             }
@@ -335,12 +414,15 @@ fn main() {
             use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
             let show = MenuItem::with_id(app, "settings", "Configuracion", true, None::<&str>)?;
             let record = MenuItem::with_id(app, "recorder", "Abrir grabadora", true, None::<&str>)?;
-            let import = MenuItem::with_id(app, "import", "Transcribir archivo...", true, None::<&str>)?;
+            let import =
+                MenuItem::with_id(app, "import", "Transcribir archivo...", true, None::<&str>)?;
             let video = MenuItem::with_id(app, "screen", "Iniciar video", true, None::<&str>)?;
-            let image = MenuItem::with_id(app, "screenshot", "Capturar imagen", true, None::<&str>)?;
+            let image =
+                MenuItem::with_id(app, "screenshot", "Capturar imagen", true, None::<&str>)?;
             let quit = MenuItem::with_id(app, "quit", "Salir / Quit Whispera", true, None::<&str>)?;
             let sep = PredefinedMenuItem::separator(app)?;
-            let menu = Menu::with_items(app, &[&record, &video, &image, &import, &show, &sep, &quit])?;
+            let menu =
+                Menu::with_items(app, &[&record, &video, &image, &import, &show, &sep, &quit])?;
             tauri::tray::TrayIconBuilder::new()
                 .icon(app.default_window_icon().unwrap().clone())
                 .tooltip("Whispera")
@@ -383,14 +465,20 @@ fn main() {
                     "screenshot" => {
                         let app = app.clone();
                         tauri::async_runtime::spawn_blocking(move || {
-                            if let Err(error) = screen::select_image(&app) { screen::report_error(&app, error); }
+                            if let Err(error) = screen::select_image(&app) {
+                                screen::report_error(&app, error);
+                            }
                         });
                     }
                     _ => {}
                 })
                 .build(app)?;
             if std::env::args().any(|arg| arg == "--settings")
-                || !app.state::<Store>().get::<bool>("setup_complete").unwrap_or(false) {
+                || !app
+                    .state::<Store>()
+                    .get::<bool>("setup_complete")
+                    .unwrap_or(false)
+            {
                 if let Some(window) = app.get_webview_window("main") {
                     window.show()?;
                     window.set_focus()?;
@@ -424,6 +512,12 @@ fn main() {
             screen::screen_copy,
             screen::screen_reveal,
             onboarding::setup_info,
+            open_groq_console,
+            shortcuts::save_all_shortcuts,
+            screen::screen_audio_devices,
+            screen::screen_pause,
+            screen::screen_cancel,
+            screen_editor::screen_overlay_layout,
             onboarding::complete_setup,
             onboarding::set_startup,
             onboarding::validate_key,
@@ -457,10 +551,19 @@ fn main() {
             engine::reveal_recording
         ])
         .on_window_event(|window, event| {
-            if window.label()=="main" && matches!(event,tauri::WindowEvent::Focused(false)|tauri::WindowEvent::CloseRequested{..}|tauri::WindowEvent::Destroyed) {
-                let app=window.app_handle().clone();
-                tauri::async_runtime::spawn_blocking(move||{
-                    if let Err(error)=shortcuts::capture(&app,false) { let _=app.state::<Store>().event(&error); }
+            if window.label() == "main"
+                && matches!(
+                    event,
+                    tauri::WindowEvent::Focused(false)
+                        | tauri::WindowEvent::CloseRequested { .. }
+                        | tauri::WindowEvent::Destroyed
+                )
+            {
+                let app = window.app_handle().clone();
+                tauri::async_runtime::spawn_blocking(move || {
+                    if let Err(error) = shortcuts::capture(&app, false) {
+                        let _ = app.state::<Store>().event(&error);
+                    }
                 });
             }
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {

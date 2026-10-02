@@ -26,7 +26,7 @@
 
 ## ¿Qué es?
 
-**Whispera (K) 0.1.4** es una versión modificada de [Whispera de SikJa](https://github.com/SikJa/Whispera).
+**Whispera (K) 0.1.5** es una versión modificada de [Whispera de SikJa](https://github.com/SikJa/Whispera).
 Conserva el dictado y la carpeta animada del proyecto original, y agrega captura
 de imágenes y video por región. El código original mantiene sus créditos y su
 licencia MIT.
@@ -52,11 +52,12 @@ Aparece como una **carpeta flotante transparente** sobre cualquier ventana. Grab
 | 💾 **Recuperación** | Audio guardado progresivamente, reintentos por fragmento |
 | 🚀 **Inicio con Windows** | Arranca oculto en la bandeja del sistema |
 | 🎬 **Video por región** | Seleccioná, grabá y terminá con el mismo atajo o Escape; MP4/H.264 a 30 FPS |
-| 🖼️ **Capturas PNG** | Resolución nativa y compresión sin pérdida |
+| 🖼️ **Capturas PNG** | Resolución nativa sin pérdida; edición o copia directa al soltar |
 | ✏️ **Anotaciones** | Lápiz, línea, flecha, recuadro, resaltador, texto y difuminado redondeado; deshacer/rehacer |
-| ⌨️ **Atajos al presionar teclas** | Combinaciones independientes para dictado, imagen y video |
+| ⌨️ **Atajos al presionar teclas** | Dictado, imagen y video juntos en Configuración → Atajos |
 | 🔈 **Audio del video** | Sin audio, computadora, micrófono o ambos; preferencia guardada |
-| 🕘 **Capturas recientes** | Volvé a copiar los últimos 12 resultados |
+| 🕘 **Capturas recientes** | Volvé a copiar los últimos 12 resultados desde Historial |
+| ⏯️ **Controles de video** | Pausar, reanudar y descartar; carpeta y herramientas movibles y compactas |
 
 El recuadro de captura es blanco por defecto y su color se puede cambiar en
 Configuración. La carpeta desaparece al terminar el dictado, incluso cuando no
@@ -71,6 +72,9 @@ el portapapeles. [Guía de capturas y video](docs/SCREEN_RECORDING.md).
 1. Descargá `Whispera_*_x64-setup.exe` desde [Releases](https://github.com/kazu00001/Whispera-K/releases)
 2. Instalá para tu usuario — no necesita permisos de administrador
 3. La primera vez se abre una **guía de configuración** de 4 pasos:
+
+El paso de Groq incluye una guía ilustrada para obtener la clave. Al completar
+el setup, desaparece su acceso; los ajustes siguen disponibles en Configuración.
 
 | Paso | Qué hacés |
 |:---:|---|

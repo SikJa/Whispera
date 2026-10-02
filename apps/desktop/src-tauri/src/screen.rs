@@ -24,6 +24,8 @@ pub struct Preferences {
     pub image_hotkey: String,
     #[serde(default = "default_frame_color")]
     pub frame_color: String,
+    #[serde(default)]
+    pub image_auto_copy: bool,
 }
 fn default_frame_color() -> String {
     "#ffffff".into()
@@ -38,6 +40,7 @@ impl Default for Preferences {
             hotkey: "Control+Shift+F9".into(),
             image_hotkey: default_image_hotkey(),
             frame_color: default_frame_color(),
+            image_auto_copy: false,
         }
     }
 }
@@ -57,8 +60,15 @@ pub struct Screen {
     selection_ready: AtomicBool,
 }
 struct Active {
-    stop: mpsc::Sender<()>,
+    stop: mpsc::Sender<CaptureControl>,
     thread: std::thread::JoinHandle<()>,
+}
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum CaptureControl {
+    Stop,
+    Pause,
+    Resume,
+    Cancel,
 }
 impl Screen {
     pub fn new() -> Self {
@@ -77,8 +87,18 @@ impl Screen {
         self.state
             .lock()
             .map(|s| {
-                ["selecting", "starting", "editing", "recording", "saving"]
-                    .contains(&s.phase.as_str())
+                [
+                    "selecting",
+                    "starting",
+                    "editing",
+                    "recording",
+                    "paused",
+                    "pausing",
+                    "resuming",
+                    "cancelling",
+                    "saving",
+                ]
+                .contains(&s.phase.as_str())
             })
             .unwrap_or(true)
     }
@@ -241,6 +261,14 @@ pub fn report_error(app: &tauri::AppHandle, error: String) {
 #[tauri::command]
 pub fn screen_preferences(store: State<Store>) -> Preferences {
     store.get("screen_preferences").unwrap_or_default()
+}
+#[tauri::command]
+pub fn screen_audio_devices() -> serde_json::Value {
+    let host = cpal::default_host();
+    serde_json::json!({
+        "microphone": host.default_input_device().and_then(|device| device.name().ok()),
+        "system": host.default_output_device().and_then(|device| device.name().ok()),
+    })
 }
 #[tauri::command]
 pub fn screen_appearance(store: State<Store>) -> Result<serde_json::Value, String> {
@@ -508,6 +536,30 @@ pub async fn screen_start(
         show_indicator(&window, rect, &kind)?;
         if kind == "image" {
             screen.state.lock().map_err(|_| "Estado ocupado")?.phase = "editing".into();
+            let preferences: Preferences = app
+                .state::<Store>()
+                .get("screen_preferences")
+                .unwrap_or_default();
+            if preferences.image_auto_copy {
+                match crate::screen_editor::copy_immediately(&app, &window, rect, region) {
+                    Ok(true) => {
+                        hide_selectors(&app);
+                        *screen.state.lock().map_err(|_| "Estado ocupado")? = Status {
+                            phase: "idle".into(),
+                            copied: true,
+                            ..Default::default()
+                        };
+                    }
+                    Ok(false) => {} // Clipboard failure: keep the original image open for retry.
+                    Err(error) => {
+                        hide_selectors(&app);
+                        screen.state.lock().map_err(|_| "Estado ocupado")?.phase = "error".into();
+                        report_error(&app, error.clone());
+                        return Err(error);
+                    }
+                }
+                return Ok(());
+            }
             if let Err(error) = crate::screen_editor::open(&app, &window, rect, region, "image") {
                 hide_selectors(&app);
                 screen.state.lock().map_err(|_| "Estado ocupado")?.phase = "error".into();
@@ -530,7 +582,7 @@ pub async fn screen_start(
             .join(uuid::Uuid::new_v4().to_string());
         fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
         if let Some(previous) = screen.active.lock().map_err(|_| "Video ocupado")?.take() {
-            let _ = previous.stop.send(());
+            let _ = previous.stop.send(CaptureControl::Stop);
             let _ = previous.thread.join();
         }
         *screen.state.lock().map_err(|_| "Estado ocupado")? = Status {
@@ -571,7 +623,7 @@ pub async fn screen_start(
                 {
                     if let Some(active) = screen.active.lock().map_err(|_| "Video ocupado")?.take()
                     {
-                        let _ = active.stop.send(());
+                        let _ = active.stop.send(CaptureControl::Cancel);
                         let _ = active.thread.join();
                     }
                     hide_selectors(&app);
@@ -601,7 +653,7 @@ pub fn stop(app: &tauri::AppHandle) -> Result<(), String> {
 fn stop_locked(app: &tauri::AppHandle, screen: &Screen) -> Result<(), String> {
     let active = screen.active.lock().map_err(|_| "Video ocupado")?.take();
     if let Some(active) = active {
-        let _ = active.stop.send(());
+        let _ = active.stop.send(CaptureControl::Stop);
         active
             .thread
             .join()
@@ -615,6 +667,47 @@ pub async fn screen_stop(app: tauri::AppHandle) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || stop(&app))
         .await
         .map_err(|e| e.to_string())?
+}
+#[tauri::command]
+pub async fn screen_pause(app: tauri::AppHandle) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let screen = app.state::<Screen>();
+        let _gate = screen.gate.lock().map_err(|_| "Video ocupado")?;
+        let active = screen.active.lock().map_err(|_| "Video ocupado")?;
+        let active = active.as_ref().ok_or("No hay una grabacion activa")?;
+        let mut state = screen.state.lock().map_err(|_| "Estado ocupado")?;
+        let (action, phase) = match state.phase.as_str() {
+            "recording" => (CaptureControl::Pause, "pausing"),
+            "paused" => (CaptureControl::Resume, "resuming"),
+            _ => return Ok(()),
+        };
+        active
+            .stop
+            .send(action)
+            .map_err(|_| "El motor de video se cerro")?;
+        state.phase = phase.into();
+        Ok(())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+#[tauri::command]
+pub async fn screen_cancel(app: tauri::AppHandle) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let screen = app.state::<Screen>();
+        let _gate = screen.gate.lock().map_err(|_| "Video ocupado")?;
+        if let Some(active) = screen.active.lock().map_err(|_| "Video ocupado")?.take() {
+            let _ = active.stop.send(CaptureControl::Cancel);
+            active
+                .thread
+                .join()
+                .map_err(|_| "El motor de video se cerro")?;
+        }
+        hide_selectors(&app);
+        Ok(())
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 #[derive(Debug, PartialEq)]
 enum ToggleAction {
@@ -634,11 +727,11 @@ fn gated_action(screen: &Screen) -> Result<(MutexGuard<'_, ()>, ToggleAction), S
         .phase
         .as_str()
     {
-        "recording" => ToggleAction::Stop,
+        "recording" | "paused" | "pausing" | "resuming" => ToggleAction::Stop,
         "selecting" => ToggleAction::Cancel,
         "editing" => ToggleAction::Cancel,
         "starting" => ToggleAction::Wait,
-        "saving" => ToggleAction::Wait,
+        "saving" | "cancelling" => ToggleAction::Wait,
         _ => ToggleAction::Select,
     };
     Ok((gate, action))
@@ -862,18 +955,143 @@ fn capture(
     binary: PathBuf,
     dir: PathBuf,
     state: Arc<Mutex<Status>>,
-    stop: mpsc::Receiver<()>,
+    stop: mpsc::Receiver<CaptureControl>,
     ready: mpsc::Sender<Result<(), String>>,
 ) {
-    let result = record(region, prefs, binary, &dir, &state, &stop, &ready);
+    let result = (|| -> Result<Option<PathBuf>, String> {
+        let mut segments = Vec::new();
+        let mut elapsed = 0.;
+        let mut cancelled = false;
+        'capture: loop {
+            let part = dir.join(format!("part-{:04}", segments.len()));
+            fs::create_dir_all(&part).map_err(|e| e.to_string())?;
+            let (path, action, seconds) = record(
+                region,
+                prefs.clone(),
+                binary.clone(),
+                &part,
+                &state,
+                &stop,
+                &ready,
+                elapsed,
+            )?;
+            elapsed += seconds;
+            if let Some(path) = path {
+                segments.push(path);
+            }
+            match action {
+                CaptureControl::Cancel => {
+                    cancelled = true;
+                    break;
+                }
+                CaptureControl::Pause => {
+                    state.lock().map_err(|_| "Estado ocupado")?.phase = "paused".into();
+                    loop {
+                        match stop.recv().unwrap_or(CaptureControl::Stop) {
+                            CaptureControl::Resume => break,
+                            CaptureControl::Cancel => {
+                                cancelled = true;
+                                break 'capture;
+                            }
+                            CaptureControl::Stop => break 'capture,
+                            CaptureControl::Pause => {}
+                        }
+                    }
+                }
+                _ => break,
+            }
+        }
+        if cancelled {
+            // This UUID directory was created for this session; never touch previous captures.
+            let resolved = dir.canonicalize().map_err(|e| e.to_string())?;
+            let root = dir
+                .parent()
+                .ok_or("Directorio de captura invalido")?
+                .canonicalize()
+                .map_err(|e| e.to_string())?;
+            if resolved.parent() != Some(root.as_path())
+                || root.file_name().and_then(|name| name.to_str()) != Some("screen-recordings")
+                || dir
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .and_then(|name| uuid::Uuid::parse_str(name).ok())
+                    .is_none()
+            {
+                return Err("Directorio de captura invalido".into());
+            }
+            fs::remove_dir_all(&resolved).map_err(|e| e.to_string())?;
+            return Ok(None);
+        }
+        state.lock().map_err(|_| "Estado ocupado")?.phase = "saving".into();
+        let output = dir.join(format!(
+            "Whispera-{}.mp4",
+            chrono::Local::now().format("%Y-%m-%d_%H-%M-%S")
+        ));
+        if segments.len() == 1 {
+            fs::rename(&segments[0], &output).map_err(|e| e.to_string())?;
+        } else {
+            let manifest = segments
+                .iter()
+                .map(|path| {
+                    format!(
+                        "file '{}'\n",
+                        path.strip_prefix(&dir)
+                            .unwrap()
+                            .to_string_lossy()
+                            .replace('\\', "/")
+                    )
+                })
+                .collect::<String>();
+            let list = dir.join("segments.txt");
+            fs::write(&list, manifest).map_err(|e| e.to_string())?;
+            let mut child = command(&binary)
+                .args([
+                    "-hide_banner",
+                    "-loglevel",
+                    "error",
+                    "-y",
+                    "-f",
+                    "concat",
+                    "-safe",
+                    "1",
+                    "-i",
+                ])
+                .arg(&list)
+                .args(["-c", "copy", "-movflags", "+faststart"])
+                .arg(&output)
+                .stdin(Stdio::null())
+                .stderr(Stdio::from(
+                    File::create(dir.join("join.log")).map_err(|e| e.to_string())?,
+                ))
+                .spawn()
+                .map_err(|e| e.to_string())?;
+            wait_encoder(&mut child)?;
+            if fs::metadata(&output).map_err(|e| e.to_string())?.len() == 0 {
+                return Err("El video quedo vacio".into());
+            }
+            for path in segments {
+                let _ = fs::remove_file(path);
+            }
+        }
+        state.lock().map_err(|_| "Estado ocupado")?.seconds = elapsed;
+        Ok(Some(output))
+    })();
     match result {
-        Ok(path) => {
+        Ok(Some(path)) => {
             let copied = copy_file(&path);
             if let Ok(mut status) = state.lock() {
                 status.phase = "idle".into();
                 status.path = path.to_string_lossy().into();
                 status.copied = copied.is_ok();
                 status.error = copied.err().unwrap_or_default();
+            }
+        }
+        Ok(None) => {
+            if let Ok(mut status) = state.lock() {
+                *status = Status {
+                    phase: "idle".into(),
+                    ..Default::default()
+                };
             }
         }
         Err(e) => {
@@ -886,15 +1104,35 @@ fn capture(
     }
 }
 
+fn wait_encoder(child: &mut Child) -> Result<(), String> {
+    let deadline = Instant::now() + Duration::from_secs(120);
+    loop {
+        if let Some(exit) = child.try_wait().map_err(|e| e.to_string())? {
+            return if exit.success() {
+                Ok(())
+            } else {
+                Err("No se pudo preparar el MP4; los originales se conservaron".into())
+            };
+        }
+        if Instant::now() > deadline {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err("La preparacion del MP4 tardo demasiado; originales conservados".into());
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+}
+
 fn record(
     region: Region,
     prefs: Preferences,
     binary: PathBuf,
     dir: &Path,
     state: &Arc<Mutex<Status>>,
-    stop: &mpsc::Receiver<()>,
+    stop: &mpsc::Receiver<CaptureControl>,
     ready: &mpsc::Sender<Result<(), String>>,
-) -> Result<PathBuf, String> {
+    elapsed: f64,
+) -> Result<(Option<PathBuf>, CaptureControl, f64), String> {
     let mut tracks = Vec::new();
     if ["system", "both"].contains(&prefs.audio.as_str()) {
         tracks.push(AudioTrack::new(true, &dir)?);
@@ -978,13 +1216,20 @@ fn record(
     }
     *state.lock().map_err(|_| "Estado ocupado")? = Status {
         phase: "recording".into(),
+        seconds: elapsed,
         ..Default::default()
     };
     let _ = ready.send(Ok(()));
     let mut error = None;
+    let mut reason = CaptureControl::Stop;
     loop {
         match stop.recv_timeout(Duration::from_millis(25)) {
-            Ok(_) | Err(mpsc::RecvTimeoutError::Disconnected) => break,
+            Ok(CaptureControl::Resume) => continue,
+            Ok(action) => {
+                reason = action;
+                break;
+            }
+            Err(mpsc::RecvTimeoutError::Disconnected) => break,
             Err(mpsc::RecvTimeoutError::Timeout) => {}
         }
         if child.try_wait().map_err(|e| e.to_string())?.is_some() {
@@ -1000,10 +1245,26 @@ fn record(
         if error.is_some() {
             break;
         }
-        state.lock().map_err(|_| "Estado ocupado")?.seconds = started.elapsed().as_secs_f64();
+        state.lock().map_err(|_| "Estado ocupado")?.seconds =
+            elapsed + started.elapsed().as_secs_f64();
     }
     let seconds = started.elapsed().as_secs_f64();
-    state.lock().map_err(|_| "Estado ocupado")?.phase = "saving".into();
+    {
+        let mut status = state.lock().map_err(|_| "Estado ocupado")?;
+        status.seconds = elapsed + seconds;
+        status.phase = if reason == CaptureControl::Pause {
+            "pausing"
+        } else {
+            "saving"
+        }
+        .into();
+    }
+    if reason == CaptureControl::Cancel {
+        let _ = child.kill();
+        let _ = child.wait();
+        drop(tracks);
+        return Ok((None, reason, seconds));
+    }
     let finalized = finish_process(&mut child);
     for track in &mut tracks {
         track.finish(started, seconds)?;
@@ -1046,6 +1307,11 @@ fn record(
     } else if tracks.len() == 1 {
         mux.args(["-map", "1:a:0", "-c:a", "aac", "-b:a", "192k"]);
     }
+    // Resume can reopen a different Windows default device. Keep the encoded
+    // audio format stable so all segments concatenate without resampling video.
+    if !tracks.is_empty() {
+        mux.args(["-ar", "48000", "-ac", "2"]);
+    }
     mux.args(["-movflags", "+faststart"])
         .arg(&output)
         .stdin(Stdio::null())
@@ -1079,7 +1345,7 @@ fn record(
     for file in ["video.mkv", "system.pcm", "microphone.pcm"] {
         let _ = fs::remove_file(dir.join(file));
     }
-    Ok(output)
+    Ok((Some(output), reason, seconds))
 }
 
 #[cfg(test)]
@@ -1091,6 +1357,7 @@ mod tests {
         assert_eq!(p.hotkey, "alt+x");
         assert_eq!(p.image_hotkey, "Control+Shift+F10");
         assert_eq!(p.frame_color, "#ffffff");
+        assert!(!p.image_auto_copy);
     }
     #[test]
     fn border_color_is_validated() {
@@ -1116,6 +1383,16 @@ mod tests {
         screen.state.lock().unwrap().phase = "recording".into();
         drop(gate);
         assert_eq!(worker.join().unwrap(), ToggleAction::Stop);
+    }
+    #[test]
+    fn shortcut_finishes_paused_video_without_starting_another_selection() {
+        let screen = Screen::new();
+        for phase in ["paused", "pausing", "resuming"] {
+            screen.state.lock().unwrap().phase = phase.into();
+            assert!(screen.busy());
+            let (_guard, action) = gated_action(&screen).unwrap();
+            assert_eq!(action, ToggleAction::Stop);
+        }
     }
     #[test]
     #[ignore = "Records a tiny desktop region and optional default audio devices; run explicitly on Windows"]
@@ -1151,6 +1428,7 @@ mod tests {
                     &state,
                     &stop_rx,
                     &ready_tx,
+                    0.,
                 );
                 if let Err(error) = &result {
                     let _ = ready_tx.send(Err(error.clone()));
@@ -1162,8 +1440,10 @@ mod tests {
                 .expect("capture startup")
                 .expect("capture ready");
             std::thread::sleep(Duration::from_millis(400));
-            stop_tx.send(()).unwrap();
-            let path = thread.join().unwrap().expect("MP4 finalization");
+            stop_tx.send(CaptureControl::Stop).unwrap();
+            let (path, reason, _) = thread.join().unwrap().expect("MP4 finalization");
+            assert_eq!(reason, CaptureControl::Stop);
+            let path = path.expect("saved recording");
             assert!(fs::metadata(&path).unwrap().len() > 1000);
             let info = command(&binary)
                 .args(["-hide_banner", "-i"])

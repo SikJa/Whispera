@@ -26,7 +26,7 @@
 
 ## What is it?
 
-**Whispera (K) 0.1.4** is a modified version of [SikJa's Whispera](https://github.com/SikJa/Whispera).
+**Whispera (K) 0.1.5** is a modified version of [SikJa's Whispera](https://github.com/SikJa/Whispera).
 It keeps the original dictation and animated folder, and adds region screenshots
 and screen recording. The original code retains its credits and MIT license.
 
@@ -51,15 +51,19 @@ It shows up as a **transparent floating folder** on top of any window. Record, t
 | 💾 **Recovery** | Audio saved progressively, per-segment retries |
 | 🚀 **Start with Windows** | Launches hidden in the system tray |
 | 🎬 **Region video** | Select, record and finish with the same shortcut or Escape; MP4/H.264 at 30 FPS |
-| 🖼️ **PNG screenshots** | Native resolution and lossless compression |
+| 🖼️ **PNG screenshots** | Native lossless resolution; edit or copy immediately on release |
 | ✏️ **Annotations** | Pen, line, arrow, rectangle, highlighter, text and rounded blur; undo/redo |
-| ⌨️ **Press-to-set shortcuts** | Separate combinations for dictation, screenshots and video |
+| ⌨️ **Press-to-set shortcuts** | Dictation, screenshots and video together in Shortcut settings |
 | 🔈 **Video audio** | None, system, microphone or both; saved as your preference |
-| 🕘 **Recent captures** | Copy any of the last 12 results again |
+| 🕘 **Recent captures** | Copy any of the last 12 results again from History |
+| ⏯️ **Video controls** | Pause, resume and discard; draggable and collapsible controls |
 
 The capture frame defaults to white and has its own color setting. The folder
 hides after completed dictation even if no paste target was available. Edits
 to past transcriptions can be saved.
+
+Initial setup includes the illustrated Groq key guide. Its setup entry disappears
+after completion; all regular preferences remain available in Settings.
 
 MP4 is copied as a file: **Ctrl+V** works in destination apps that accept file
 pasting. A local temporary copy keeps the clipboard valid.

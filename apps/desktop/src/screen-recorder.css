@@ -66,3 +66,38 @@ html[data-screen-select="true"], html[data-screen-select="true"] body, html[data
 @media print { html,body,#root { height:auto!important; overflow:visible!important; } .screen-ink[data-kind="image"]::after { display:none; } }
 
 .screen-recorder-panel #screen-frame-color { width:48px; height:34px; padding:4px; cursor:pointer; border:1px solid #ffffff25; }
+
+.audio-mode-grid { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:8px; margin:12px 0; }
+.screen-recorder-panel .audio-mode { display:flex; flex-direction:column; align-items:flex-start; gap:8px; min-height:104px; padding:14px 12px; text-align:left; background:#ffffff04; border:1px solid #ffffff14; color:#b8b6c0; }
+.screen-recorder-panel .audio-mode[aria-pressed="true"] { color:#ede5ff; border-color:#ad90df90; background:#b392ee13; }
+.audio-mode strong { font-size:13px; font-weight:550; }
+.audio-mode small { font-size:11px; line-height:1.4; color:#92909a; }
+.capture-device-info { display:flex; align-items:center; gap:14px; padding:13px 15px; background:#ffffff03; border-radius:10px; margin-bottom:26px; }
+.capture-device-info>div { flex:1; min-width:0; }
+.capture-device-info span { display:block; color:#88868f; font-size:11px; margin-bottom:5px; }
+.capture-device-info strong { display:block; font-size:12px; font-weight:500; color:#c9c6d0; overflow-wrap:anywhere; }
+.capture-device-info strong+span { margin-top:12px; }
+.screen-recorder-panel .capture-device-info button { display:grid; place-items:center; padding:8px; border:0; background:transparent; }
+.shortcut-setting-row label>svg { vertical-align:middle; margin-right:8px; color:#aca8b6; }
+.history-tabs { display:flex; gap:6px; margin-bottom:24px; border-bottom:1px solid #ffffff12; padding-bottom:12px; }
+.history-tabs button { padding:9px 14px; border:1px solid transparent; border-radius:8px; background:transparent; color:#9995a3; cursor:pointer; }
+.history-tabs button[aria-pressed="true"] { color:#f1ebfc; border-color:#ffffff18; background:#ffffff08; }
+@media(max-width:720px) { .audio-mode-grid { grid-template-columns:repeat(2,minmax(0,1fr)); } }
+
+.capture-tool-header { display:flex; align-items:center; gap:5px; height:24px; margin-bottom:5px; color:#92929b; font-size:11px; }
+.capture-tool-header>span { flex:1; }
+.capture-tool-header button,.capture-hud-controls button { display:grid; place-items:center; padding:0; width:26px; height:24px; border:0; border-radius:5px; color:#cac8d3; background:transparent; cursor:pointer; }
+.capture-tool-header button:hover,.capture-hud-controls button:hover { color:#fff; background:#ffffff15; }
+.capture-tool-header .capture-drag { cursor:grab; touch-action:none; }
+.capture-toolbar[data-compact="true"] .capture-tool-header { margin-bottom:0; }
+.capture-toolbar[data-compact="true"] { padding:6px 8px; }
+.capture-hud { position:fixed; inset:0; user-select:none; touch-action:none; color:#f2eff7; cursor:grab; }
+.capture-hud-folder { position:absolute; }
+.capture-hud-controls { position:absolute; bottom:4px; left:8px; right:8px; display:flex; align-items:center; justify-content:center; gap:5px; height:34px; padding:0 8px; box-sizing:border-box; border:1px solid #ffffff26; border-radius:10px; background:#202024; box-shadow:0 2px 8px #0003; }
+.capture-hud-grip { display:flex; align-items:center; color:#94919e; margin-right:auto; }
+.capture-hud-controls button { width:29px; height:27px; }
+.capture-hud-controls button:disabled { opacity:.35; cursor:default; }
+.capture-hud-time { display:flex; align-items:center; gap:7px; flex:1; font-size:12px; font-variant-numeric:tabular-nums; cursor:grab; }
+.capture-hud-time i { width:6px; height:6px; border-radius:50%; background:#ff5f62; }
+.capture-hud[data-paused="true"] .capture-hud-time i { background:#ffca3a; }
+.capture-hud-error { position:absolute; bottom:42px; right:8px; left:8px; padding:8px; background:#302126; border:1px solid #9b5656; border-radius:8px; color:#ffd0d0; font-size:12px; }

@@ -158,3 +158,78 @@ pub fn update(app: &tauri::AppHandle, old: &str, new: &str) -> Result<(), String
         .event("Atajo global registrado")?;
     Ok(())
 }
+
+#[tauri::command]
+pub async fn save_all_shortcuts(
+    app: tauri::AppHandle,
+    voice: String,
+    video: String,
+    image: String,
+) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let screen = app.state::<crate::screen::Screen>();
+        let _screen_gate = screen.gate.lock().map_err(|_| "Captura ocupada")?;
+        let engine = app.state::<crate::engine::Engine>();
+        let _voice_gate = engine.gate.lock().map_err(|_| "Dictado ocupado")?;
+        if screen.busy() || crate::health::busy(&engine.recorder.snapshot().phase) {
+            return Err("Termina la grabacion antes de cambiar los atajos".into());
+        }
+        let next = [parse(&voice)?, parse(&video)?, parse(&image)?];
+        if next.contains(&parse("Escape")?)
+            || next[0] == next[1]
+            || next[0] == next[2]
+            || next[1] == next[2]
+        {
+            return Err("Elegi tres atajos distintos. Escape se reserva para salir.".into());
+        }
+        let store = app.state::<crate::storage::Store>();
+        let mut settings: crate::storage::Settings = store.get("settings")?;
+        let mut preferences: crate::screen::Preferences = store.get("screen_preferences")?;
+        let old = [
+            parse(&settings.hotkey)?,
+            parse(&preferences.hotkey)?,
+            parse(&preferences.image_hotkey)?,
+        ];
+        let result = (|| -> Result<(), String> {
+            for key in old {
+                if app.global_shortcut().is_registered(key) {
+                    app.global_shortcut()
+                        .unregister(key)
+                        .map_err(|e| e.to_string())?;
+                }
+            }
+            for key in next {
+                app.global_shortcut().register(key).map_err(|_| {
+                    "Otra aplicacion usa uno de esos atajos. Elegi otra combinacion.".to_string()
+                })?;
+            }
+            settings.hotkey = voice;
+            preferences.hotkey = video;
+            preferences.image_hotkey = image;
+            settings.validate()?;
+            store.put_many(&[
+                (
+                    "settings",
+                    serde_json::to_value(&settings).map_err(|e| e.to_string())?,
+                ),
+                (
+                    "screen_preferences",
+                    serde_json::to_value(&preferences).map_err(|e| e.to_string())?,
+                ),
+            ])
+        })();
+        if result.is_err() {
+            for key in next {
+                let _ = app.global_shortcut().unregister(key);
+            }
+            for key in old {
+                if !app.global_shortcut().is_registered(key) {
+                    let _ = app.global_shortcut().register(key);
+                }
+            }
+        }
+        result
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}

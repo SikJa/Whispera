@@ -17,20 +17,22 @@ const main=await windowFor('main');let owned=false;
 try {
   assert.equal((await invoke(main,'screen_status')).phase,'idle');
   assert.ok(!['recording','paused','processing'].includes((await invoke(main,'recording_state')).phase));
-  const prefs=await invoke(main,'screen_preferences');assert.equal(prefs.hotkey.toLowerCase(),'alt+x','fixture uses the existing user video shortcut');
+  const prefs=await invoke(main,'screen_preferences');
+  const keyCodes=prefs.hotkey.split('+').map(k=>({control:17,ctrl:17,shift:16,alt:18}[k.toLowerCase()]??(/^F(?:[1-9]|1[0-9]|2[0-4])$/.test(k)?111+Number(k.slice(1)):/^Key[A-Z]$/.test(k)?k.charCodeAt(3):/^[a-z]$/i.test(k)?k.toUpperCase().charCodeAt(0):NaN)));
+  assert.ok(keyCodes.every(Number.isFinite),'fixture needs a supported video shortcut');
   await main.evaluate(()=>{
     window.testFocus=[];for(const type of ['focus','blur','focusin','focusout'])window.addEventListener(type,e=>window.testFocus.push({type,target:e.target?.id}));
     const original=window.__TAURI_INTERNALS__.invoke;window.__TAURI_INTERNALS__.invoke=(cmd,args)=>{if(cmd==='shortcut_capture')window.testFocus.push({cmd,args});return original(cmd,args);};
   });
-  await invoke(main,'open_settings');await main.getByRole('button',{name:'Capturas y video',exact:true}).click();
-  const field=main.locator('#screen-hotkey');await field.click();
+  await invoke(main,'open_settings');await main.getByRole('button',{name:'Atajos',exact:true}).click();
+  const field=main.locator('#shortcut-video');await field.click();
   await main.locator('.hotkey-field[data-listening="true"]').waitFor();
   assert.equal(await invoke(main,'plugin:window|is_focused',{label:'main'}),true,'keyboard test requires the app in front');
   owned=true;press([18,88]);await wait(async()=>await field.inputValue()==='Alt + X');
   assert.equal((await invoke(main,'screen_status')).phase,'idle','current shortcut does not record while the field listens');
   press([27]);await wait(async()=>await main.locator('.hotkey-field[data-listening="true"]').count()===0);
   await main.evaluate(()=>new Promise(requestAnimationFrame));
-  press([18,88]);owned=true;await wait(async()=>(await invoke(main,'screen_status')).phase==='selecting');
+  press(keyCodes);owned=true;await wait(async()=>(await invoke(main,'screen_status')).phase==='selecting');
   press([27]);await wait(async()=>(await invoke(main,'screen_status')).phase==='idle');
   const overlay=await windowFor('screen-select-0');
   assert.equal(await invoke(overlay,'plugin:window|is_visible',{label:'screen-select-0'}),false);
@@ -39,7 +41,7 @@ try {
   await invoke(main,'open_settings');await main.evaluate(()=>{document.body.innerHTML='<div style="position:fixed;inset:0;background:#e6edf5;color:#182131;padding:70px;font:24px Segoe UI">Whispera · Prueba de atajos</div>';});
   const origin=await invoke(main,'plugin:window|inner_position',{label:'main'});
   const scale=await invoke(main,'plugin:window|scale_factor',{label:'main'});
-  press([18,88]);await wait(async()=>(await invoke(main,'screen_status')).phase==='selecting');
+  press(keyCodes);await wait(async()=>(await invoke(main,'screen_status')).phase==='selecting');
   await overlay.locator('.screen-selection').waitFor();
   const screenOrigin=await invoke(overlay,'plugin:window|inner_position',{label:'screen-select-0'});
   const screenScale=await invoke(overlay,'plugin:window|scale_factor',{label:'screen-select-0'});
@@ -53,7 +55,7 @@ try {
   await invoke(main,'open_settings');press([27]);
   await wait(async()=>(await invoke(main,'screen_status')).phase==='idle');
   const result=await invoke(main,'screen_status');assert.ok(result.path&&result.copied);
-  for(const label of ['screen-select-0','screen-ink','screen-tools'])assert.equal(await invoke(main,'plugin:window|is_visible',{label}),false,`${label} hides`);
+  for(const label of ['screen-select-0','screen-ink','screen-tools','screen-hud'])assert.equal(await invoke(main,'plugin:window|is_visible',{label}),false,`${label} hides`);
   const statePath='../../.local/native-check/state.json',state=JSON.parse(fs.readFileSync(statePath,'utf8'));state.files.push(result.path);fs.writeFileSync(statePath,JSON.stringify(state,null,2));
   assert.equal(await invoke(main,'screen_editor_context'),null,'native editor releases its image');
   const ink=await windowFor('screen-ink');await wait(async()=>await ink.locator('canvas').count()===0);
@@ -62,7 +64,7 @@ try {
   await wait(async()=>(await invoke(main,'screen_editor_context'))?.kind==='image');
   await ink.getByLabel('Editar captura').waitFor();press([27]);
   await wait(async()=>(await invoke(main,'screen_status')).phase==='idle');
-  for(const label of ['screen-select-0','screen-ink','screen-tools'])assert.equal(await invoke(main,'plugin:window|is_visible',{label}),false,`${label} hides on image Escape`);
+  for(const label of ['screen-select-0','screen-ink','screen-tools','screen-hud'])assert.equal(await invoke(main,'plugin:window|is_visible',{label}),false,`${label} hides on image Escape`);
   const saved=await invoke(main,'screen_preferences');assert.equal(saved.hotkey,prefs.hotkey);assert.equal(saved.audio,prefs.audio);
   console.log('PASS: real Windows Alt+X captured without triggering video, restored on blur/Escape, selection and image cancelled with Escape, white frame, Escape stops/copies video from settings, every overlay closes and canvas memory is released.');
 } catch(error) {

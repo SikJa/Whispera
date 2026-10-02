@@ -38,8 +38,8 @@ try {
   await page.keyboard.press('Control+z');await page.waitForFunction(()=>window.feedback.count===2);
   await page.keyboard.press('Control+y');await page.waitForFunction(()=>window.feedback.count===3);
   await page.goto('http://127.0.0.1:5190/overlay.html?view=screen-tools');
-  await page.setViewportSize({width:360,height:148});await page.getByLabel('Herramientas de captura').waitFor();
-  const toolbar=await page.getByLabel('Herramientas de captura').boundingBox();assert.ok(toolbar.y+toolbar.height<=148,'toolbar fits native window');
+  await page.setViewportSize({width:360,height:168});await page.getByLabel('Herramientas de captura').waitFor();
+  const toolbar=await page.getByLabel('Herramientas de captura').boundingBox();assert.ok(toolbar.y+toolbar.height<=168,'toolbar fits native window');
   await page.getByLabel('Flecha',{exact:true}).click();assert.ok(await page.evaluate(()=>window.calls.some(c=>c.command==='screen_editor_action'&&c.args.action.value==='arrow')));
   await page.screenshot({path:'../../.local/editor-toolbar.png'});
   const video=await browser.newPage({viewport:{width:640,height:480}});await video.addInitScript(installNativeMock,{kind:'video'});
@@ -57,6 +57,13 @@ try {
   await video.goto('http://127.0.0.1:5190/overlay.html?view=screen-tools');await video.getByLabel('Herramientas de captura').waitFor();
   assert.equal(await video.getByRole('button',{name:'Copiar',exact:true}).count(),0);
   assert.equal(await video.getByRole('button',{name:/detener/i}).count(),0);
+  assert.equal(await video.getByText(/Esc.*atajo/i).count(),0,'video footer hint was removed');
+  await video.getByRole('button',{name:'Usar mouse normal'}).click();
+  assert.ok(await video.evaluate(()=>window.calls.some(c=>c.command==='screen_editor_action'&&c.args.action.value==='pointer')));
+  await video.getByRole('button',{name:'Contraer herramientas'}).click();
+  assert.equal(await video.getByRole('toolbar',{name:'Dibujo'}).count(),0);
+  await video.getByRole('button',{name:'Expandir herramientas'}).click();
+  await video.getByRole('toolbar',{name:'Dibujo'}).waitFor();
   assert.deepEqual(errors,[]);
   console.log('PASS: annotations, text, move/delete, undo/redo, clear recovery, clipboard failure recovery, PNG pixels and DPI, toolbar fit, transparent video ink and pointer mode (mocked IPC).');
 } finally {await browser.close();}

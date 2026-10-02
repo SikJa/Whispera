@@ -11,6 +11,9 @@ mod sounds;
 mod storage;
 mod system_audio;
 mod onboarding;
+mod screen;
+mod screen_editor;
+mod capture_history;
 use storage::{Rule, Settings, Snapshot, Store};
 use tauri::{Manager, State};
 use tauri_plugin_clipboard_manager::ClipboardExt;
@@ -29,6 +32,16 @@ fn snapshot(store: State<Store>) -> Result<Snapshot, String> {
     })
 }
 #[tauri::command]
+fn read_settings(store: State<Store>) -> Result<Settings, String> { store.get("settings") }
+#[tauri::command]
+fn read_history(store: State<Store>) -> Result<Vec<storage::Transcript>, String> { store.history() }
+#[tauri::command]
+fn save_transcript(id:String,text:String,store:State<Store>,engine:State<engine::Engine>)->Result<(),String>{
+    store.update_transcript(&id,&text)?;
+    engine.recorder.change(|state| { if state.session==id && state.phase=="done" {state.text=text;} });
+    Ok(())
+}
+#[tauri::command]
 fn save_settings(
     settings: Settings,
     store: State<Store>,
@@ -36,6 +49,10 @@ fn save_settings(
 ) -> Result<(), String> {
     settings.validate()?;
     let old: Settings = store.get("settings")?;
+    let video: screen::Preferences = store.get("screen_preferences").unwrap_or_default();
+    if [shortcuts::parse(&video.hotkey)?, shortcuts::parse(&video.image_hotkey)?].contains(&shortcuts::parse(&settings.hotkey)?) {
+        return Err("El atajo de dictado debe ser distinto de los de video y captura".into());
+    }
     shortcuts::update(&app, &old.hotkey, &settings.hotkey)?;
     store.put("settings", &settings)
 }
@@ -238,9 +255,31 @@ fn main() {
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(
             tauri_plugin_global_shortcut::Builder::new()
-                .with_handler(|app, _, event| {
+                .with_handler(|app, shortcut, event| {
+                    if app.state::<shortcuts::Capture>().active.load(std::sync::atomic::Ordering::SeqCst) { return; }
                     if event.state == tauri_plugin_global_shortcut::ShortcutState::Pressed {
                         let app = app.clone();
+                        if shortcuts::parse("Escape").map(|key|key==*shortcut).unwrap_or(false) && app.state::<screen::Screen>().busy() {
+                            tauri::async_runtime::spawn_blocking(move||{if let Err(error)=screen::escape(&app) { screen::report_error(&app,error); }});
+                            return;
+                        }
+                        let preferences: screen::Preferences = app.state::<Store>().get("screen_preferences").unwrap_or_default();
+                        if shortcuts::parse(&preferences.image_hotkey).map(|key| key == *shortcut).unwrap_or(false) {
+                            tauri::async_runtime::spawn_blocking(move || {
+                                if let Err(error) = screen::select_image(&app) { screen::report_error(&app, error); }
+                            });
+                            return;
+                        }
+                        if shortcuts::parse(&preferences.hotkey).map(|key| key == *shortcut).unwrap_or(false) {
+                            tauri::async_runtime::spawn_blocking(move || {
+                                if let Err(error) = screen::toggle(&app) {
+                                    screen::report_error(&app, error);
+                                }
+                            });
+                            return;
+                        }
+                        let settings: Settings = match app.state::<Store>().get("settings") { Ok(value)=>value,Err(_)=>return };
+                        if shortcuts::parse(&settings.hotkey).map(|key|key!=*shortcut).unwrap_or(true) { return; }
                         tauri::async_runtime::spawn_blocking(move || {
                             let phase = app.state::<engine::Engine>().recorder.snapshot().phase;
                             if phase == "processing" {
@@ -274,6 +313,9 @@ fn main() {
                 .event("Whispera 2 iniciada")
                 .map_err(std::io::Error::other)?;
             app.manage(store);
+            app.manage(shortcuts::Capture::default());
+            app.manage(screen::Screen::new());
+            app.manage(screen_editor::Editor::default());
             app.manage(engine::Engine::new(dir.clone()).map_err(std::io::Error::other)?);
             health::start(app.handle());
             let settings: Settings = app
@@ -283,13 +325,22 @@ fn main() {
             if let Err(e) = shortcuts::register(app.handle(), &settings.hotkey) {
                 let _ = app.state::<Store>().event(&e);
             }
+            let video: screen::Preferences = app.state::<Store>().get("screen_preferences").unwrap_or_default();
+            if let Err(e) = shortcuts::register(app.handle(), &video.hotkey) {
+                let _ = app.state::<Store>().event(&e);
+            }
+            if let Err(e) = shortcuts::register(app.handle(), &video.image_hotkey) {
+                let _ = app.state::<Store>().event(&e);
+            }
             use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
             let show = MenuItem::with_id(app, "settings", "Configuracion", true, None::<&str>)?;
             let record = MenuItem::with_id(app, "recorder", "Abrir grabadora", true, None::<&str>)?;
             let import = MenuItem::with_id(app, "import", "Transcribir archivo...", true, None::<&str>)?;
+            let video = MenuItem::with_id(app, "screen", "Iniciar video", true, None::<&str>)?;
+            let image = MenuItem::with_id(app, "screenshot", "Capturar imagen", true, None::<&str>)?;
             let quit = MenuItem::with_id(app, "quit", "Salir / Quit Whispera", true, None::<&str>)?;
             let sep = PredefinedMenuItem::separator(app)?;
-            let menu = Menu::with_items(app, &[&record, &import, &show, &sep, &quit])?;
+            let menu = Menu::with_items(app, &[&record, &video, &image, &import, &show, &sep, &quit])?;
             tauri::tray::TrayIconBuilder::new()
                 .icon(app.default_window_icon().unwrap().clone())
                 .tooltip("Whispera")
@@ -314,13 +365,32 @@ fn main() {
                         });
                     }
                     "quit" => {
-                        engine::shutdown(app);
-                        app.exit(0);
+                        let app = app.clone();
+                        tauri::async_runtime::spawn_blocking(move || {
+                            let _ = screen::stop(&app);
+                            engine::shutdown(&app);
+                            app.exit(0);
+                        });
+                    }
+                    "screen" => {
+                        let app = app.clone();
+                        tauri::async_runtime::spawn_blocking(move || {
+                            if let Err(error) = screen::select(&app) {
+                                screen::report_error(&app, error);
+                            }
+                        });
+                    }
+                    "screenshot" => {
+                        let app = app.clone();
+                        tauri::async_runtime::spawn_blocking(move || {
+                            if let Err(error) = screen::select_image(&app) { screen::report_error(&app, error); }
+                        });
                     }
                     _ => {}
                 })
                 .build(app)?;
-            if !app.state::<Store>().get::<bool>("setup_complete").unwrap_or(false) {
+            if std::env::args().any(|arg| arg == "--settings")
+                || !app.state::<Store>().get::<bool>("setup_complete").unwrap_or(false) {
                 if let Some(window) = app.get_webview_window("main") {
                     window.show()?;
                     window.set_focus()?;
@@ -329,12 +399,42 @@ fn main() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            shortcuts::shortcut_capture,
+            screen::screen_preferences,
+            screen::screen_escape,
+            screen::screen_appearance,
+            screen::screen_save_preferences,
+            screen::screen_status,
+            screen::screen_select,
+            screen::screen_cancel_selection,
+            screen::screen_start,
+            screen::screen_select_image,
+            screen::screen_selection_kind,
+            screen::screen_overlay_ready,
+            screen_editor::screen_editor_context,
+            screen_editor::screen_editor_image,
+            screen_editor::screen_editor_sample,
+            screen_editor::screen_editor_ready,
+            screen_editor::screen_editor_action,
+            screen_editor::screen_editor_feedback,
+            screen_editor::screen_editor_feedback_get,
+            screen_editor::screen_editor_print,
+            screen_editor::screen_image_export,
+            screen::screen_stop,
+            screen::screen_copy,
+            screen::screen_reveal,
             onboarding::setup_info,
             onboarding::complete_setup,
             onboarding::set_startup,
             onboarding::validate_key,
             snapshot,
             save_settings,
+            read_settings,
+            read_history,
+            save_transcript,
+            capture_history::screen_recent,
+            capture_history::screen_recent_copy,
+            capture_history::screen_recent_reveal,
             save_rules,
             save_api_key,
             transcribe_file,
@@ -357,9 +457,21 @@ fn main() {
             engine::reveal_recording
         ])
         .on_window_event(|window, event| {
+            if window.label()=="main" && matches!(event,tauri::WindowEvent::Focused(false)|tauri::WindowEvent::CloseRequested{..}|tauri::WindowEvent::Destroyed) {
+                let app=window.app_handle().clone();
+                tauri::async_runtime::spawn_blocking(move||{
+                    if let Err(error)=shortcuts::capture(&app,false) { let _=app.state::<Store>().event(&error); }
+                });
+            }
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                 api.prevent_close();
                 let _ = window.hide();
+                if window.label().starts_with("screen-select-") {
+                    let app = window.app_handle().clone();
+                    tauri::async_runtime::spawn_blocking(move || {
+                        let _ = screen::cancel_selection(app);
+                    });
+                }
             }
         })
         .run(tauri::generate_context!())

@@ -2,14 +2,15 @@
   <img src="apps/desktop/public/cristal/128x128.png" width="80" alt="Whispera" />
 </p>
 
-<h1 align="center">Whispera</h1>
+<h1 align="center">Whispera (K)</h1>
 
 <p align="center">
-  Floating voice dictation for Windows.<br/>
-  Press a shortcut, speak, and paste the transcription wherever you need it.
+  Voice dictation, screenshots and screen recording for Windows.<br/>
+  Custom shortcuts, region annotations and clipboard output.
 </p>
 
 <p align="center">
+  <a href="https://github.com/kazu00001/Whispera-K/releases"><kbd>⬇ Download</kbd></a>&ensp;·&ensp;
   <a href="README.md">Español</a>&ensp;·&ensp;
   <a href="https://console.groq.com/keys">Get a Groq key</a>&ensp;·&ensp;
   <a href="docs/PRIVACY.md">Privacy</a>
@@ -25,12 +26,16 @@
 
 ## What is it?
 
+**Whispera (K) 0.1.4** is a modified version of [SikJa's Whispera](https://github.com/SikJa/Whispera).
+It keeps the original dictation and animated folder, and adds region screenshots
+and screen recording. The original code retains its credits and MIT license.
+
 Whispera is a Windows desktop app that turns your voice into text using [Groq](https://groq.com).
 It shows up as a **transparent floating folder** on top of any window. Record, transcribe, and auto-paste — all from a keyboard shortcut.
 
 - 🎙️ **No local models** — uses the Groq API (Whisper Large V3 Turbo)
 - 🔑 **Your own key** — no Whispera account, no server of ours
-- 🪟 **Native on Windows** — Tauri + Rust + React, ~6 MB installer
+- 🪟 **Native on Windows** — Tauri + Rust + React, with FFmpeg included for video
 - 🌐 **Spanish & English** — interface, installer and setup wizard are bilingual
 
 ## Features
@@ -45,10 +50,24 @@ It shows up as a **transparent floating folder** on top of any window. Record, t
 | 🔊 **Sounds** | Custom start/stop themes (cristal, marimba, pop…) |
 | 💾 **Recovery** | Audio saved progressively, per-segment retries |
 | 🚀 **Start with Windows** | Launches hidden in the system tray |
+| 🎬 **Region video** | Select, record and finish with the same shortcut or Escape; MP4/H.264 at 30 FPS |
+| 🖼️ **PNG screenshots** | Native resolution and lossless compression |
+| ✏️ **Annotations** | Pen, line, arrow, rectangle, highlighter, text and rounded blur; undo/redo |
+| ⌨️ **Press-to-set shortcuts** | Separate combinations for dictation, screenshots and video |
+| 🔈 **Video audio** | None, system, microphone or both; saved as your preference |
+| 🕘 **Recent captures** | Copy any of the last 12 results again |
+
+The capture frame defaults to white and has its own color setting. The folder
+hides after completed dictation even if no paste target was available. Edits
+to past transcriptions can be saved.
+
+MP4 is copied as a file: **Ctrl+V** works in destination apps that accept file
+pasting. A local temporary copy keeps the clipboard valid.
+[Screenshot and video guide, in Spanish](docs/SCREEN_RECORDING.md).
 
 ## Install
 
-1. Download `Whispera_*_x64-setup.exe` from [Releases](../../releases)
+1. Download `Whispera_*_x64-setup.exe` from [Releases](https://github.com/kazu00001/Whispera-K/releases)
 2. Install for your user — no admin rights needed
 3. First launch opens a **4-step setup wizard**:
 

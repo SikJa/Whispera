@@ -2,15 +2,15 @@
   <img src="apps/desktop/public/cristal/128x128.png" width="80" alt="Whispera" />
 </p>
 
-<h1 align="center">Whispera</h1>
+<h1 align="center">Whispera (K)</h1>
 
 <p align="center">
-  Dictado por voz flotante para Windows.<br/>
-  Pulsá un atajo, hablá, y el texto se pega donde lo necesites.
+  Dictado por voz, capturas y grabación de pantalla para Windows.<br/>
+  Atajos personalizables, edición sobre el recorte y resultados en el portapapeles.
 </p>
 
 <p align="center">
-  <a href="https://github.com/SikJa/Whispera/releases"><kbd>⬇ Descargar</kbd></a>&ensp;·&ensp;
+  <a href="https://github.com/kazu00001/Whispera-K/releases"><kbd>⬇ Descargar</kbd></a>&ensp;·&ensp;
   <a href="README.en.md">English</a>&ensp;·&ensp;
   <a href="https://console.groq.com/keys">Obtener clave Groq</a>&ensp;·&ensp;
   <a href="docs/PRIVACY.md">Privacidad</a>
@@ -26,12 +26,17 @@
 
 ## ¿Qué es?
 
+**Whispera (K) 0.1.4** es una versión modificada de [Whispera de SikJa](https://github.com/SikJa/Whispera).
+Conserva el dictado y la carpeta animada del proyecto original, y agrega captura
+de imágenes y video por región. El código original mantiene sus créditos y su
+licencia MIT.
+
 Whispera es una app de escritorio para Windows que convierte tu voz en texto usando [Groq](https://groq.com).
 Aparece como una **carpeta flotante transparente** sobre cualquier ventana. Grabás, transcribe, y pega el resultado automáticamente — todo desde un atajo de teclado.
 
 - 🎙️ **Sin modelos locales** — usa la API de Groq (Whisper Large V3 Turbo)
 - 🔑 **Tu propia clave** — sin cuenta de Whispera, sin servidor nuestro
-- 🪟 **Nativo en Windows** — Tauri + Rust + React, ~6 MB de instalador
+- 🪟 **Nativo en Windows** — Tauri + Rust + React, con FFmpeg incluido para video
 - 🌐 **Español e inglés** — interfaz, instalador y guía inicial bilingüe
 
 ## Características
@@ -46,10 +51,24 @@ Aparece como una **carpeta flotante transparente** sobre cualquier ventana. Grab
 | 🔊 **Sonidos** | Temas de inicio/fin personalizables (cristal, marimba, pop…) |
 | 💾 **Recuperación** | Audio guardado progresivamente, reintentos por fragmento |
 | 🚀 **Inicio con Windows** | Arranca oculto en la bandeja del sistema |
+| 🎬 **Video por región** | Seleccioná, grabá y terminá con el mismo atajo o Escape; MP4/H.264 a 30 FPS |
+| 🖼️ **Capturas PNG** | Resolución nativa y compresión sin pérdida |
+| ✏️ **Anotaciones** | Lápiz, línea, flecha, recuadro, resaltador, texto y difuminado redondeado; deshacer/rehacer |
+| ⌨️ **Atajos al presionar teclas** | Combinaciones independientes para dictado, imagen y video |
+| 🔈 **Audio del video** | Sin audio, computadora, micrófono o ambos; preferencia guardada |
+| 🕘 **Capturas recientes** | Volvé a copiar los últimos 12 resultados |
+
+El recuadro de captura es blanco por defecto y su color se puede cambiar en
+Configuración. La carpeta desaparece al terminar el dictado, incluso cuando no
+había un campo donde pegar. Las correcciones del historial de texto se pueden guardar.
+
+El MP4 se copia como archivo: pegarlo con **Ctrl+V** requiere que la aplicación
+de destino admita archivos. Se conserva una copia temporal local para sostener
+el portapapeles. [Guía de capturas y video](docs/SCREEN_RECORDING.md).
 
 ## Instalar
 
-1. Descargá `Whispera_*_x64-setup.exe` desde [Releases](../../releases)
+1. Descargá `Whispera_*_x64-setup.exe` desde [Releases](https://github.com/kazu00001/Whispera-K/releases)
 2. Instalá para tu usuario — no necesita permisos de administrador
 3. La primera vez se abre una **guía de configuración** de 4 pasos:
 
@@ -156,6 +175,10 @@ cd src-tauri && cargo test --locked      # tests de Rust
 ```
 
 El instalador se genera en `src-tauri/target/release/bundle/nsis/`.
+
+Las pruebas de interfaz se ejecutan con `npm test` en `apps/desktop`, con el
+servidor de desarrollo activo en otra terminal. Más detalles en
+[CAPTURE_DESIGN.md](docs/CAPTURE_DESIGN.md).
 
 ## Licencia
 

@@ -1,0 +1,38 @@
+export function installNativeMock({kind='video',width=640,height=480,scale=1}={}) {
+  window.calls=[]; const callbacks=new Map(), listeners=new Map();let next=1;
+  window.videoPreferences={audio:'none',hotkey:'Control+Shift+F9',image_hotkey:'Control+Shift+F10'};
+  window.videoStatus={phase:'idle',seconds:0,path:'',error:'',copied:false};
+  window.editorContext={id:'test-session',kind,width,height,scale};
+  window.feedback={};window.exports=[];window.failExport=false;
+  window.emitNative=(event,payload)=>{for(const [id,v] of listeners)if(v.event===event)callbacks.get(v.handler)?.({event,id,payload});};
+  window.__TAURI_EVENT_PLUGIN_INTERNALS__={unregisterListener:(_,id)=>listeners.delete(id)};
+  window.__TAURI_INTERNALS__={
+    transformCallback:callback=>{const id=next++;callbacks.set(id,callback);return id;},
+    invoke:async(command,args={})=>{
+      window.calls.push({command,args});
+      if(command==='plugin:event|listen'){const id=next++;listeners.set(id,args);return id;}
+      if(command==='plugin:event|unlisten')return;
+      if(command==='setup_info')return{complete:true};
+      if(command==='snapshot')return{settings:{color:'#9024DC',hotkey:'Alt+KeyZ'},rules:[],history:[],logs:[],keyConfigured:false,native:true};
+      if(command==='screen_appearance')return{color:'#9024DC',recorderScale:.85,pattern:'wave'};
+      if(command==='read_settings')return{color:'#9024DC',recorderScale:.85,pattern:'wave'};
+      if(command==='screen_recent')return[{id:'recent-1',kind:'image',created_at:'2026-10-02T00:00:00Z',path:'test.png'}];
+      if(command==='screen_selection_kind')return kind;
+      if(command==='screen_preferences')return window.videoPreferences;
+      if(command==='screen_status')return window.videoStatus;
+      if(command==='screen_save_preferences')window.videoPreferences=args.preferences;
+      if(command==='screen_start'){window.videoStatus.phase=kind==='image'?'editing':'recording';window.emitNative('screen-stage',{rect:args.rect,kind});}
+      if(command==='screen_editor_context')return window.editorContext;
+      if(command==='screen_editor_action')window.emitNative('screen-editor-action',args);
+      if(command==='screen_editor_feedback'){window.feedback=args.feedback;window.emitNative('screen-editor-feedback',args);}
+      if(command==='screen_editor_feedback_get')return window.feedback;
+      if(command==='screen_editor_image'||command==='screen_editor_sample'){
+        const canvas=document.createElement('canvas');canvas.width=(args.rect?.width??width)*scale;canvas.height=(args.rect?.height??height)*scale;
+        const ctx=canvas.getContext('2d');ctx.fillStyle='#eeeeee';ctx.fillRect(0,0,canvas.width,canvas.height);
+        if(command==='screen_editor_sample'){ctx.fillStyle='#3355aa';ctx.fillRect(0,0,canvas.width/2,canvas.height);}
+        return Array.from(Uint8Array.from(atob(canvas.toDataURL('image/png').split(',')[1]),v=>v.charCodeAt(0)));
+      }
+      if(command==='screen_image_export'){if(window.failExport)throw Error('Portapapeles ocupado');window.exports.push(args);return true;}
+    }
+  };
+}

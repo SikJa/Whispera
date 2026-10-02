@@ -97,6 +97,9 @@ pub fn control(app: &tauri::AppHandle, action: &str) -> Result<(), String> {
     }
     match action {
         "start" => {
+            if app.state::<crate::screen::Screen>().busy() {
+                return Err("Termina la grabacion de pantalla antes de dictar".into());
+            }
             if groq::entry()?.get_password().is_err() {
                 return Err("Configura o importa la clave Groq antes de grabar".into());
             }
@@ -149,7 +152,9 @@ pub fn control(app: &tauri::AppHandle, action: &str) -> Result<(), String> {
     Ok(())
 }
 fn hide_after_completion(live_dictation: bool, state: &RecordingState) -> bool {
-    live_dictation && state.phase == "done" && state.error.is_empty()
+    // A completed transcript is already saved. Clipboard/paste warnings must
+    // not keep the live recorder on screen after dictation has finished.
+    live_dictation && state.phase == "done"
 }
 fn schedule(
     app: tauri::AppHandle,
@@ -200,9 +205,17 @@ fn schedule(
                     s.text = text;
                     s.progress.clear();
                 });
-                if hide_after_completion(live_dictation, &engine.recorder.snapshot()) {
+                let completed = engine.recorder.snapshot();
+                if !completed.error.is_empty() {
+                    let _ = app.state::<Store>().event(&completed.error);
+                }
+                if hide_after_completion(live_dictation, &completed) {
                     if let Some(window) = app.get_webview_window("recorder") {
-                        let _ = window.hide();
+                        if let Err(error) = window.hide() {
+                            let _ = app
+                                .state::<Store>()
+                                .event(&format!("No se pudo ocultar la grabadora: {error}"));
+                        }
                     }
                 }
             }
@@ -327,19 +340,33 @@ pub fn shutdown(app: &tauri::AppHandle) {
 mod tests {
     use super::*;
     #[test]
-    fn only_successful_live_dictation_auto_hides() {
+    fn completed_live_dictation_hides_even_when_pasting_is_unavailable() {
         let mut state = RecordingState {
             phase: "done".into(),
             ..Default::default()
         };
         assert!(hide_after_completion(true, &state));
         assert!(!hide_after_completion(false, &state));
-        state.error = "Clipboard failed".into();
-        assert!(!hide_after_completion(true, &state));
-        state.error.clear();
+        for warning in [
+            "Texto copiado. No habia un campo de destino externo al iniciar.",
+            "El destino original ya no existe. Texto conservado en el portapapeles.",
+            "Texto guardado; no se pudo copiar automaticamente.",
+        ] {
+            state.error = warning.into();
+            assert!(hide_after_completion(true, &state));
+            assert!(!hide_after_completion(false, &state));
+        }
+    }
+
+    #[test]
+    fn unfinished_or_failed_dictation_does_not_auto_hide() {
+        let mut state = RecordingState::default();
         for phase in ["idle", "recording", "paused", "processing", "error"] {
             state.phase = phase.into();
             assert!(!hide_after_completion(true, &state));
+            state.error = "No se pudo transcribir el audio".into();
+            assert!(!hide_after_completion(true, &state));
+            state.error.clear();
         }
     }
 }

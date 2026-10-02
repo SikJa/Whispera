@@ -100,6 +100,21 @@ pub struct Snapshot {
 }
 
 impl Store {
+    pub fn update_transcript(&self, id: &str, text: &str) -> Result<(), String> {
+        if text.trim().is_empty() || text.len() > 1_000_000 {
+            return Err("El texto esta vacio o es demasiado largo".into());
+        }
+        let changed = self
+            .0
+            .lock()
+            .map_err(|_| "Base de datos ocupada")?
+            .execute("UPDATE history SET text=?1 WHERE id=?2", params![text, id])
+            .map_err(|e| e.to_string())?;
+        if changed != 1 {
+            return Err("La transcripcion ya no esta disponible".into());
+        }
+        Ok(())
+    }
     pub fn append_once(&self, id: &str, text: &str) -> Result<(), String> {
         self.0
             .lock()
@@ -205,6 +220,31 @@ impl Store {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn editing_history_preserves_other_transcripts_and_timestamp() {
+        let store = Store::open(Path::new(":memory:")).unwrap();
+        store.append_once("first", "Original").unwrap();
+        store.append_once("second", "Otro").unwrap();
+        let timestamp = store
+            .history()
+            .unwrap()
+            .into_iter()
+            .find(|v| v.id == "first")
+            .unwrap()
+            .timestamp;
+        store.update_transcript("first", "Corregido").unwrap();
+        let entries = store.history().unwrap();
+        assert_eq!(entries.len(), 2);
+        let first = entries.iter().find(|v| v.id == "first").unwrap();
+        assert_eq!(first.text, "Corregido");
+        assert_eq!(first.timestamp, timestamp);
+        assert_eq!(
+            entries.iter().find(|v| v.id == "second").unwrap().text,
+            "Otro"
+        );
+        assert!(store.update_transcript("missing", "Texto").is_err());
+        assert!(store.update_transcript("first", " ").is_err());
+    }
     #[test]
     fn defaults_valid() {
         assert!(Settings::default().validate().is_ok());

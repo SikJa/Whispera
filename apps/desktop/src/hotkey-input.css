@@ -1,0 +1,7 @@
+.hotkey-field { width:236px; max-width:56%; min-width:0; }
+.hotkey-field input { width:100%; box-sizing:border-box; cursor:pointer; text-align:center; font-variant-numeric:tabular-nums; }
+.hotkey-field span { display:block; margin-top:6px; font-size:10px; line-height:1.5; color:#97969f; }
+.hotkey-field[data-listening="true"] input { border-color:#c4b2e4; background:#292332; box-shadow:0 0 0 3px #c4b2e414; }
+.hotkey-field input[aria-invalid="true"] + span { color:#efaaaa; }
+.setup-card .hotkey-field { width:100%; max-width:100%; }
+@media(max-width:540px) { .hotkey-field { width:100%; max-width:100%; } }

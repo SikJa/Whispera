@@ -4,14 +4,14 @@ import {invoke} from '@tauri-apps/api/core';
 import {open} from '@tauri-apps/plugin-dialog';
 import {Copy,Check,FolderOpen,Pencil,ArrowLeft} from 'lucide-react';
 import ControlledFolder from './ControlledFolder';
-import {native,snapshot} from './client';
+import {native,readSettings} from './client';
 import './file-import.css';
 export default function FileImport(){
   const [phase,setPhase]=useState<'idle'|'processing'|'done'>('idle');
   const [seconds,setSeconds]=useState(0); const [text,setText]=useState(''); const [error,setError]=useState('');
   const [editing,setEditing]=useState(false); const [copied,setCopied]=useState(false); const [color,setColor]=useState('#9024DC');
   const busy=useRef(false);
-  useEffect(()=>{void snapshot().then(s=>setColor(s.settings.color));},[]);
+  useEffect(()=>{void readSettings().then(s=>setColor(s.color)).catch(e=>setError(String(e)));},[]);
   useEffect(()=>{if(phase!=='processing')return;const timer=setInterval(()=>setSeconds(t=>t+1),1000);return()=>clearInterval(timer);},[phase]);
   async function transcribe(path:string){
     if(busy.current)return;busy.current=true;setError('');setPhase('processing');setSeconds(0);setCopied(false);

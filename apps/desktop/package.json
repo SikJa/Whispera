@@ -8,7 +8,7 @@
     "build": "tsc --noEmit && vite build",
     "tauri": "tauri",
     "desktop": "tauri dev",
-    "test": "node verify-ui.mjs"
+    "test": "node verify-screen.mjs && node verify-editor.mjs && node verify-history.mjs && node verify-hotkeys.mjs"
   },
   "dependencies": {
     "@base-ui/react": "^1.8.0",
@@ -17,6 +17,7 @@
     "@tauri-apps/plugin-dialog": "^2.7.3",
     "class-variance-authority": "^0.7.1",
     "clsx": "2.1.1",
+    "ffmpeg-static": "5.3.0",
     "liquid-gooey": "^0.2.1",
     "lucide-react": "1.20.0",
     "motion": "12.40.0",

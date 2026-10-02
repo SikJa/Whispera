@@ -1,0 +1,68 @@
+html[data-screen-select="true"], html[data-screen-select="true"] body, html[data-screen-select="true"] #root { background: transparent !important; margin: 0; width: 100%; height: 100%; overflow: hidden; }
+.screen-selection { position: fixed; inset: 0; cursor: crosshair; touch-action: none; user-select: none; background: rgba(0,0,0,.25); }
+.screen-selection[data-has-selection="true"] { background: transparent; }
+.screen-selection-help { position: absolute; top: 24px; left: 50%; transform: translateX(-50%); padding: 12px 18px; border-radius: 12px; background: #18181b; color: white; z-index: 2; font-size: 14px; white-space: nowrap; }
+.screen-selection-help button { margin-left: 16px; padding: 5px 9px; color: white; border: 1px solid #666; border-radius: 6px; background: transparent; cursor: pointer; }
+.screen-selection-rect { position: absolute; border: 2px solid #ffffff; background: transparent; box-shadow:0 0 0 100vmax #0004; pointer-events: none; box-sizing: border-box; }
+.screen-selection-rect span { position: absolute; bottom: 5px; left: 5px; background: #18181b; color: white; border-radius: 5px; padding: 4px 8px; font-size: 12px; }
+.screen-recorder-panel button { cursor: pointer; border: 1px solid #52525b; background: #27272a; color: white; padding: 10px 16px; border-radius: 9px; }
+.screen-recorder-panel button:disabled { opacity: .45; cursor: default; }
+.screen-record-actions, .screen-result { margin-top: 20px; display: flex; gap: 12px; flex-wrap: wrap; align-items: center; }
+.screen-result p { width: 100%; }
+.screen-indicator { position: fixed; inset: 0; pointer-events: none; background: transparent; }
+.screen-recording-frame { position: absolute; border: 2px solid; box-sizing: border-box; outline: 1px solid #0008; }
+.screen-folder-indicator { position: absolute; pointer-events: none; }
+.screen-folder-caption { position: absolute; left: 24px; bottom: 27px; z-index: 8; pointer-events: none; }
+.screen-folder-caption span { display: flex; align-items: center; gap: 5px; font-size: 11px; }
+.screen-folder-caption i { width: 6px; height: 6px; border-radius: 50%; background: #ff5f62; }
+.screen-folder-caption output { display: block; margin-top: 5px; font-size: 25px; font-variant-numeric: tabular-nums; }
+.screen-selection-help { border:1px solid #ffffff20; box-shadow:0 8px 32px #0003; }
+.screen-selection-help kbd { margin-left:14px; font:11px 'Segoe UI',sans-serif; color:#aaa; }
+.screen-recording-frame[data-image="true"] { box-shadow:0 0 0 100vmax #0004; }
+.screen-ink { position:fixed; inset:0; background:transparent; touch-action:none; user-select:none; cursor:crosshair; }
+.screen-ink[data-tool="pointer"] { cursor:default; }
+.screen-ink[data-tool="text"] { cursor:text; }
+.screen-ink canvas { display:block; width:100%; height:100%; }
+/* The opaque screenshot covers the native selector's inner border. Keep this
+   preview-only frame above its canvas; PNG export paints only the canvas data. */
+.screen-ink[data-kind="image"]::after { content:""; position:absolute; inset:0; border:2px solid var(--capture-frame-color,#fff); box-sizing:border-box; pointer-events:none; z-index:3; }
+.screen-text-entry { position:absolute; z-index:1; width:min(320px,100%); min-width:80px; padding:2px 4px; border:1px dashed #fff9; outline:1px solid #1119; border-radius:3px; background:#111b; font-weight:600; font-family:'Segoe UI',sans-serif; box-sizing:border-box; }
+.capture-toolbar { width:calc(100% - 8px); margin:4px; padding:8px; box-sizing:border-box; border:1px solid #ffffff26; border-radius:13px; background:#202024; color:#f5f5f7; font-family:'Segoe UI',sans-serif; box-shadow:0 3px 10px #0003; user-select:none; }
+.capture-tool-row { display:flex; align-items:center; gap:3px; min-height:34px; }
+.capture-tool-row + .capture-tool-row { margin-top:4px; }
+.capture-tool-row button { display:inline-flex; align-items:center; justify-content:center; flex-shrink:0; width:32px; height:30px; padding:0; border:1px solid transparent; border-radius:6px; background:transparent; color:#d1d1d8; cursor:pointer; transition:background-color 100ms ease, color 100ms ease; }
+.capture-tool-row button:hover { background:#ffffff12; color:#fff; }
+.capture-tool-row button[aria-pressed="true"] { background:#8d6cef30; border-color:#b49cff70; color:#dfd2ff; }
+.capture-tool-row button:disabled { opacity:.3; cursor:default; }
+.capture-tool-row button:focus-visible,.capture-tool-row input:focus-visible,.capture-tool-row select:focus-visible { outline:2px solid #c1a8ff; outline-offset:1px; }
+.capture-options { gap:6px; border-top:1px solid #ffffff12; padding-top:4px; }
+.capture-options .capture-swatch { width:18px; height:18px; border-radius:50%; border:2px solid #ffffff35; }
+.capture-options .capture-swatch[aria-pressed="true"] { outline:2px solid #d2beff; outline-offset:2px; }
+.capture-options input[type="color"] { width:22px; height:24px; border:0; padding:0; cursor:pointer; background:transparent; }
+.capture-options select { padding:3px; width:59px; font-size:11px; }
+.capture-options button:last-child { margin-left:-3px; }
+.capture-footer { justify-content:flex-end; border-top:1px solid #ffffff12; padding-top:4px; }
+.capture-footer .capture-copy { width:auto; padding:0 12px; gap:6px; margin-right:auto; color:#17121e; background:#d9c9ff; font-size:12px; font-weight:600; }
+.capture-footer .capture-copy:hover { background:#e7dcff; }
+.capture-footer span { display:flex; align-items:center; gap:5px; width:100%; color:#acadb8; font-size:11px; }
+.capture-error { position:absolute; inset:4px; z-index:4; padding:14px 32px 14px 14px; border:1px solid #f88; border-radius:12px; background:#302126; color:#ffccd2; font-size:12px; overflow:auto; }
+.capture-error button { position:absolute; right:6px; top:6px; background:none; border:0; color:inherit; cursor:pointer; font-size:20px; }
+@media print { html,body,#root,.screen-ink { position:static; width:100%; height:auto; overflow:visible; } .screen-ink canvas { width:100%; height:auto; } .screen-text-entry,.capture-toolbar { display:none; } }
+@media (prefers-reduced-motion:reduce) { .capture-tool-row button { transition:none; } }
+.capture-shortcuts { margin-top:22px; color:#92929c; font-size:11px; line-height:1.9; }
+.capture-shortcuts kbd { padding:2px 5px; color:#d1c3eb; border:1px solid #ffffff12; border-radius:4px; font:inherit; }
+.capture-recent { margin-top:26px; border-top:1px solid #ffffff12; padding-top:18px; }
+.capture-recent summary { cursor:pointer; color:#e3dfed; font-size:14px; }
+.capture-recent summary span { display:block; margin:6px 0 0 16px; font-size:11px; color:#93909c; }
+.capture-recent-list { margin-top:15px; }
+.capture-recent-row { display:flex; align-items:center; gap:10px; padding:12px 0; border-bottom:1px solid #ffffff0c; }
+.capture-recent-row>div { flex:1; min-width:0; }
+.capture-recent-row strong { display:block; font-size:12px; font-weight:500; }
+.capture-recent-row time { display:block; margin-top:4px; color:#96919f; font-size:10px; }
+.capture-recent-row button { font-size:11px; padding:6px 9px; }
+.capture-file-kind { display:grid; place-items:center; width:35px; height:38px; border-radius:7px; background:#a183d21a; color:#cdbbea; font-size:10px; }
+.transcript-edit-actions { display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
+.history-more { margin-top:16px; width:100%; padding:12px; border:1px solid #ffffff18; border-radius:9px; background:#ffffff05; color:#c3b2dc; cursor:pointer; }
+@media print { html,body,#root { height:auto!important; overflow:visible!important; } .screen-ink[data-kind="image"]::after { display:none; } }
+
+.screen-recorder-panel #screen-frame-color { width:48px; height:34px; padding:4px; cursor:pointer; border:1px solid #ffffff25; }

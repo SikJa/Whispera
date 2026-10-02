@@ -1,6 +1,99 @@
 use std::str::FromStr;
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Mutex,
+};
 use tauri::Manager;
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut};
+
+#[derive(Default)]
+pub struct Capture {
+    pub active: AtomicBool,
+    gate: Mutex<()>,
+}
+
+pub fn capture(app: &tauri::AppHandle, active: bool) -> Result<(), String> {
+    let state = app.state::<Capture>();
+    let _gate = state.gate.lock().map_err(|_| "Atajos ocupados")?;
+    if active == state.active.load(Ordering::SeqCst) {
+        return Ok(());
+    }
+    if active
+        && !app
+            .get_webview_window("main")
+            .and_then(|w| w.is_focused().ok())
+            .unwrap_or(false)
+    {
+        return Err("Enfoca el campo del atajo".into());
+    }
+    if active
+        && (app.state::<crate::screen::Screen>().busy()
+            || crate::health::busy(
+                &app.state::<crate::engine::Engine>()
+                    .recorder
+                    .snapshot()
+                    .phase,
+            ))
+    {
+        return Err("Termina la grabacion antes de cambiar el atajo".into());
+    }
+    let store = app.state::<crate::storage::Store>();
+    let settings: crate::storage::Settings = store.get("settings")?;
+    let screen: crate::screen::Preferences = store.get("screen_preferences").unwrap_or_default();
+    let values = [settings.hotkey, screen.hotkey, screen.image_hotkey];
+    state.active.store(true, Ordering::SeqCst);
+    if active {
+        // Windows consumes registered shortcuts before a focused input sees them.
+        // Temporarily release only Whispera's keys, including the current combo.
+        for value in &values {
+            let result = parse(value).and_then(|key| {
+                if app.global_shortcut().is_registered(key) {
+                    app.global_shortcut()
+                        .unregister(key)
+                        .map_err(|e| e.to_string())
+                } else {
+                    Ok(())
+                }
+            });
+            if let Err(error) = result {
+                for value in &values {
+                    let _ = register(app, value);
+                }
+                state.active.store(false, Ordering::SeqCst);
+                return Err(error);
+            }
+        }
+    } else {
+        let mut failure = None;
+        for value in &values {
+            if let Err(error) = register(app, value) {
+                failure = Some(error);
+            }
+        }
+        state.active.store(false, Ordering::SeqCst);
+        if let Some(error) = failure {
+            return Err(error);
+        }
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn shortcut_capture(
+    active: bool,
+    window: tauri::WebviewWindow,
+    app: tauri::AppHandle,
+) -> Result<(), String> {
+    if window.label() != "main" {
+        return Err("Configura el atajo desde Configuracion".into());
+    }
+    if active && !window.is_focused().map_err(|e| e.to_string())? {
+        return Err("Enfoca el campo del atajo".into());
+    }
+    tauri::async_runtime::spawn_blocking(move || capture(&app, active))
+        .await
+        .map_err(|e| e.to_string())?
+}
 pub fn parse(value: &str) -> Result<Shortcut, String> {
     if value.chars().count() != 1 {
         return Shortcut::from_str(value)

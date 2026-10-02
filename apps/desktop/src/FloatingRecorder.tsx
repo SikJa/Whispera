@@ -5,7 +5,7 @@ import { MotionConfig } from 'motion/react';
 import { Mic, Copy, Check, Pencil, Settings2, X, FolderOpen, AlertCircle } from 'lucide-react';
 import ControlledFolder from './ControlledFolder';
 import FolderControls from './FolderControls';
-import { native, snapshot, type Settings } from './client';
+import { native, readSettings, type Settings } from './client';
 import { contrastInk } from './palette';
 import './floating-recorder.css';
 
@@ -41,7 +41,7 @@ export default function FloatingRecorder() {
     async function poll() {
       try {
         if (native) { const value = await invoke<State>('recording_state'); if (!disposed) setState(value); }
-        if (Date.now() - refreshed > 1500) { const value = await snapshot(); if (!disposed) setSettings(value.settings); refreshed = Date.now(); }
+        if (Date.now() - refreshed > 1500) { const value = await readSettings(); if (!disposed) setSettings(value); refreshed = Date.now(); }
       } catch (e) { if (!disposed) setError(String(e)); }
       finally { if (!disposed) timer = setTimeout(poll, 250); }
     }

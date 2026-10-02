@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { finishHotkeyCapture } from './hotkey-capture';
 export const native = "__TAURI_INTERNALS__" in window;
 export type Settings = { model: string; language: string; hotkey: string; color: string; pattern: "wave" | "stairs"; placement: "right" | "left" | "top" | "bottom"; autoCopy: boolean; autoPaste: boolean; soundTheme: string; sounds: boolean; recorderScale: number; trimSilence: boolean; watchdog: boolean };
 export type Rule = { id: string; source: string; target: string; enabled: boolean };
@@ -9,7 +10,13 @@ let preview: Snapshot = structuredClone(defaults);
 try { const stored = localStorage.getItem("whispera-v2-preview"); if (stored) preview = { ...defaults, ...JSON.parse(stored), native: false, keyConfigured: false }; } catch { /* Keep empty preview on invalid storage. */ }
 const persist = () => { try { localStorage.setItem("whispera-v2-preview", JSON.stringify(preview)); } catch { /* Optional preview persistence. */ } };
 export async function snapshot(): Promise<Snapshot> { if(native)return invoke("snapshot"); return structuredClone({...preview,settings:{...defaults.settings,...preview.settings}}); }
-export async function saveSettings(settings: Settings) { if (native) await invoke("save_settings", { settings }); else { preview.settings = settings; persist(); } }
+export async function readSettings(): Promise<Settings> { return native ? invoke('read_settings') : structuredClone({...defaults.settings,...preview.settings}); }
+export async function saveTranscript(id:string,text:string) {
+  if(!text.trim())throw Error('La transcripción no puede quedar vacía.');
+  if(native)await invoke('save_transcript',{id,text});
+  else{preview.history=preview.history.map(item=>item.id===id?{...item,text}:item);persist();}
+}
+export async function saveSettings(settings: Settings) { if (native) { await finishHotkeyCapture(); await invoke("save_settings", { settings }); } else { preview.settings = settings; persist(); } }
 export async function saveRules(rules: Rule[]) {
   const seen = new Set<string>();
   for(const r of rules){const key=r.source.trim().toLowerCase(); if(!key||!r.target.trim())throw Error('Completá ambos campos.'); if(key===r.target.trim().toLowerCase())throw Error('La corrección debe cambiar la palabra.'); if(seen.has(key))throw Error('Ya existe una regla para esa palabra.'); seen.add(key);}

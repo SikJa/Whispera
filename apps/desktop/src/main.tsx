@@ -11,6 +11,10 @@ import RecorderPreview from "./RecorderPreview";
 import Recorder from "./Recorder";
 import FloatingRecorder from "./FloatingRecorder";
 import FileImport from './FileImport';
+import HotkeyInput from "./HotkeyInput";
+import { formatHotkey } from "./hotkey-capture";
+import ScreenRecorder, { ScreenOverlay, ScreenIndicator } from './ScreenRecorder';
+import { ScreenInk, ScreenTools } from './ScreenEditor';
 import SoundLab, { soundPairs } from "./SoundLab";
 import { Pencil, Volume2, RotateCcw, Play } from 'lucide-react';
 import { invoke } from "@tauri-apps/api/core";
@@ -26,6 +30,7 @@ const routes = [
   { id: "appearance", name: "Apariencia", icon: Palette },
   { id: "color", name: "Personalizado", icon: Paintbrush },
   { id: "hotkey", name: "Atajo de grabación", icon: Keyboard },
+  { id: "screen", name: "Capturas y video", icon: Play },
   { id: "sounds", name: "Sonidos", icon: Volume2 },
   { id: "history", name: "Historial", icon: History, group: "Tu espacio" },
   { id: "diagnostics", name: "Diagnóstico", icon: Activity },
@@ -37,6 +42,7 @@ const descriptions: Record<Route, string> = {
   hotkey: "Tu próximo dictado, a una tecla.", history: "Todo lo que dijiste, en un lugar.",
   diagnostics: "El estado de Whispera.",
   sounds: "Inicio y fin del dictado.",
+  screen: "Seleccioná, marcá y pegá. Imagen o video, con tus atajos.",
 };
 
 function SettingsApp() {
@@ -51,8 +57,15 @@ function SettingsApp() {
   const [target, setTarget] = useState("");
   const [editingRule, setEditingRule] = useState<string>();
   const [selected, setSelected] = useState<api.Transcript>();
+  const [historyLimit,setHistoryLimit]=useState(50);
   const refresh = () => api.snapshot().then(setData);
   useEffect(() => { refresh().catch(e => setMessage(String(e))); }, []);
+  useEffect(()=>{setHistoryLimit(50);},[route,search]);
+  useEffect(()=>{
+    if(route!=='history'||!api.native)return;let alive=true;
+    void invoke<api.Transcript[]>('read_history').then(history=>{if(alive)setData(d=>d?{...d,history}:d);}).catch(e=>{if(alive)setMessage(String(e));});
+    return()=>{alive=false;};
+  },[route]);
   const run = async (work: () => Promise<unknown>, success: string) => { setBusy(true); try { await work(); await refresh(); setMessage(success); return true; } catch (error) { setMessage(String(error)); return false; } finally { setBusy(false); } };
   if (!data) return <div className="desktop-loading" role="status">{message || "Cargando configuración…"}</div>;
   if (setup) return <Onboarding onDone={() => { setSetup(false); void refresh(); }} />;
@@ -65,7 +78,7 @@ function SettingsApp() {
   return <div className="desktop-app" style={{ "--accent": data.settings.color } as React.CSSProperties}>
     <aside className="desktop-sidebar">
       <button onClick={() => setSetup(true)}>Guía inicial / Setup</button>
-      <a className="desktop-brand" href="?view=settings"><span className="brand-mark"><img src="/cristal/128x128.png" alt="" /></span><span className="brand-copy"><strong>Whispera</strong><small>Tu espacio de voz</small></span></a>
+      <a className="desktop-brand" href="?view=settings"><span className="brand-mark"><img src="/cristal/128x128.png" alt="" /></span><span className="brand-copy"><strong>Whispera</strong><small>Voz, capturas y video</small></span></a>
       <nav aria-label="Configuración">{routes.map(item => <React.Fragment key={item.id}>{"group" in item && <p className="nav-group">{item.group}</p>}<button aria-label={item.name} title={item.name} aria-current={route === item.id ? "page" : undefined} className={route === item.id ? "active" : ""} onClick={() => { setRoute(item.id); setSearch(""); setMessage(""); }}><item.icon size={17} /><span>{item.name}</span>{item.id === "dictionary" && <small>{data.rules.length}</small>}</button></React.Fragment>)}</nav>
       <div className="sidebar-bottom"><a className="recorder-link" href="?view=record" onClick={e=>{if(api.native){e.preventDefault();void run(()=>invoke('open_recorder'),'Grabadora abierta');}}}><AudioLines size={18} /><span>Abrir grabadora</span><ArrowUpRight size={15} /></a><span className="engine-status"><i />{api.native ? "Whispera 2" : "Vista previa"}<small>Groq</small></span></div>
     </aside>
@@ -74,6 +87,7 @@ function SettingsApp() {
         <div className="page-heading"><div><h1>{title}</h1><p>{descriptions[route]}</p></div>{["transcription", "appearance", "color", "hotkey", "sounds", "diagnostics"].includes(route) && <SaveButton key={route} busy={busy} onSave={save} />}</div>
         {message && <div className="notice" role="status">{message}<button aria-label="Cerrar aviso" onClick={() => setMessage("")}><X size={14} /></button></div>}
         <SectionReveal key={route}>
+        {route === 'screen' && <ScreenRecorder />}
         {route==='sounds'&&<><div className="form-row"><label htmlFor="sounds-on">Sonidos de grabación</label><SettingsSwitch id="sounds-on" label="Activar sonidos" checked={data.settings.sounds} onChange={v=>patch({sounds:v})}/></div><div className="form-row"><label htmlFor="sound-theme">Inicio y fin</label><select id="sound-theme" value={data.settings.soundTheme} onChange={e=>patch({soundTheme:e.target.value})}>{soundPairs.map(p=><option value={p.id} key={p.id}>{p.name}</option>)}</select></div><div className="page-actions">{(['start','stop'] as const).map(cue=><button key={cue} onClick={()=>{const audio=new Audio(`/sound-lab/${data.settings.soundTheme}-${cue}.wav`);audio.volume=.35;void audio.play().catch(e=>setMessage(String(e)));}}><Play size={15}/>{cue==='start'?'Escuchar inicio':'Escuchar fin'}</button>)}</div></>}
         {route==='diagnostics'&&<><div className="form-row"><label htmlFor="watchdog">Recuperar interfaz sin respuesta</label><SettingsSwitch id="watchdog" label="Vigilancia de interfaz" checked={data.settings.watchdog} onChange={v=>patch({watchdog:v})}/></div><button disabled={!api.native||busy} onClick={()=>run(()=>invoke('restart_app'),'Reiniciando')}><RotateCcw size={16}/>Reiniciar Whispera</button></>}
         {route === "transcription" && <>
@@ -140,19 +154,20 @@ function SettingsApp() {
           </>}
         </>}
 
-        {route === "hotkey" && <><div className="shortcut-display"><Keyboard size={24} /><kbd>{data.settings.hotkey}</kbd></div><h3>Acceso global</h3><div className="form-row"><label htmlFor="hotkey">Atajo de grabación<span>Iniciar y detener desde otras aplicaciones</span></label><input id="hotkey" value={data.settings.hotkey} onChange={e => patch({ hotkey: e.target.value })} /></div><p className="muted-note">La activación global se verificará en la aplicación nativa.</p></>}
+        {route === "hotkey" && <><div className="shortcut-display"><Keyboard size={24} /><kbd>{formatHotkey(data.settings.hotkey)}</kbd></div><h3>Acceso global</h3><div className="form-row"><label htmlFor="hotkey">Atajo de grabación<span>Iniciar y detener desde otras aplicaciones</span></label><HotkeyInput id="hotkey" value={data.settings.hotkey} onChange={hotkey => patch({ hotkey })} /></div><p className="muted-note">Hacé clic en el campo, presioná tu combinación y guardá los cambios.</p></>}
 
-        {route === "history" && <><div className="list-toolbar"><label className="search-field"><Search size={16} /><input aria-label="Buscar transcripción" placeholder="Buscar en transcripciones" value={search} onChange={e => setSearch(e.target.value)} /></label><span>{data.history.length} elementos</span></div>{history.map(item => <button className="history-row" key={item.id} onClick={() => setSelected(item)}><time>{new Date(item.timestamp).toLocaleString("es-AR")}</time><span>{item.text}</span><ArrowUpRight size={16} /></button>)}{!history.length && <div className="empty-state"><History size={26} /><h2>Sin transcripciones</h2><p>Tu historial anterior no se modifica.</p></div>}</>}
+        {route === "history" && <><div className="list-toolbar"><label className="search-field"><Search size={16} /><input aria-label="Buscar transcripción" placeholder="Buscar en transcripciones" value={search} onChange={e => setSearch(e.target.value)} /></label><span>{history.length} elementos</span></div>{history.slice(0,historyLimit).map(item => <button className="history-row" key={item.id} onClick={() => {setSelected(item);setMessage('');}}><time>{new Date(item.timestamp).toLocaleString("es-AR")}</time><span>{item.text}</span><ArrowUpRight size={16} /></button>)}{history.length>historyLimit&&<button className="history-more" onClick={()=>setHistoryLimit(n=>n+50)}>Mostrar 50 más</button>}{!history.length && <div className="empty-state"><History size={26} /><h2>{search?'Sin coincidencias':'Sin transcripciones'}</h2><p>{search?'Probá con otra palabra.':'Tus próximos dictados van a aparecer acá.'}</p></div>}</>}
 
         {route === "diagnostics" && <><div className="diagnostic-line"><span>Interfaz</span><strong>React + Motion</strong><Check size={16} /></div><div className="diagnostic-line"><span>Motor nativo</span><strong>{api.native ? "Tauri / Rust" : "No conectado"}</strong></div><div className="diagnostic-line"><span>Proveedor</span><strong>Groq</strong></div><h3>Eventos</h3><pre className="log-view">{data.logs.join("\n") || "Sin eventos en esta sesión."}</pre></>}
         </SectionReveal>
       </section>
     </div>
-    <ModalOverlay className="modal-backdrop desktop-app-modal" isOpen={!!selected} isDismissable onOpenChange={open => { if (!open) setSelected(undefined); }}><Modal className="transcript-modal"><Dialog aria-label="Transcripción">{selected && <><div className="modal-heading"><h2>Transcripción</h2><button aria-label="Cerrar transcripción" onClick={() => setSelected(undefined)}><X size={18} /></button></div><textarea aria-label="Texto de transcripción" value={selected.text} onChange={e => setSelected({ ...selected, text: e.target.value })} /><CopyButton text={selected.text} /></>}</Dialog></Modal></ModalOverlay>
+    <ModalOverlay className="modal-backdrop desktop-app-modal" isOpen={!!selected} isDismissable onOpenChange={open => { if (!open) setSelected(undefined); }}><Modal className="transcript-modal"><Dialog aria-label="Transcripción">{selected && <><div className="modal-heading"><h2>Transcripción</h2><button aria-label="Cerrar transcripción" onClick={() => setSelected(undefined)}><X size={18} /></button></div><textarea aria-label="Texto de transcripción" value={selected.text} onChange={e => setSelected({ ...selected, text: e.target.value })} /><div className="transcript-edit-actions"><CopyButton text={selected.text} /><SaveButton busy={busy} onSave={()=>run(()=>api.saveTranscript(selected.id,selected.text),'Cambios guardados en el historial')}/></div>{message&&<p role="status">{message}</p>}</>}</Dialog></Modal></ModalOverlay>
   </div>;
 }
 
 const view=new URLSearchParams(location.search).get("view");
+if (view?.startsWith('screen-')) document.documentElement.dataset.screenSelect = 'true';
 if (view === "record") document.documentElement.dataset.floating = "true";
 if(api.native){ const heartbeat=()=>void invoke('ui_heartbeat').catch(()=>{}); heartbeat();setInterval(heartbeat,2000); }
-createRoot(document.getElementById("root")!).render(view === "import" ? <FileImport/> : view === "sounds" ? <SoundLab /> : view === "recorder" ? <RecorderPreview /> : view === "record" ? <FloatingRecorder /> : view === "details" ? <Recorder /> : <SetupGate><SettingsApp /></SetupGate>);
+createRoot(document.getElementById("root")!).render(view === 'screen-select' ? <ScreenOverlay /> : view === 'screen-ink' ? <ScreenInk/> : view === 'screen-tools' ? <ScreenTools/> : view === 'screen-indicator' ? <ScreenIndicator /> : view === "import" ? <FileImport/> : view === "sounds" ? <SoundLab /> : view === "recorder" ? <RecorderPreview /> : view === "record" ? <FloatingRecorder /> : view === "details" ? <Recorder /> : <SetupGate><SettingsApp /></SetupGate>);

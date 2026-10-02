@@ -13,3 +13,16 @@
 
 Before public release, review the complete dependency license inventory, including transitive packages.
 This notice is attribution, not a claim that a complete legal audit has been performed.
+# Screen recording
+
+The screen recorder launches FFmpeg as a separate executable, obtained through
+`ffmpeg-static` 5.3.0. Its Windows binary is the Gyan.dev FFmpeg 6.1.1 essentials
+build (GPL v3). Its license and build/source information are included alongside
+the executable as `bin/ffmpeg.LICENSE` and `bin/ffmpeg.README`.
+FFmpeg source revision: https://github.com/FFmpeg/FFmpeg/commit/e38092ef93
+Binary distributor and corresponding build sources: https://www.gyan.dev/ffmpeg/builds/
+Preserve these notices and review the binary's GPL redistribution requirements
+before distributing an installer containing it.
+
+`clipboard-win` 5.4.1 provides Windows file clipboard access (MIT OR Apache-2.0).
+Source and license: https://github.com/DoumanAsh/clipboard-win

@@ -17,10 +17,11 @@ export async function saveTranscript(id:string,text:string) {
   else{preview.history=preview.history.map(item=>item.id===id?{...item,text}:item);persist();}
 }
 export async function saveSettings(settings: Settings) { if (native) { await finishHotkeyCapture(); await invoke("save_settings", { settings }); } else { preview.settings = settings; persist(); } }
-export async function saveRules(rules: Rule[]) {
+export async function readRules(): Promise<Rule[]> { return native ? invoke('read_rules') : structuredClone(preview.rules); }
+export async function saveRules(rules: Rule[], expectedRules: Rule[]) {
   const seen = new Set<string>();
   for(const r of rules){const key=r.source.trim().toLowerCase(); if(!key||!r.target.trim())throw Error('Completá ambos campos.'); if(key===r.target.trim().toLowerCase())throw Error('La corrección debe cambiar la palabra.'); if(seen.has(key))throw Error('Ya existe una regla para esa palabra.'); seen.add(key);}
-  if (native) await invoke("save_rules", { rules }); else { preview.rules = rules; persist(); }
+  if (native) await invoke("save_rules", { rules, expectedRules }); else { preview.rules = rules; persist(); }
 }
 export async function saveKey(key: string) { if (!native) throw Error("La clave solo se guarda desde la app nativa, nunca en esta vista previa."); await invoke("save_api_key", { key }); }
 export async function transcribeFile() {

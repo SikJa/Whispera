@@ -24,8 +24,10 @@ import { SetupGate } from './Onboarding';
 import GroqKeyGuide from './GroqKeyGuide';
 import { ShortcutSettings, CaptureHistory } from './CaptureSettings';
 import LibrarySettings from './LibrarySettings';
+import StartupSettings from './StartupSettings';
 
 const routes = [
+  { id: "general", name: "General", icon: Activity, group: "Aplicación" },
   { id: "transcription", name: "Transcripción", icon: AudioLines, group: "Preferencias" },
   { id: "dictionary", name: "Diccionario personal", icon: BookOpen },
   { id: "appearance", name: "Apariencia", icon: Palette },
@@ -39,6 +41,7 @@ const routes = [
 ] as const;
 type Route = typeof routes[number]["id"];
 const descriptions: Record<Route, string> = {
+  general: "Inicio y comportamiento de Whispera.",
   transcription: "Tu voz, con tus preferencias.", dictionary: "Las palabras que tienen que salir bien.",
   appearance: "Una carpeta a tu manera.", color: "Encontrá tu color.",
   hotkey: "Dictado, video y capturas, cada uno con su combinación.", history: "Transcripciones, capturas y videos, en un lugar.",
@@ -64,12 +67,32 @@ function SettingsApp() {
   const refresh = () => api.snapshot().then(setData);
   useEffect(() => { refresh().catch(e => setMessage(String(e))); }, []);
   useEffect(()=>{setHistoryLimit(50);},[route,search]);
+  useEffect(() => {
+    if (route !== 'dictionary') return;
+    let alive = true;
+    const reload = () => void api.readRules().then(rules => {
+      if (alive) setData(data => data ? { ...data, rules } : data);
+    }).catch(error => { if (alive) setMessage(String(error)); });
+    reload();
+    window.addEventListener('focus', reload);
+    return () => { alive = false; window.removeEventListener('focus', reload); };
+  }, [route]);
   useEffect(()=>{
     if(route!=='history'||!api.native)return;let alive=true;
     void invoke<api.Transcript[]>('read_history').then(history=>{if(alive)setData(d=>d?{...d,history}:d);}).catch(e=>{if(alive)setMessage(String(e));});
     return()=>{alive=false;};
   },[route]);
-  const run = async (work: () => Promise<unknown>, success: string) => { setBusy(true); try { await work(); await refresh(); setMessage(success); return true; } catch (error) { setMessage(String(error)); return false; } finally { setBusy(false); } };
+  const run = async (work: () => Promise<unknown>, success: string) => {
+    setBusy(true);
+    try { await work(); await refresh(); setMessage(success); return true; }
+    catch (error) {
+      if (route === 'dictionary') {
+        try { const rules = await api.readRules(); setData(data => data ? { ...data, rules } : data); }
+        catch { /* Preserve the last loaded rules if refreshing also fails. */ }
+      }
+      setMessage(String(error)); return false;
+    } finally { setBusy(false); }
+  };
   if (!data) return <div className="desktop-loading" role="status">{message || "Cargando configuración…"}</div>;
   const patch = (change: Partial<api.Settings>) => setData({ ...data, settings: { ...data.settings, ...change } });
   const save = () => run(() => api.saveSettings(data.settings), api.native ? "Configuración guardada" : "Borrador de vista previa guardado");
@@ -88,6 +111,7 @@ function SettingsApp() {
         <div className="page-heading"><div><h1>{title}</h1><p>{descriptions[route]}</p></div>{["transcription", "appearance", "color", "sounds", "diagnostics"].includes(route) && <SaveButton key={route} busy={busy} onSave={save} />}</div>
         {message && <div className="notice" role="status">{message}<button aria-label="Cerrar aviso" onClick={() => setMessage("")}><X size={14} /></button></div>}
         <SectionReveal key={route}>
+        {route === 'general' && <StartupSettings />}
         {route === 'screen' && <ScreenRecorder />}
         {route === 'library' && <LibrarySettings />}
         {route==='sounds'&&<><div className="form-row"><label htmlFor="sounds-on">Sonidos de grabación</label><SettingsSwitch id="sounds-on" label="Activar sonidos" checked={data.settings.sounds} onChange={v=>patch({sounds:v})}/></div><div className="form-row"><label htmlFor="sound-theme">Inicio y fin</label><select id="sound-theme" value={data.settings.soundTheme} onChange={e=>patch({soundTheme:e.target.value})}>{soundPairs.map(p=><option value={p.id} key={p.id}>{p.name}</option>)}</select></div><div className="page-actions">{(['start','stop'] as const).map(cue=><button key={cue} onClick={()=>{const audio=new Audio(`/sound-lab/${data.settings.soundTheme}-${cue}.wav`);audio.volume=.35;void audio.play().catch(e=>setMessage(String(e)));}}><Play size={15}/>{cue==='start'?'Escuchar inicio':'Escuchar fin'}</button>)}</div></>}
@@ -110,10 +134,10 @@ function SettingsApp() {
 
         {route === "dictionary" && <>
           <div className="list-toolbar"><label className="search-field"><Search size={16} /><input aria-label="Buscar corrección" placeholder="Buscar palabra o sustitución" value={search} onChange={e => setSearch(e.target.value)} /></label><span>{data.rules.length} reglas</span></div>
-          <form className="dictionary-add" onSubmit={e => { e.preventDefault(); if (source.trim() && target.trim()) run(async () => { const updated={id:editingRule??crypto.randomUUID(),source:source.trim(),target:target.trim(),enabled:data.rules.find(r=>r.id===editingRule)?.enabled??true}; await api.saveRules(editingRule?data.rules.map(r=>r.id===editingRule?updated:r):[...data.rules,updated]); setSource(""); setTarget(""); setEditingRule(undefined); }, "Corrección guardada"); }}><input aria-label="Palabra detectada" placeholder="Palabra detectada" value={source} onChange={e => setSource(e.target.value)} required /><span>→</span><input aria-label="Corrección" placeholder="Corrección" value={target} onChange={e => setTarget(e.target.value)} required /><button aria-label={editingRule?'Guardar corrección':'Agregar corrección'} disabled={busy}>{editingRule?<Check size={18}/>:<Plus size={18} />}</button></form>
+          <form className="dictionary-add" onSubmit={e => { e.preventDefault(); if (!busy && source.trim() && target.trim()) run(async () => { const updated={id:editingRule??crypto.randomUUID(),source:source.trim(),target:target.trim(),enabled:data.rules.find(r=>r.id===editingRule)?.enabled??true}; await api.saveRules(editingRule?data.rules.map(r=>r.id===editingRule?updated:r):[...data.rules,updated], data.rules); setSource(""); setTarget(""); setEditingRule(undefined); }, "Corrección guardada"); }}><input aria-label="Palabra detectada" placeholder="Palabra detectada" value={source} onChange={e => setSource(e.target.value)} required /><span>→</span><input aria-label="Corrección" placeholder="Corrección" value={target} onChange={e => setTarget(e.target.value)} required /><button aria-label={editingRule?'Guardar corrección':'Agregar corrección'} disabled={busy}>{editingRule?<Check size={18}/>:<Plus size={18} />}</button></form>
           {editingRule&&<button className="text-link" onClick={()=>{setEditingRule(undefined);setSource('');setTarget('');}}>Cancelar edición</button>}
           <div className="table-head"><span>DETECTADO</span><span>REEMPLAZAR POR</span><span>ACTIVA</span></div>
-          {rules.map(rule => <div className="rule-row" key={rule.id}><span>{rule.source}</span><strong>{rule.target}</strong><input type="checkbox" aria-label={`Activar ${rule.source}`} checked={rule.enabled} onChange={e => run(() => api.saveRules(data.rules.map(r => r.id === rule.id ? { ...r, enabled: e.target.checked } : r)), "Regla actualizada")} /><div className="rule-tools"><button aria-label={`Editar ${rule.source}`} onClick={()=>{setEditingRule(rule.id);setSource(rule.source);setTarget(rule.target);}}><Pencil size={15}/></button><button aria-label={`Eliminar ${rule.source}`} onClick={() => run(() => api.saveRules(data.rules.filter(r => r.id !== rule.id)), "Regla eliminada")}><Trash2 size={15} /></button></div></div>)}
+          {rules.map(rule => <div className="rule-row" key={rule.id}><span>{rule.source}</span><strong>{rule.target}</strong><input type="checkbox" aria-label={`Activar ${rule.source}`} disabled={busy} checked={rule.enabled} onChange={e => run(() => api.saveRules(data.rules.map(r => r.id === rule.id ? { ...r, enabled: e.target.checked } : r), data.rules), "Regla actualizada")} /><div className="rule-tools"><button aria-label={`Editar ${rule.source}`} disabled={busy} onClick={()=>{setEditingRule(rule.id);setSource(rule.source);setTarget(rule.target);}}><Pencil size={15}/></button><button aria-label={`Eliminar ${rule.source}`} disabled={busy} onClick={() => run(() => api.saveRules(data.rules.filter(r => r.id !== rule.id), data.rules), "Regla eliminada")}><Trash2 size={15} /></button></div></div>)}
           {!rules.length && <div className="empty-state"><BookOpen size={25} /><h2>Sin correcciones</h2><p>Los nombres y términos guardados aparecerán aquí.</p></div>}
         </>}
 

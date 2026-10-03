@@ -20,6 +20,7 @@ export function installNativeMock({kind='video',width=640,height=480,scale=1,set
       if(command==='snapshot')return{settings:{color:'#9024DC',hotkey:window.voiceShortcut,language:'es',autoPaste:true},rules:[],history:[],logs:[],keyConfigured:false,native:true};
       if(command==='screen_appearance')return{color:'#9024DC',recorderScale:.85,pattern:'wave'};
       if(command==='read_settings')return{color:'#9024DC',recorderScale:.85,pattern:'wave'};
+      if(command==='read_rules')return [];
       if(command==='screen_recent')return[{id:'recent-1',kind:'image',created_at:'2026-10-02T00:00:00Z',path:'test.png'}];
       if(command==='screen_selection_kind')return kind;
       if(command==='screen_selection_image')return new ArrayBuffer(0);

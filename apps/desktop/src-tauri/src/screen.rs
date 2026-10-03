@@ -787,9 +787,7 @@ pub(crate) fn copy_file(path: &Path) -> Result<(), String> {
     }
     let _clipboard = clipboard_win::Clipboard::new_attempts(20)
         .map_err(|e| format!("No se pudo abrir el portapapeles: {e}"))?;
-    use clipboard_win::Setter;
-    clipboard_win::formats::FileList
-        .write_clipboard(&[path.to_string_lossy().as_ref()])
+    crate::video_transcript::write_open(&[path.to_string_lossy().into_owned()], "")
         .map_err(|e| format!("Video conservado, pero no se pudo copiar: {e}"))
 }
 #[tauri::command]

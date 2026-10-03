@@ -104,9 +104,13 @@ fn save_settings(
     store.put("settings", &settings)
 }
 #[tauri::command]
-fn save_rules(rules: Vec<Rule>, store: State<Store>) -> Result<(), String> {
+fn read_rules(store: State<Store>) -> Result<Vec<Rule>, String> {
+    store.get("rules")
+}
+#[tauri::command]
+fn save_rules(rules: Vec<Rule>, expected_rules: Vec<Rule>, store: State<Store>) -> Result<(), String> {
     groq::validate_rules(&rules)?;
-    store.put("rules", &rules)
+    store.replace_rules(&rules, &expected_rules)
 }
 #[tauri::command]
 fn save_api_key(key: String) -> Result<(), String> {
@@ -404,8 +408,22 @@ fn main() {
         )
         .setup(|app| {
             let dir = app.path().app_data_dir()?;
+            // A redirected data drive may mount after Windows starts tray apps.
+            // Do not create a replacement profile while its junction is unavailable.
+            if std::env::args().any(|arg| arg == "--autostart") {
+                let deadline = std::time::Instant::now() + std::time::Duration::from_secs(90);
+                while std::fs::symlink_metadata(&dir).is_ok() && !dir.is_dir()
+                    && std::time::Instant::now() < deadline
+                {
+                    std::thread::sleep(std::time::Duration::from_millis(500));
+                }
+            }
             std::fs::create_dir_all(&dir)?;
             let store = Store::open(&dir.join("whispera.sqlite")).map_err(std::io::Error::other)?;
+            let dictionary: Vec<Rule> = store.get("rules").map_err(std::io::Error::other)?;
+            let profile = dir.canonicalize().unwrap_or_else(|_| dir.clone());
+            store.event(&format!("Perfil activo: {}; diccionario: {} reglas", profile.display(), dictionary.len()))
+                .map_err(std::io::Error::other)?;
             store
                 .event("Whispera 2 iniciada")
                 .map_err(std::io::Error::other)?;
@@ -570,6 +588,7 @@ fn main() {
             screen_editor::screen_tools_panel,
             onboarding::complete_setup,
             onboarding::set_startup,
+            onboarding::startup_enabled,
             onboarding::validate_key,
             snapshot,
             save_settings,
@@ -580,6 +599,7 @@ fn main() {
             capture_history::screen_recent_copy,
             capture_history::screen_recent_reveal,
             save_rules,
+            read_rules,
             save_api_key,
             transcribe_file,
             import_legacy,

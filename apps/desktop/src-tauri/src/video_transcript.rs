@@ -289,11 +289,21 @@ pub fn package(store: &Store, original: &[PathBuf]) -> Result<(Vec<String>, Stri
     }
     Ok((files, texts.join("\n\n")))
 }
-fn write_open(files: &[String], text: &str) -> Result<(), String> {
+pub(crate) fn write_open(files: &[String], text: &str) -> Result<(), String> {
+    validate_files(files)?;
+    // set_file_list preserves existing formats by default. Replace the previous
+    // clipboard item first so paste targets cannot pick an unrelated PNG or HTML.
+    clipboard_win::raw::empty().map_err(|e| e.to_string())?;
     clipboard_win::raw::set_file_list(files).map_err(|e| e.to_string())?;
     if !text.is_empty() {
         clipboard_win::raw::set_string_with(text, clipboard_win::options::NoClear)
             .map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+fn validate_files(files: &[String]) -> Result<(), String> {
+    if files.is_empty() || files.iter().any(|file| !Path::new(file).is_file()) {
+        return Err("El archivo ya no existe. No se modifico el portapapeles.".into());
     }
     Ok(())
 }
@@ -354,6 +364,75 @@ pub fn video_transcript_action(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    #[ignore = "Run alone: uses a private Windows window station, never the interactive clipboard"]
+    fn private_station_clipboard_replaces_stale_formats() {
+        use std::ffi::c_void;
+        #[link(name = "user32")]
+        extern "system" {
+            fn CreateWindowStationW(name: *const u16, flags: u32, access: u32, security: *const c_void) -> *mut c_void;
+            fn GetProcessWindowStation() -> *mut c_void;
+            fn SetProcessWindowStation(station: *mut c_void) -> i32;
+            fn CloseWindowStation(station: *mut c_void) -> i32;
+        }
+        struct Station(*mut c_void, *mut c_void);
+        impl Drop for Station {
+            fn drop(&mut self) {
+                unsafe { SetProcessWindowStation(self.0); CloseWindowStation(self.1); }
+            }
+        }
+        let _station = unsafe {
+            let original = GetProcessWindowStation();
+            let private = CreateWindowStationW(std::ptr::null(), 0, 0x37f, std::ptr::null());
+            assert!(!private.is_null(), "Cannot create isolated clipboard station");
+            if SetProcessWindowStation(private) == 0 {
+                CloseWindowStation(private);
+                panic!("Cannot select isolated station; no clipboard access attempted");
+            }
+            Station(original, private)
+        };
+        let root = root();
+        let video = root.join("fixture.mp4");
+        fs::write(&video, b"fixture").unwrap();
+        let files = vec![video.to_string_lossy().into_owned()];
+        {
+            let _clipboard = clipboard_win::Clipboard::new_attempts(5).unwrap();
+            let png = clipboard_win::raw::register_format("PNG").unwrap().get();
+            clipboard_win::raw::set(png, b"old image format").unwrap();
+            clipboard_win::raw::set_string_with("old text", clipboard_win::options::NoClear).unwrap();
+            write_open(&files, "").unwrap();
+            assert!(!clipboard_win::raw::is_format_avail(png));
+            assert!(!clipboard_win::raw::is_format_avail(13));
+            let mut actual = Vec::new();
+            clipboard_win::raw::get_file_list(&mut actual).unwrap();
+            assert_eq!(actual, files);
+            write_open(&files, "new transcript").unwrap();
+            let mut text = Vec::new();
+            clipboard_win::raw::get_string(&mut text).unwrap();
+            assert_eq!(String::from_utf8(text).unwrap(), "new transcript");
+            assert!(!clipboard_win::raw::is_format_avail(png));
+            assert!(write_open(&[root.join("missing.mp4").to_string_lossy().into_owned()], "").is_err());
+            let mut preserved = Vec::new();
+            clipboard_win::raw::get_file_list(&mut preserved).unwrap();
+            assert_eq!(preserved, files);
+        }
+        fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
+    fn clipboard_payload_rejects_missing_files_before_replacing_clipboard() {
+        let root = root();
+        let video = root.join("fixture.mp4");
+        fs::write(&video, b"fixture").unwrap();
+        let file = video.to_string_lossy().into_owned();
+        assert!(validate_files(&[file.clone()]).is_ok());
+        assert!(validate_files(&[]).is_err());
+        assert!(validate_files(&[root.to_string_lossy().into_owned()]).is_err());
+        assert!(validate_files(&[file.clone(), root.join("missing.txt").to_string_lossy().into_owned()]).is_err());
+        fs::remove_file(video).unwrap();
+        // This path fails before any Windows clipboard API is called.
+        assert!(write_open(&[file], "text").is_err());
+        fs::remove_dir_all(root).unwrap();
+    }
     #[test]
     fn failed_segment_preserves_partial_text_and_retry_skips_completed_audio() {
         let root = root();

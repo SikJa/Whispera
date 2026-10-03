@@ -32,6 +32,21 @@ try {
   await page.keyboard.press('Shift');assert.equal(await voice.inputValue(),'Alt + Z','a modifier alone never overwrites the shortcut');
   await page.evaluate(()=>window.dispatchEvent(new Event('blur')));
   await page.waitForFunction(()=>window.calls.filter(c=>c.command==='shortcut_capture').at(-1).args.active===false);
+  await image.click();await page.waitForFunction(()=>document.querySelector('#shortcut-image').parentElement.dataset.listening==='true');
+  await image.dispatchEvent('keyup',{key:'PrintScreen',code:'PrintScreen',bubbles:true});
+  assert.equal(await image.inputValue(),'Impr Pant','Print Screen works with keyup only');
+  await image.dispatchEvent('keyup',{key:'PrintScreen',code:'',ctrlKey:true,bubbles:true});
+  assert.equal(await image.inputValue(),'Ctrl + Impr Pant','Missing physical code falls back to named key');
+  await image.dispatchEvent('keydown',{key:'PrintScreen',code:'PrintScreen',altKey:true,bubbles:true});
+  await image.dispatchEvent('keyup',{key:'PrintScreen',code:'PrintScreen',bubbles:true});
+  assert.equal(await image.inputValue(),'Alt + Impr Pant','Release must not overwrite modifiers captured on keydown');
+  await page.keyboard.press('Escape');
+  assert.equal(await image.inputValue(),'Ctrl + Alt + F7','Print Screen edit still supports cancellation');
+  await image.click();await page.waitForFunction(()=>document.querySelector('#shortcut-image').parentElement.dataset.listening==='true');
+  await image.dispatchEvent('keyup',{key:'PrintScreen',code:'PrintScreen',bubbles:true});
+  await page.keyboard.press('Tab');
+  await page.getByRole('button',{name:'Guardar',exact:true}).click();
+  await page.waitForFunction(()=>window.videoPreferences.image_hotkey==='PrintScreen');
   assert.deepEqual(errors,[]);
   console.log('PASS: pressed combinations for voice/video/image, plus formatting, modifier-only input, Escape rollback, focus release, persistence, editable white-default border.');
 } finally {await browser.close();}

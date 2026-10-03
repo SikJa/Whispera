@@ -26,7 +26,7 @@
 
 ## ¿Qué es?
 
-**Whispera 0.2.0** reúne dictado, portapapeles, captura de imágenes y video por región.
+**Whispera 0.2.1** reúne dictado, portapapeles, captura de imágenes y video por región.
 Esta actualización integra también el trabajo del fork
 [Whispera-K](https://github.com/kazu00001/Whispera-K), conservando su historial y créditos.
 El código de Whispera mantiene su licencia MIT; los componentes de terceros

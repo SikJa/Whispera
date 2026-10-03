@@ -11,7 +11,7 @@ export async function finishHotkeyCapture() { await captureHotkey(false); }
 
 const names: Record<string,string> = {
   control:'Ctrl', ctrl:'Ctrl', alt:'Alt', shift:'Shift', super:'Win', meta:'Win',
-  space:'Espacio', enter:'Enter', escape:'Esc', backspace:'Retroceso', delete:'Supr',
+  space:'Espacio', enter:'Enter', escape:'Esc', backspace:'Retroceso', delete:'Supr', printscreen:'Impr Pant',
   arrowup:'↑', arrowdown:'↓', arrowleft:'←', arrowright:'→',
   equal:'=', minus:'−', comma:',', period:'.', slash:'/', backslash:'\\',
   semicolon:';', quote:"'", backquote:'`', bracketleft:'[', bracketright:']',
@@ -24,7 +24,11 @@ export function modifiers(e: Pick<KeyboardEvent,'ctrlKey'|'altKey'|'shiftKey'|'m
 }
 export function eventHotkey(e: KeyboardEvent): string | undefined {
   if (e.isComposing || e.repeat || e.getModifierState('AltGraph')) return;
+  const code = isPrintScreen(e) ? 'PrintScreen' : e.code;
   // DOM physical codes match the native shortcut parser, including non-US keyboards.
-  if (!/^(Key[A-Z]|Digit[0-9]|F([1-9]|1[0-9]|2[0-4])|Numpad([0-9]|Add|Subtract|Multiply|Divide|Decimal|Enter|Equal)|Space|Enter|Tab|Backspace|Delete|Insert|Home|End|PageUp|PageDown|Arrow(Up|Down|Left|Right)|Backquote|Backslash|Bracket(Left|Right)|Comma|Equal|Minus|Period|Quote|Semicolon|Slash|CapsLock|NumLock|ScrollLock|PrintScreen|Pause)$/.test(e.code)) return;
-  return [...modifiers(e),e.code].join('+');
+  if (!/^(Key[A-Z]|Digit[0-9]|F([1-9]|1[0-9]|2[0-4])|Numpad([0-9]|Add|Subtract|Multiply|Divide|Decimal|Enter|Equal)|Space|Enter|Tab|Backspace|Delete|Insert|Home|End|PageUp|PageDown|Arrow(Up|Down|Left|Right)|Backquote|Backslash|Bracket(Left|Right)|Comma|Equal|Minus|Period|Quote|Semicolon|Slash|CapsLock|NumLock|ScrollLock|PrintScreen|Pause)$/.test(code)) return;
+  return [...modifiers(e),code].join('+');
+}
+export function isPrintScreen(e: Pick<KeyboardEvent,'code'|'key'>) {
+  return e.code === 'PrintScreen' || e.key === 'PrintScreen';
 }

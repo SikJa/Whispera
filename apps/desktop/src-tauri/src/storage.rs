@@ -77,7 +77,7 @@ impl Settings {
         Ok(())
     }
 }
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize, PartialEq)]
 pub struct Rule {
     pub id: String,
     pub source: String,
@@ -102,6 +102,28 @@ pub struct Snapshot {
 }
 
 impl Store {
+    pub fn replace_rules(&self, rules: &[Rule], expected: &[Rule]) -> Result<(), String> {
+        let mut conn = self.0.lock().map_err(|_| "Base de datos ocupada")?;
+        let tx = conn.transaction().map_err(|e| e.to_string())?;
+        let old: Option<String> = match tx.query_row("SELECT value FROM kv WHERE key='rules'", [], |r| r.get(0)) {
+            Ok(value) => Some(value),
+            Err(rusqlite::Error::QueryReturnedNoRows) => None,
+            Err(error) => return Err(error.to_string()),
+        };
+        let current: Vec<Rule> = match old.as_deref() {
+            Some(value) => serde_json::from_str(value).map_err(|e| e.to_string())?,
+            None => Vec::new(),
+        };
+        if current != expected {
+            return Err("El diccionario cambio desde que abriste esta pantalla. Se actualizaron las reglas; revisa y volve a guardar.".into());
+        }
+        if let Some(old) = old {
+            tx.execute("INSERT INTO kv VALUES('rules_previous',?1) ON CONFLICT(key) DO UPDATE SET value=excluded.value", [old]).map_err(|e| e.to_string())?;
+        }
+        let json = serde_json::to_string(rules).map_err(|e| e.to_string())?;
+        tx.execute("INSERT INTO kv VALUES('rules',?1) ON CONFLICT(key) DO UPDATE SET value=excluded.value", [json]).map_err(|e| e.to_string())?;
+        tx.commit().map_err(|e| e.to_string())
+    }
     pub fn update_transcript(&self, id: &str, text: &str) -> Result<(), String> {
         if text.trim().is_empty() || text.len() > 1_000_000 {
             return Err("El texto esta vacio o es demasiado largo".into());
@@ -233,6 +255,28 @@ impl Store {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn stale_dictionary_cannot_replace_restored_rules_and_changes_survive_reopen() {
+        let path = std::env::temp_dir().join(format!("whispera-dictionary-{}.sqlite", uuid::Uuid::new_v4()));
+        let old = vec![Rule { id: "existing".into(), source: "wispara".into(), target: "Whispera".into(), enabled: true }];
+        {
+            let store = Store::open(&path).unwrap();
+            store.put("rules", &old).unwrap();
+            let new = vec![Rule { id: "new".into(), source: "groc".into(), target: "Groq".into(), enabled: true }];
+            assert!(store.replace_rules(&new, &[]).is_err());
+            assert_eq!(store.get::<Vec<Rule>>("rules").unwrap().len(), 1);
+            let mut merged = old.clone(); merged.extend(new);
+            store.replace_rules(&merged, &old).unwrap();
+            assert_eq!(store.get::<Vec<Rule>>("rules_previous").unwrap().len(), 1);
+        }
+        {
+            let store = Store::open(&path).unwrap();
+            assert_eq!(store.get::<Vec<Rule>>("rules").unwrap().len(), 2);
+            assert!(store.replace_rules(&[], &old).is_err());
+            assert_eq!(store.get::<Vec<Rule>>("rules").unwrap().len(), 2);
+        }
+        std::fs::remove_file(path).unwrap();
+    }
     #[test]
     fn editing_history_preserves_other_transcripts_and_timestamp() {
         let store = Store::open(Path::new(":memory:")).unwrap();

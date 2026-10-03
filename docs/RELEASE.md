@@ -1,4 +1,8 @@
-# Whispera (K) 0.1.6 — publicación
+# Whispera 0.2.1
+
+Notas actuales en español e inglés: [Whispera 0.2.1](releases/v0.2.1.md).
+
+## Archivo: Whispera (K) 0.1.6
 
 Esta versión redondea el recuadro de captura y agrega una luz que recorre el
 borde. Conserva el color configurable, la resolución original y la exclusión

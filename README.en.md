@@ -26,7 +26,7 @@
 
 ## What is it?
 
-**Whispera 0.2.0** unifies dictation, clipboard history, screenshots and screen recording.
+**Whispera 0.2.1** unifies dictation, clipboard history, screenshots and screen recording.
 This update also integrates work from the
 [Whispera-K fork](https://github.com/kazu00001/Whispera-K), preserving its history and credits.
 Whispera remains MIT-licensed; third-party components retain their own licenses.

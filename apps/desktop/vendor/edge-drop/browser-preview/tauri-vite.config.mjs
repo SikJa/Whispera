@@ -7,8 +7,8 @@ export default defineConfig({
       .replace(/`edgelocal:\/\/\$\{img.imageId\}`/g,'img.preview')
       .replace(/`edgelocal:\/\/file\/\$\{encodeURIComponent\((\w+).replace\(\/\\\\\/g, '\/'\)\)\}`/g,'((window as any).__previewFiles[$1] || "")')
       .replace(/e.preventDefault\(\)(\s+setInternalDragReq\(req\))/g,'if ((window as any).__TAURI_INTERNALS__) e.preventDefault(); else e.dataTransfer.setData("text/x-edge-preview", JSON.stringify(req));$1')
-      .replaceAll('https://www.edgedrop.app/changelog','https://github.com/kazu00001/Whispera-K/releases')
-      .replaceAll('https://github.com/Deepender25/Edge-Drop','https://github.com/kazu00001/Whispera-K')
+      .replaceAll('https://www.edgedrop.app/changelog','https://github.com/SikJa/Whispera/releases')
+      .replaceAll('https://github.com/Deepender25/Edge-Drop','https://github.com/SikJa/Whispera')
       .replaceAll('Edge-Drop v','Whispera v');
   }}],
   build: { target: 'esnext', outDir: 'browser-dist', rollupOptions: { input: ['browser-preview.html', 'media.html'], output: {

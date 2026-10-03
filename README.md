@@ -2,7 +2,7 @@
   <img src="apps/desktop/public/cristal/128x128.png" width="80" alt="Whispera" />
 </p>
 
-<h1 align="center">Whispera (K)</h1>
+<h1 align="center">Whispera</h1>
 
 <p align="center">
   Dictado por voz, capturas y grabación de pantalla para Windows.<br/>
@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/kazu00001/Whispera-K/releases"><kbd>⬇ Descargar</kbd></a>&ensp;·&ensp;
+  <a href="https://github.com/SikJa/Whispera/releases"><kbd>⬇ Descargar</kbd></a>&ensp;·&ensp;
   <a href="README.en.md">English</a>&ensp;·&ensp;
   <a href="https://console.groq.com/keys">Obtener clave Groq</a>&ensp;·&ensp;
   <a href="docs/PRIVACY.md">Privacidad</a>
@@ -26,10 +26,11 @@
 
 ## ¿Qué es?
 
-**Whispera (K) 0.2.0** es una versión modificada de [Whispera de SikJa](https://github.com/SikJa/Whispera).
-Conserva el dictado y la carpeta animada del proyecto original, y agrega captura
-de imágenes y video por región. El código original mantiene sus créditos y su
-licencia MIT.
+**Whispera 0.2.0** reúne dictado, portapapeles, captura de imágenes y video por región.
+Esta actualización integra también el trabajo del fork
+[Whispera-K](https://github.com/kazu00001/Whispera-K), conservando su historial y créditos.
+El código de Whispera mantiene su licencia MIT; los componentes de terceros
+conservan sus respectivas licencias.
 
 Whispera es una app de escritorio para Windows que convierte tu voz en texto usando [Groq](https://groq.com).
 Aparece como una **carpeta flotante transparente** sobre cualquier ventana. Grabás, transcribe, y pega el resultado automáticamente — todo desde un atajo de teclado.
@@ -87,7 +88,7 @@ el portapapeles. [Guía de capturas y video](docs/SCREEN_RECORDING.md).
 
 ## Instalar
 
-1. Descargá `Whispera_*_x64-setup.exe` desde [Releases](https://github.com/kazu00001/Whispera-K/releases)
+1. Descargá `Whispera_*_x64-setup.exe` desde [Releases](https://github.com/SikJa/Whispera/releases)
 2. Instalá para tu usuario — no necesita permisos de administrador
 3. La primera vez se abre una **guía de configuración** de 4 pasos:
 

@@ -2,7 +2,7 @@
   <img src="apps/desktop/public/cristal/128x128.png" width="80" alt="Whispera" />
 </p>
 
-<h1 align="center">Whispera (K)</h1>
+<h1 align="center">Whispera</h1>
 
 <p align="center">
   Voice dictation, screenshots and screen recording for Windows.<br/>
@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/kazu00001/Whispera-K/releases"><kbd>⬇ Download</kbd></a>&ensp;·&ensp;
+  <a href="https://github.com/SikJa/Whispera/releases"><kbd>⬇ Download</kbd></a>&ensp;·&ensp;
   <a href="README.md">Español</a>&ensp;·&ensp;
   <a href="https://console.groq.com/keys">Get a Groq key</a>&ensp;·&ensp;
   <a href="docs/PRIVACY.md">Privacy</a>
@@ -26,9 +26,10 @@
 
 ## What is it?
 
-**Whispera (K) 0.2.0** is a modified version of [SikJa's Whispera](https://github.com/SikJa/Whispera).
-It keeps the original dictation and animated folder, and adds region screenshots
-and screen recording. The original code retains its credits and MIT license.
+**Whispera 0.2.0** unifies dictation, clipboard history, screenshots and screen recording.
+This update also integrates work from the
+[Whispera-K fork](https://github.com/kazu00001/Whispera-K), preserving its history and credits.
+Whispera remains MIT-licensed; third-party components retain their own licenses.
 
 Whispera is a Windows desktop app that turns your voice into text using [Groq](https://groq.com).
 It shows up as a **transparent floating folder** on top of any window. Record, transcribe, and auto-paste — all from a keyboard shortcut.
@@ -71,7 +72,7 @@ pasting. A local temporary copy keeps the clipboard valid.
 
 ## Install
 
-1. Download `Whispera_*_x64-setup.exe` from [Releases](https://github.com/kazu00001/Whispera-K/releases)
+1. Download `Whispera_*_x64-setup.exe` from [Releases](https://github.com/SikJa/Whispera/releases)
 2. Install for your user — no admin rights needed
 3. First launch opens a **4-step setup wizard**:
 

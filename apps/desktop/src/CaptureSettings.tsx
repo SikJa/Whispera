@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
-import { AudioLines, Camera, Keyboard, Mic, Monitor, RefreshCw, VolumeX, Video } from 'lucide-react';
+import { AudioLines, Camera, ClipboardList, Keyboard, Mic, Monitor, RefreshCw, VolumeX, Video } from 'lucide-react';
 import { native } from './client';
 import HotkeyInput from './HotkeyInput';
 import { finishHotkeyCapture } from './hotkey-capture';
@@ -11,23 +11,23 @@ export const defaultCapturePreferences: CapturePreferences = { audio:'none',hotk
 type Devices = { microphone:string|null; system:string|null };
 
 export function ShortcutSettings({ voice, onSaved }: { voice:string; onSaved:()=>void }) {
-  const [keys,setKeys] = useState({voice,video:defaultCapturePreferences.hotkey,image:defaultCapturePreferences.image_hotkey});
+  const [keys,setKeys] = useState({voice,video:defaultCapturePreferences.hotkey,image:defaultCapturePreferences.image_hotkey,library:'Alt+C'});
   const [loading,setLoading] = useState(native);
   const [busy,setBusy] = useState(false);
   const [message,setMessage] = useState('');
   useEffect(()=>{
     let alive=true;
-    if(native) void invoke<CapturePreferences>('screen_preferences').then(p=>{if(alive)setKeys(k=>({...k,video:p.hotkey,image:p.image_hotkey}));}).catch(e=>{if(alive)setMessage(String(e));}).finally(()=>{if(alive)setLoading(false);});
+    if(native) void Promise.all([invoke<CapturePreferences>('screen_preferences'),invoke<{toggleHotkey:string}>('library_preferences')]).then(([p,l])=>{if(alive)setKeys(k=>({...k,video:p.hotkey,image:p.image_hotkey,library:l.toggleHotkey}));}).catch(e=>{if(alive)setMessage(String(e));}).finally(()=>{if(alive)setLoading(false);});
     return()=>{alive=false;};
   },[]);
   const save=async()=>{
     setBusy(true);setMessage('');
-    try { await finishHotkeyCapture(); await invoke('save_all_shortcuts', keys); onSaved();setMessage('Los tres atajos quedaron guardados.');return true; }
+    try { await finishHotkeyCapture(); await invoke('save_all_shortcuts', keys); onSaved();setMessage('Los cuatro atajos quedaron guardados.');return true; }
     catch(e){setMessage(String(e));return false;}finally{setBusy(false);}
   };
   return <section className="shortcut-settings">
     <p className="muted-note">Hacé clic en cada campo y presioná la combinación. Cada función usa un atajo distinto.</p>
-    {([['voice','Dictado por voz','Iniciar y terminar la transcripción.',Keyboard],['video','Grabar video','Seleccionar un área y terminar la grabación.',Video],['image','Capturar imagen','Seleccionar un área de la pantalla.',Camera]] as const).map(([name,label,help,Icon])=><div className="form-row shortcut-setting-row" key={name}>
+    {([['voice','Dictado por voz','Iniciar y terminar la transcripción.',Keyboard],['video','Grabar video','Seleccionar un área y terminar la grabación.',Video],['image','Capturar imagen','Seleccionar un área de la pantalla.',Camera],['library','Portapapeles','Abrir y cerrar la biblioteca.',ClipboardList]] as const).map(([name,label,help,Icon])=><div className="form-row shortcut-setting-row" key={name}>
       <label htmlFor={`shortcut-${name}`}><Icon size={18}/>{label}<span>{help}</span></label>
       <HotkeyInput id={`shortcut-${name}`} disabled={busy||loading} value={keys[name]} onChange={value=>setKeys(k=>({...k,[name]:value}))}/>
     </div>)}

@@ -1,10 +1,17 @@
 #![cfg_attr(target_os = "windows", windows_subsystem = "windows")]
 mod audio;
 mod capture_history;
+mod library;
+mod library_media;
+mod video_transcript;
+mod screen_capture;
 mod engine;
 mod floating_window;
 mod groq;
 mod health;
+mod incremental;
+mod retention;
+mod unification;
 mod legacy;
 mod onboarding;
 mod paste;
@@ -237,8 +244,21 @@ fn open_settings(app: tauri::AppHandle) -> Result<(), String> {
     let w = app
         .get_webview_window("main")
         .ok_or("Configuracion no disponible")?;
+    if let Some(library) = app.get_webview_window("library") { let _ = library.hide(); }
+    w.unminimize().map_err(|e| e.to_string())?;
     w.show().map_err(|e| e.to_string())?;
-    w.set_focus().map_err(|e| e.to_string())
+    let window = w.clone();
+    w.run_on_main_thread(move || {
+        if let Ok(handle) = window.hwnd() {
+            // Restore even if an external hide left the toolkit visibility flag stale.
+            unsafe {
+                use windows::Win32::{Foundation::HWND, UI::WindowsAndMessaging::{ShowWindow, SetForegroundWindow, SW_RESTORE}};
+                let _ = ShowWindow(HWND(handle.0), SW_RESTORE);
+                let _ = SetForegroundWindow(HWND(handle.0));
+            }
+        }
+        let _ = window.set_focus();
+    }).map_err(|e| e.to_string())
 }
 #[tauri::command]
 async fn open_recording_details(app: tauri::AppHandle) -> Result<(), String> {
@@ -288,10 +308,7 @@ async fn open_import(app: tauri::AppHandle) -> Result<(), String> {
 
 fn main() {
     tauri::Builder::default()
-        .plugin(tauri_plugin_autostart::init(
-            tauri_plugin_autostart::MacosLauncher::LaunchAgent,
-            Some(vec!["--autostart"]),
-        ))
+        .plugin(tauri_plugin_autostart::Builder::new().app_name("Whispera").args(["--autostart"]).build())
         // Launching again must not turn the background dictation tool into a visible window.
         .plugin(tauri_plugin_single_instance::init(|_, _, _| {}))
         .plugin(tauri_plugin_dialog::init())
@@ -308,6 +325,10 @@ fn main() {
                     }
                     if event.state == tauri_plugin_global_shortcut::ShortcutState::Pressed {
                         let app = app.clone();
+                        if shortcuts::parse(&library::hotkey(&app)).map(|key| key == *shortcut).unwrap_or(false) {
+                            tauri::async_runtime::spawn(async move { let _ = library::library_toggle(app).await; });
+                            return;
+                        }
                         if shortcuts::parse("Escape")
                             .map(|key| key == *shortcut)
                             .unwrap_or(false)
@@ -389,11 +410,21 @@ fn main() {
                 .event("Whispera 2 iniciada")
                 .map_err(std::io::Error::other)?;
             app.manage(store);
+            app.manage(library::Library::default());
+            library::start(app.handle());
+            video_transcript::start(app.handle());
+            if let Err(error) = shortcuts::register(app.handle(), &library::hotkey(app.handle())) {
+                let _ = app.state::<Store>().event(&format!("Biblioteca: {error}"));
+            }
+            if let Err(error) = unification::import_screen_settings(&app.state::<Store>()) {
+                let _ = app.state::<Store>().event(&format!("Importacion de capturas pendiente: {error}"));
+            }
             app.manage(shortcuts::Capture::default());
             app.manage(screen::Screen::new());
             app.manage(screen_editor::Editor::default());
             app.manage(engine::Engine::new(dir.clone()).map_err(std::io::Error::other)?);
             health::start(app.handle());
+            retention::start(app.handle());
             let settings: Settings = app
                 .state::<Store>()
                 .get("settings")
@@ -420,19 +451,18 @@ fn main() {
             let image =
                 MenuItem::with_id(app, "screenshot", "Capturar imagen", true, None::<&str>)?;
             let quit = MenuItem::with_id(app, "quit", "Salir / Quit Whispera", true, None::<&str>)?;
+            let library_menu = MenuItem::with_id(app, "library", "Biblioteca / Portapapeles", true, None::<&str>)?;
             let sep = PredefinedMenuItem::separator(app)?;
             let menu =
-                Menu::with_items(app, &[&record, &video, &image, &import, &show, &sep, &quit])?;
+                Menu::with_items(app, &[&record, &video, &image, &import, &library_menu, &show, &sep, &quit])?;
             tauri::tray::TrayIconBuilder::new()
                 .icon(app.default_window_icon().unwrap().clone())
                 .tooltip("Whispera")
                 .menu(&menu)
                 .on_menu_event(|app, event| match event.id.as_ref() {
+                    "library" => { let app=app.clone(); tauri::async_runtime::spawn(async move { let _ = library::library_toggle(app).await; }); }
                     "settings" => {
-                        if let Some(w) = app.get_webview_window("main") {
-                            let _ = w.show();
-                            let _ = w.set_focus();
-                        }
+                        if let Err(error) = open_settings(app.clone()) { let _ = app.state::<Store>().event(&error); }
                     }
                     "recorder" => {
                         let app = app.clone();
@@ -442,8 +472,10 @@ fn main() {
                     }
                     "import" => {
                         let app = app.clone();
-                        tauri::async_runtime::spawn_blocking(move || {
-                            let _ = open_import(app);
+                        tauri::async_runtime::spawn(async move {
+                            if let Err(error) = open_import(app.clone()).await {
+                                let _ = app.state::<Store>().event(&error);
+                            }
                         });
                     }
                     "quit" => {
@@ -487,6 +519,19 @@ fn main() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            library::library_state,
+            library::library_collect,
+            library::library_action,
+            library::library_toggle,
+            library::library_drag,
+            library::library_pick,
+            library::library_window,
+            library::library_cursor,
+            library_media::library_media_info,
+            library_media::library_media_open,
+            library_media::library_media_window,
+            library_media::library_media_export,
+            library_media::library_media_save,
             shortcuts::shortcut_capture,
             screen::screen_preferences,
             screen::screen_escape,
@@ -498,6 +543,7 @@ fn main() {
             screen::screen_start,
             screen::screen_select_image,
             screen::screen_selection_kind,
+            screen::screen_selection_image,
             screen::screen_overlay_ready,
             screen_editor::screen_editor_context,
             screen_editor::screen_editor_image,
@@ -508,16 +554,20 @@ fn main() {
             screen_editor::screen_editor_feedback_get,
             screen_editor::screen_editor_print,
             screen_editor::screen_image_export,
+            screen_editor::screen_video_snapshot,
             screen::screen_stop,
             screen::screen_copy,
             screen::screen_reveal,
             onboarding::setup_info,
             open_groq_console,
             shortcuts::save_all_shortcuts,
+            library::library_preferences,
+            video_transcript::video_transcript_action,
             screen::screen_audio_devices,
             screen::screen_pause,
             screen::screen_cancel,
             screen_editor::screen_overlay_layout,
+            screen_editor::screen_tools_panel,
             onboarding::complete_setup,
             onboarding::set_startup,
             onboarding::validate_key,

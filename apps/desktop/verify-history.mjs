@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
-import {chromium} from 'playwright';
+import {launchSilentBrowser} from './tests/silent-browser.mjs';
 import {installNativeMock} from './tests/native-mock.mjs';
-const browser=await chromium.launch({headless:true});
+const browser=await launchSilentBrowser();
 try{
   const page=await browser.newPage({viewport:{width:1100,height:800}});await page.addInitScript(installNativeMock,{});
   await page.addInitScript(()=>{
@@ -14,7 +14,7 @@ try{
       return old(command,args);
     };
   });
-  await page.goto('http://127.0.0.1:5190/');await page.getByRole('button',{name:'Historial',exact:true}).click();
+  await page.goto((process.env.WHISPERA_TEST_URL || 'http://127.0.0.1:5190') + '/');await page.getByRole('button',{name:'Historial',exact:true}).click();
   assert.equal(await page.locator('.history-row').count(),50);await page.getByRole('button',{name:'Mostrar 50 más'}).click();assert.equal(await page.locator('.history-row').count(),100);
   await page.locator('.history-row').first().click();await page.getByLabel('Texto de transcripción').fill('Texto corregido');
   await page.getByRole('button',{name:'Guardar',exact:true}).click();await page.getByRole('dialog').getByText('Cambios guardados en el historial').waitFor();

@@ -1,0 +1,8 @@
+.library-video-player { min-width: 0; width: 100%; }
+.library-video-player video { display: block; width: 100%; max-height: 60vh; object-fit: contain; border-radius: 8px; background: #000; }
+.library-video-controls { display: flex; align-items: center; gap: 10px; min-height: 36px; padding-top: 6px; color: #eee; }
+.library-video-controls button { display: grid; place-items: center; flex: 0 0 28px; width: 28px; height: 28px; border: 0; border-radius: 6px; background: transparent; color: inherit; cursor: pointer; }
+.library-video-controls button:hover { background: #ffffff18; }
+.library-video-controls :focus-visible { outline: 2px solid #c4b5fd; outline-offset: 2px; }
+.library-video-controls output { font: 11px/1.2 system-ui; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.library-video-controls input { flex: 1; min-width: 20px; width: 100%; accent-color: #ccc; cursor: pointer; }

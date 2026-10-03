@@ -5,10 +5,11 @@
   "type": "module",
   "scripts": {
     "dev": "vite --host 127.0.0.1",
-    "build": "tsc --noEmit && vite build",
+    "build": "node build-library.mjs && tsc --noEmit && vite build",
     "tauri": "tauri",
     "desktop": "tauri dev",
-    "test": "node verify-screen.mjs && node verify-editor.mjs && node verify-history.mjs && node verify-hotkeys.mjs && node verify-setup.mjs"
+    "test:release": "node tests/run-release.mjs",
+    "test": "node verify-screen.mjs && node verify-editor.mjs && node verify-line-toolbar.mjs && node verify-capture-controls.mjs && node verify-history.mjs && node verify-hotkeys.mjs && node verify-setup.mjs"
   },
   "dependencies": {
     "@base-ui/react": "^1.8.0",

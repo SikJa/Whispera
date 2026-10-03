@@ -26,7 +26,7 @@
 
 ## ¿Qué es?
 
-**Whispera (K) 0.1.6** es una versión modificada de [Whispera de SikJa](https://github.com/SikJa/Whispera).
+**Whispera (K) 0.2.0** es una versión modificada de [Whispera de SikJa](https://github.com/SikJa/Whispera).
 Conserva el dictado y la carpeta animada del proyecto original, y agrega captura
 de imágenes y video por región. El código original mantiene sus créditos y su
 licencia MIT.
@@ -40,6 +40,24 @@ Aparece como una **carpeta flotante transparente** sobre cualquier ventana. Grab
 - 🌐 **Español e inglés** — interfaz, instalador y guía inicial bilingüe
 
 ## Características
+
+### Novedades de 0.2.0
+
+- **Portapapeles integrado:** texto, enlaces, imágenes, videos y archivos; búsqueda,
+  filtros, elementos fijados, grupos y arrastre nativo. Configuración y atajo propios.
+- **Editor de imágenes:** combinar capturas en un lienzo, mover y redimensionar,
+  fondos originales, color personalizado, difuminado, margen, esquinas y sombra.
+- **Captura optimizada:** captura nativa en memoria, menús congelados antes de cambiar
+  el foco, barra Línea compacta y más formas. PNG con esquinas transparentes.
+- **Video:** captura PNG durante la grabación, controles centrados y procesamiento
+  en segundo plano al detener, sin dejar las herramientas bloqueando la pantalla.
+- **Voz del video a texto:** transcripción opcional del micrófono con Groq,
+  previsualización y copia del texto. El arrastre/copiado puede incluir un TXT junto
+  al MP4; que aparezca como texto en el mensaje depende de la aplicación de destino.
+- **Dictado largo:** transcripción anticipada por fragmentos mientras seguís hablando,
+  con recuperación y reintentos. Requiere conexión y consume la cuota de tu Groq.
+
+Detalles, límites y evidencia de pruebas en [las notas de versión](docs/releases/0.2.0.md).
 
 | | |
 |---|---|
@@ -157,9 +175,10 @@ Tu clave aparece una sola vez. Copiala y pegala en Whispera. Empieza con `gsk_`.
 
 - El audio y el vocabulario del diccionario se envían a **Groq** al transcribir (HTTPS)
 - La clave se guarda en **Windows Credential Manager**, no en archivos de texto
-- Grabaciones, historial y logs quedan en `%APPDATA%\app.whispera.desktop`
+- Datos locales en `%APPDATA%\app.whispera.desktop.preview` y `%LOCALAPPDATA%\app.whispera.desktop.preview`
 - **No hay servidor de Whispera** — sin analytics, sin telemetría, sin cuenta
-- Los datos locales **no se borran automáticamente** (incluidos audios cancelados)
+- Audio completado/cancelado e historial elegible caducan a las 48 horas; la biblioteca
+  tiene sus propios límites y conserva fijados. Usá incógnito para no recoger contenido sensible.
 
 Más información → [docs/PRIVACY.md](docs/PRIVACY.md)
 
@@ -170,6 +189,8 @@ Requisitos: Windows, Node.js 22+, Rust stable (MSVC), C++ Build Tools, WebView2.
 ```bash
 cd apps/desktop
 npm ci
+npm ci --ignore-scripts --prefix vendor/edge-drop
+npm run build          # incluye el renderer del portapapeles
 npm run desktop        # dev con hot-reload
 ```
 
@@ -180,8 +201,10 @@ cd src-tauri && cargo test --locked      # tests de Rust
 
 El instalador se genera en `src-tauri/target/release/bundle/nsis/`.
 
-Las pruebas de interfaz se ejecutan con `npm test` en `apps/desktop`, con el
-servidor de desarrollo activo en otra terminal. Más detalles en
+Las pruebas de publicación se ejecutan con `npx playwright install chromium` y
+`npm run test:release` después de compilar. Abren un servidor aislado y navegadores
+headless silenciados, con archivos sintéticos e IPC simulado. No prueban el
+micrófono real ni el pegado en otras aplicaciones. Más detalles en
 [CAPTURE_DESIGN.md](docs/CAPTURE_DESIGN.md).
 
 ## Licencia

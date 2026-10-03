@@ -20,6 +20,7 @@ pub struct Engine {
     pub processing: AtomicBool,
     pub mute_journal: PathBuf,
     pub paste_target: Mutex<Option<crate::paste::Target>>,
+    pub live: Mutex<std::collections::HashMap<String, crate::incremental::Live>>,
 }
 impl Engine {
     pub fn new(root: PathBuf) -> Result<Self, String> {
@@ -58,6 +59,7 @@ impl Engine {
             processing: AtomicBool::new(false),
             mute_journal,
             paste_target: Mutex::new(None),
+            live: Mutex::new(std::collections::HashMap::new()),
         })
     }
     pub fn restore(&self) {
@@ -97,16 +99,54 @@ pub fn control(app: &tauri::AppHandle, action: &str) -> Result<(), String> {
     }
     match action {
         "start" => {
-            if app.state::<crate::screen::Screen>().busy() {
-                return Err("Termina la grabacion de pantalla antes de dictar".into());
-            }
+            let settings: Settings = app.state::<Store>().get("settings")?;
+            let rules: Vec<Rule> = app.state::<Store>().get("rules")?;
             if groq::entry()?.get_password().is_err() {
                 return Err("Configura o importa la clave Groq antes de grabar".into());
             }
             if !["recording", "paused"].contains(&state.phase.as_str()) {
                 system_audio::restore(&engine.mute_journal)?;
             }
-            engine.recorder.start()?;
+            let id = engine.recorder.start()?;
+            if settings.incremental_transcription {
+                let dir = audio::session_dir(&engine.recorder.root, &id)?;
+                if let Err(e) = crate::incremental::prepare(&dir, settings.clone(), rules) {
+                    let _ = engine.recorder.stop();
+                    return Err(e);
+                }
+                let stop = Arc::new(AtomicBool::new(false));
+                let signal = stop.clone();
+                let done = Arc::new(AtomicBool::new(false));
+                let completed = done.clone();
+                let view = engine.recorder.clone();
+                let session = id.clone();
+                let app_copy = app.clone();
+                let task = tauri::async_runtime::spawn(async move {
+                    let work = crate::incremental::run(dir, signal.clone());
+                    tokio::pin!(work);
+                    let result = tokio::select! {
+                        result = &mut work => result,
+                        _ = async {
+                            loop {
+                                tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+                                let state = view.snapshot();
+                                if state.session != session || state.phase == "error" {
+                                    signal.store(true, Ordering::SeqCst);
+                                    break;
+                                }
+                            }
+                        } => work.await,
+                    };
+                    if result.is_err() && !signal.load(Ordering::SeqCst) {
+                        let _ = app_copy.state::<Store>().event("Envio anticipado pendiente; el audio sigue guardado y se reintentara al detener.");
+                    }
+                    completed.store(true, Ordering::SeqCst);
+                    result
+                });
+                let mut jobs = engine.live.lock().map_err(|_| "Cola ocupada")?;
+                jobs.retain(|_, job| !job.done.load(Ordering::SeqCst));
+                jobs.insert(id, crate::incremental::Live { stop, done, task });
+            }
             *engine.paste_target.lock().map_err(|_| "Destino ocupado")? = crate::paste::capture();
             crate::sounds::play(&app.state::<Store>().get::<Settings>("settings")?, false);
         }
@@ -126,6 +166,14 @@ pub fn control(app: &tauri::AppHandle, action: &str) -> Result<(), String> {
         }
         "stop" | "save" | "cancel" => {
             let result = engine.recorder.stop();
+            {
+                let live = engine.live.lock().map_err(|_| "Cola ocupada")?;
+                if let Some(job) = live.get(&state.session) {
+                    job.stop.store(true, Ordering::SeqCst);
+                }
+                // An already-sent request may finish caching, but never publishes
+                // or pastes anything after save/cancel.
+            }
             engine.restore();
             let id = result?;
             crate::sounds::play(&app.state::<Store>().get::<Settings>("settings")?, true);
@@ -152,8 +200,6 @@ pub fn control(app: &tauri::AppHandle, action: &str) -> Result<(), String> {
     Ok(())
 }
 fn hide_after_completion(live_dictation: bool, state: &RecordingState) -> bool {
-    // A completed transcript is already saved. Clipboard/paste warnings must
-    // not keep the live recorder on screen after dictation has finished.
     live_dictation && state.phase == "done"
 }
 fn schedule(
@@ -205,17 +251,9 @@ fn schedule(
                     s.text = text;
                     s.progress.clear();
                 });
-                let completed = engine.recorder.snapshot();
-                if !completed.error.is_empty() {
-                    let _ = app.state::<Store>().event(&completed.error);
-                }
-                if hide_after_completion(live_dictation, &completed) {
+                if hide_after_completion(live_dictation, &engine.recorder.snapshot()) {
                     if let Some(window) = app.get_webview_window("recorder") {
-                        if let Err(error) = window.hide() {
-                            let _ = app
-                                .state::<Store>()
-                                .event(&format!("No se pudo ocultar la grabadora: {error}"));
-                        }
+                        let _ = window.hide();
                     }
                 }
             }
@@ -237,38 +275,51 @@ async fn process(app: &tauri::AppHandle, id: &str) -> Result<String, String> {
     let dir = audio::session_dir(&engine.recorder.root, id)?;
     let settings: Settings = app.state::<Store>().get("settings")?;
     let rules: Vec<Rule> = app.state::<Store>().get("rules")?;
-    let target = dir.clone();
-    let parts =
-        tauri::async_runtime::spawn_blocking(move || audio::materialize(&target, 16_000_000))
-            .await
-            .map_err(|e| e.to_string())??;
-    let mut texts = vec![];
-    for (index, path) in parts.iter().enumerate() {
-        engine
-            .recorder
-            .change(|s| s.progress = format!("Parte {} de {}", index + 1, parts.len()));
-        let cache = dir.join(format!("part-{index:04}.txt"));
-        let text = if cache.exists() {
-            std::fs::read_to_string(&cache).map_err(|e| e.to_string())?
-        } else {
-            let original = path.clone();
-            let trim = settings.trim_silence;
-            let prepared = tauri::async_runtime::spawn_blocking(move || {
-                if trim {
-                    audio::trimmed_copy(&original)
-                } else {
-                    Ok(original)
-                }
-            })
-            .await
-            .map_err(|e| e.to_string())??;
-            let text = groq::transcribe_raw(&prepared, &settings, &rules).await?;
-            audio::write_new(&cache, text.as_bytes())?;
-            text
-        };
-        texts.push(text);
+    let live = {
+        let mut pending = engine.live.lock().map_err(|_| "Cola ocupada")?;
+        pending.remove(id)
+    };
+    if let Some(job) = live {
+        job.stop.store(true, Ordering::SeqCst);
+        // Missing/failed parts are retried below from the durable PCM.
+        let _ = job.task.await;
     }
-    let text = groq::corrections(&texts.join("\n\n"), &rules);
+    let text = if crate::incremental::enabled(&dir) {
+        crate::incremental::finish(&dir).await?
+    } else {
+        let target = dir.clone();
+        let parts =
+            tauri::async_runtime::spawn_blocking(move || audio::materialize(&target, 16_000_000))
+                .await
+                .map_err(|e| e.to_string())??;
+        let mut texts = vec![];
+        for (index, path) in parts.iter().enumerate() {
+            engine
+                .recorder
+                .change(|s| s.progress = format!("Parte {} de {}", index + 1, parts.len()));
+            let cache = dir.join(format!("part-{index:04}.txt"));
+            let text = if cache.exists() {
+                std::fs::read_to_string(&cache).map_err(|e| e.to_string())?
+            } else {
+                let original = path.clone();
+                let trim = settings.trim_silence;
+                let prepared = tauri::async_runtime::spawn_blocking(move || {
+                    if trim {
+                        audio::trimmed_copy(&original)
+                    } else {
+                        Ok(original)
+                    }
+                })
+                .await
+                .map_err(|e| e.to_string())??;
+                let text = groq::transcribe_raw(&prepared, &settings, &rules).await?;
+                audio::write_new(&cache, text.as_bytes())?;
+                text
+            };
+            texts.push(text);
+        }
+        groq::corrections(&texts.join("\n\n"), &rules)
+    };
     let result = dir.join("result.txt");
     if !result.exists() {
         audio::write_new(&result, text.as_bytes())?;
@@ -340,33 +391,19 @@ pub fn shutdown(app: &tauri::AppHandle) {
 mod tests {
     use super::*;
     #[test]
-    fn completed_live_dictation_hides_even_when_pasting_is_unavailable() {
+    fn completed_dictation_hides_but_processing_and_errors_stay_visible() {
         let mut state = RecordingState {
             phase: "done".into(),
             ..Default::default()
         };
         assert!(hide_after_completion(true, &state));
         assert!(!hide_after_completion(false, &state));
-        for warning in [
-            "Texto copiado. No habia un campo de destino externo al iniciar.",
-            "El destino original ya no existe. Texto conservado en el portapapeles.",
-            "Texto guardado; no se pudo copiar automaticamente.",
-        ] {
-            state.error = warning.into();
-            assert!(hide_after_completion(true, &state));
-            assert!(!hide_after_completion(false, &state));
-        }
-    }
-
-    #[test]
-    fn unfinished_or_failed_dictation_does_not_auto_hide() {
-        let mut state = RecordingState::default();
+        state.error = "Clipboard failed".into();
+        assert!(hide_after_completion(true, &state));
+        state.error.clear();
         for phase in ["idle", "recording", "paused", "processing", "error"] {
             state.phase = phase.into();
             assert!(!hide_after_completion(true, &state));
-            state.error = "No se pudo transcribir el audio".into();
-            assert!(!hide_after_completion(true, &state));
-            state.error.clear();
         }
     }
 }

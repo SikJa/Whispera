@@ -20,24 +20,32 @@ export function ScreenOverlay() {
   const [epoch,setEpoch] = useState(0);
   const [initialized,setInitialized] = useState(false);
   const [frameColor,setFrameColor] = useState('#ffffff');
+  const [snapshot,setSnapshot] = useState<string>();
   useEffect(()=>{
-    let alive=true; const off:UnlistenFn[]=[];
+    let alive=true; let imageUrl:string|undefined; let resetId=0; const off:UnlistenFn[]=[];
     const reset=async(mode:'video'|'image')=>{
+      const id=++resetId;
       const appearance=await invoke<Appearance>('screen_appearance');
-      if(!alive)return;setFrameColor(appearance.frameColor??'#ffffff');setStage(undefined);setKind(mode);setEpoch(v=>v+1);setInitialized(true);
+      const bytes=mode==='image'?await invoke<ArrayBuffer>('screen_selection_image'):undefined;
+      if(!alive||id!==resetId)return;
+      if(imageUrl)URL.revokeObjectURL(imageUrl);
+      imageUrl=bytes&&bytes.byteLength?URL.createObjectURL(new Blob([bytes],{type:'image/png'})):undefined;
+      if(imageUrl){const image=new Image();image.src=imageUrl;await image.decode();}
+      if(!alive||id!==resetId)return;
+      setSnapshot(imageUrl);setFrameColor(appearance.frameColor??'#ffffff');setStage(undefined);setKind(mode);setEpoch(v=>v+1);setInitialized(true);
       await showWhenReady('screen_overlay_ready',undefined,()=>alive);
     };
     void(async()=>{
-      for(const promise of [listen('screen-hide',()=>{if(alive){setStage(undefined);setInitialized(false);}}),listen<'video'|'image'>('screen-reset',e=>void reset(e.payload)),listen<Stage>('screen-stage',e=>{if(alive)setStage(e.payload);})]){
+      for(const promise of [listen('screen-hide',()=>{++resetId;if(imageUrl)URL.revokeObjectURL(imageUrl);imageUrl=undefined;if(alive){setSnapshot(undefined);setStage(undefined);setInitialized(false);}}),listen<'video'|'image'>('screen-reset',e=>void reset(e.payload)),listen<Stage>('screen-stage',e=>{if(alive)setStage(e.payload);})]){
         const remove=await promise;if(!alive)remove();else off.push(remove);
       }
       if(alive)await reset(await invoke<'video'|'image'>('screen_selection_kind'));
     })().catch(()=>{});
-    return()=>{alive=false;off.forEach(remove=>remove());};
+    return()=>{alive=false;if(imageUrl)URL.revokeObjectURL(imageUrl);off.forEach(remove=>remove());};
   },[]);
-  return !initialized ? null : stage ? <ScreenIndicator rect={stage.rect} kind={stage.kind}/> : <ScreenSelection key={epoch} kind={kind} frameColor={frameColor} onPreparing={rect=>setStage({rect,kind})}/>;
+  return !initialized ? null : stage ? <ScreenIndicator rect={stage.rect} kind={stage.kind}/> : <ScreenSelection key={epoch} kind={kind} frameColor={frameColor} snapshot={snapshot} onPreparing={rect=>setStage({rect,kind})}/>;
 }
-export function ScreenSelection({kind='video',frameColor='#ffffff',onPreparing}:{kind?:'video'|'image';frameColor?:string;onPreparing?:(rect:Rect)=>void}={}) {
+export function ScreenSelection({kind='video',frameColor='#ffffff',snapshot,onPreparing}:{kind?:'video'|'image';frameColor?:string;snapshot?:string;onPreparing?:(rect:Rect)=>void}={}) {
   const [origin, setOrigin] = useState<Point>();
   const [end, setEnd] = useState<Point>();
   const [error, setError] = useState('');
@@ -61,7 +69,7 @@ export function ScreenSelection({kind='video',frameColor='#ffffff',onPreparing}:
     await new Promise(requestAnimationFrame);await new Promise(requestAnimationFrame);
     try{await invoke('screen_start',{rect});}catch(e){setError(String(e));setBusy(false);}
   };
-  return <div className="screen-selection" data-has-selection={!!rect} onPointerDown={e => {
+  return <div className="screen-selection" style={snapshot?{backgroundImage:`url("${snapshot}")`,backgroundSize:'100% 100%'}:undefined} data-frozen={!!snapshot} data-has-selection={!!rect} onPointerDown={e => {
     if (busy || e.button !== 0 || (e.target as HTMLElement).closest('button')) return;
     e.currentTarget.setPointerCapture(e.pointerId);
     anchor.current = { x: e.clientX, y: e.clientY }; setOrigin(anchor.current); setEnd(anchor.current); setError('');
@@ -73,7 +81,7 @@ export function ScreenSelection({kind='video',frameColor='#ffffff',onPreparing}:
     await beginCapture(rect);
   }}>
     <div className="screen-selection-help" role="status">{busy ? 'Preparando…' : error || (kind==='image'?'Seleccioná el área para capturar.':'Seleccioná el área. Al soltar empieza a grabar.')} <kbd>Ctrl+A: pantalla completa</kbd><kbd>Esc: salir</kbd></div>
-    {rect && <CaptureFrame className="screen-selection-rect" width={rect.width} height={rect.height} color={frameColor} style={{left:rect.x,top:rect.y}}><span>{Math.round(rect.width)} × {Math.round(rect.height)}</span></CaptureFrame>}
+    {rect && <CaptureFrame className="screen-selection-rect" width={rect.width} height={rect.height} color={frameColor} style={{left:rect.x,top:rect.y}}/>}
   </div>;
 }
 

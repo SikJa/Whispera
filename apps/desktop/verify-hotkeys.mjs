@@ -1,12 +1,12 @@
 import assert from 'node:assert/strict';
-import {chromium} from 'playwright';
+import {launchSilentBrowser} from './tests/silent-browser.mjs';
 import {installNativeMock} from './tests/native-mock.mjs';
-const browser=await chromium.launch({headless:true});
+const browser=await launchSilentBrowser();
 try {
   const page=await browser.newPage({viewport:{width:1100,height:850}});
   const errors=[];page.on('pageerror',e=>errors.push(e.message));
   await page.addInitScript(installNativeMock,{});
-  await page.goto('http://127.0.0.1:5190/');
+  await page.goto((process.env.WHISPERA_TEST_URL || 'http://127.0.0.1:5190') + '/');
   await page.getByRole('button',{name:'Atajos',exact:true}).click();
   const video=page.locator('#shortcut-video'),image=page.locator('#shortcut-image');
   await video.click();await page.locator('.hotkey-field[data-listening="true"]').waitFor();
@@ -21,7 +21,7 @@ try {
   await page.keyboard.press('Control+Alt+F7');await page.keyboard.press('Tab');
   assert.equal(await image.inputValue(),'Ctrl + Alt + F7');
   await page.getByRole('button',{name:'Guardar',exact:true}).click();
-  await page.getByText('Los tres atajos quedaron guardados.').waitFor();
+  await page.getByText('Los cuatro atajos quedaron guardados.').waitFor();
   assert.deepEqual(await page.evaluate(()=>window.videoPreferences),{audio:'none',hotkey:'Alt+KeyX',image_hotkey:'Control+Alt+F7',frame_color:'#ffffff',image_auto_copy:false});
   const captures=await page.evaluate(()=>window.calls.filter(c=>c.command==='shortcut_capture').map(c=>c.args.active));
   assert.ok(captures.includes(true));assert.equal(captures.at(-1),false);

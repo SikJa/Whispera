@@ -1,12 +1,12 @@
 import assert from 'node:assert/strict';
-import {chromium} from 'playwright';
+import {launchSilentBrowser} from './tests/silent-browser.mjs';
 import {installNativeMock} from './tests/native-mock.mjs';
-const browser=await chromium.launch({headless:true});
+const browser=await launchSilentBrowser();
 try {
   const page=await browser.newPage({viewport:{width:900,height:760},locale:'es-AR'});
   const errors=[];page.on('pageerror',e=>errors.push(e.message));
   await page.addInitScript(installNativeMock,{setupComplete:false});
-  await page.goto('http://127.0.0.1:5190/');
+  await page.goto((process.env.WHISPERA_TEST_URL || 'http://127.0.0.1:5190') + '/');
   await page.getByRole('heading',{name:'Tu voz, tu configuración'}).waitFor();
   await page.getByRole('button',{name:'Continuar',exact:true}).click();
   await page.getByText('¿Cómo obtener tu clave de Groq?',{exact:true}).click();

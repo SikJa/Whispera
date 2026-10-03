@@ -58,6 +58,7 @@ pub struct Screen {
     pub gate: Mutex<()>,
     pub kind: Mutex<String>,
     selection_ready: AtomicBool,
+    snapshots: Mutex<std::collections::HashMap<String, (Region, Vec<u8>)>>,
 }
 struct Active {
     stop: mpsc::Sender<CaptureControl>,
@@ -81,6 +82,7 @@ impl Screen {
             gate: Mutex::new(()),
             kind: Mutex::new("video".into()),
             selection_ready: AtomicBool::new(false),
+            snapshots: Mutex::new(std::collections::HashMap::new()),
         }
     }
     pub fn busy(&self) -> bool {
@@ -172,6 +174,7 @@ pub(crate) fn command(binary: &Path) -> Command {
     cmd
 }
 fn hide_selectors(app: &tauri::AppHandle) {
+    if let Ok(mut snapshots) = app.state::<Screen>().snapshots.lock() { snapshots.clear(); }
     release_escape(app);
     crate::screen_editor::hide(app);
     for (label, window) in app.webview_windows() {
@@ -369,19 +372,24 @@ fn select_locked(app: &tauri::AppHandle, screen: &Screen, kind: &str) -> Result<
     if screen.busy() {
         return Err("Ya hay una grabacion o seleccion de pantalla".into());
     }
-    let voice = app.state::<crate::engine::Engine>();
-    let _voice_gate = voice.gate.lock().map_err(|_| "Dictado ocupado")?;
-    if crate::health::busy(&voice.recorder.snapshot().phase)
-        || voice.processing.load(std::sync::atomic::Ordering::SeqCst)
-    {
-        return Err("Termina el dictado antes de grabar pantalla".into());
-    }
-    ffmpeg(app)?;
+    if kind != "image" { ffmpeg(app)?; }
     let monitors = app.available_monitors().map_err(|e| e.to_string())?;
     if monitors.is_empty() {
         return Err("No hay pantallas disponibles".into());
     }
+    // Freeze before activation can dismiss a menu in the target app.
+    let mut snapshots = std::collections::HashMap::new();
+    if kind == "image" {
+        let _exclude = app.get_webview_window("screen-ink")
+            .map(|w| w.hwnd().map_err(|e| e.to_string()).and_then(|h| crate::screen_capture::InkExclusion::new(windows::Win32::Foundation::HWND(h.0))))
+            .transpose()?;
+        for (index, monitor) in monitors.iter().enumerate() {
+            let region = Region { x: monitor.position().x, y: monitor.position().y, width: monitor.size().width, height: monitor.size().height };
+            snapshots.insert(format!("screen-select-{index}"), (region, crate::screen_capture::png(region)?));
+        }
+    }
     hide_selectors(app);
+    *screen.snapshots.lock().map_err(|_| "Captura ocupada")? = snapshots;
     crate::shortcuts::register(app, "Escape")?;
     screen.selection_ready.store(false, Ordering::SeqCst);
     {
@@ -458,6 +466,12 @@ pub fn screen_selection_kind(screen: State<Screen>) -> String {
         .clone()
 }
 #[tauri::command]
+pub fn screen_selection_image(screen: State<Screen>, window: tauri::WebviewWindow) -> Result<tauri::ipc::Response, String> {
+    let snapshots = screen.snapshots.lock().map_err(|_| "Captura ocupada")?;
+    let bytes = snapshots.get(window.label()).map(|(_, bytes)| bytes.clone()).unwrap_or_default();
+    Ok(tauri::ipc::Response::new(bytes))
+}
+#[tauri::command]
 pub fn screen_overlay_ready(
     app: tauri::AppHandle,
     window: tauri::WebviewWindow,
@@ -475,6 +489,12 @@ pub fn screen_overlay_ready(
             == "selecting"
     {
         window.show().map_err(|e| e.to_string())?;
+        // Reassert z-order after showing a reused selector, including over our own settings.
+        unsafe {
+            use windows::Win32::UI::WindowsAndMessaging::{SetWindowPos, HWND_TOPMOST, SWP_NOMOVE, SWP_NOSIZE, SWP_NOACTIVATE};
+            SetWindowPos(windows::Win32::Foundation::HWND(window.hwnd().map_err(|e| e.to_string())?.0), Some(HWND_TOPMOST), 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE)
+                .map_err(|e| e.to_string())?;
+        }
         if window.label() == "screen-select-0" {
             window.set_focus().map_err(|e| e.to_string())?;
         }
@@ -535,13 +555,20 @@ pub async fn screen_start(
         }
         show_indicator(&window, rect, &kind)?;
         if kind == "image" {
+            let bytes = {
+                let mut snapshots = screen.snapshots.lock().map_err(|_| "Captura ocupada")?;
+                let (monitor, bytes) = snapshots.get(window.label()).ok_or("La imagen de seleccion ya no esta disponible")?;
+                let cropped = crate::screen_capture::crop_png(bytes, *monitor, region)?;
+                snapshots.clear();
+                cropped
+            };
             screen.state.lock().map_err(|_| "Estado ocupado")?.phase = "editing".into();
             let preferences: Preferences = app
                 .state::<Store>()
                 .get("screen_preferences")
                 .unwrap_or_default();
             if preferences.image_auto_copy {
-                match crate::screen_editor::copy_immediately(&app, &window, rect, region) {
+                match crate::screen_editor::copy_immediately(&app, &window, rect, region, bytes) {
                     Ok(true) => {
                         hide_selectors(&app);
                         *screen.state.lock().map_err(|_| "Estado ocupado")? = Status {
@@ -560,7 +587,7 @@ pub async fn screen_start(
                 }
                 return Ok(());
             }
-            if let Err(error) = crate::screen_editor::open(&app, &window, rect, region, "image") {
+            if let Err(error) = crate::screen_editor::open_with_image(&app, &window, rect, region, "image", Some(bytes)) {
                 hide_selectors(&app);
                 screen.state.lock().map_err(|_| "Estado ocupado")?.phase = "error".into();
                 report_error(&app, error.clone());
@@ -593,14 +620,20 @@ pub async fn screen_start(
         let (ready, ready_rx) = mpsc::channel();
         let state = screen.state.clone();
         let history_app = app.clone();
+        let transcribe_microphone = crate::video_transcript::recording_enabled(&app.state::<Store>());
         let thread = std::thread::spawn(move || {
-            capture(region, prefs, binary, dir, state.clone(), stop_rx, ready);
+            capture(region, prefs, binary, dir, state.clone(), stop_rx, ready, transcribe_microphone);
             let path = state
                 .lock()
                 .ok()
                 .map(|s| s.path.clone())
                 .unwrap_or_default();
             if !path.is_empty() {
+                if transcribe_microphone {
+                    if let Err(error) = crate::video_transcript::enqueue(&history_app.state::<Store>(), Path::new(&path)) {
+                        let _ = history_app.state::<Store>().event(&format!("Transcripcion de video: {error}"));
+                    }
+                }
                 if let Err(error) = crate::capture_history::remember(
                     &history_app.state::<Store>(),
                     "video",
@@ -654,6 +687,8 @@ fn stop_locked(app: &tauri::AppHandle, screen: &Screen) -> Result<(), String> {
     let active = screen.active.lock().map_err(|_| "Video ocupado")?.take();
     if let Some(active) = active {
         let _ = active.stop.send(CaptureControl::Stop);
+        // The worker finalizes the MP4 without keeping the capture UI visible.
+        hide_selectors(app);
         active
             .thread
             .join()
@@ -758,12 +793,12 @@ pub(crate) fn copy_file(path: &Path) -> Result<(), String> {
         .map_err(|e| format!("Video conservado, pero no se pudo copiar: {e}"))
 }
 #[tauri::command]
-pub fn screen_copy(screen: State<Screen>) -> Result<(), String> {
+pub fn screen_copy(screen: State<Screen>, app: tauri::AppHandle) -> Result<(), String> {
     let mut state = screen.state.lock().map_err(|_| "Estado ocupado")?;
     if state.path.is_empty() {
         return Err("Todavia no hay un video".into());
     }
-    copy_file(Path::new(&state.path))?;
+    crate::video_transcript::copy_files(&app, &[PathBuf::from(&state.path)])?;
     state.copied = true;
     Ok(())
 }
@@ -794,6 +829,7 @@ struct AudioTrack {
     channels: u16,
     written: u64,
     fault: Arc<Mutex<String>>,
+    scratch: Vec<u8>,
 }
 fn samples<T: Copy>(
     data: &[T],
@@ -881,6 +917,7 @@ impl AudioTrack {
             channels: cfg.channels,
             written: 0,
             fault,
+            scratch: Vec::with_capacity(8192),
         })
     }
     fn silence(&mut self, samples: u64) -> Result<(), String> {
@@ -909,8 +946,8 @@ impl AudioTrack {
             if begin > self.written {
                 self.silence(begin - self.written)?;
             }
-            let bytes: Vec<u8> = values.iter().flat_map(|v| v.to_le_bytes()).collect();
-            self.file.write_all(&bytes).map_err(|e| e.to_string())?;
+            pcm_bytes(&values,&mut self.scratch);
+            self.file.write_all(&self.scratch).map_err(|e| e.to_string())?;
             self.written += values.len() as u64;
         }
         Ok(())
@@ -949,6 +986,10 @@ fn finish_process(child: &mut Child) -> Result<(), String> {
         std::thread::sleep(Duration::from_millis(50));
     }
 }
+fn pcm_bytes(values:&[i16],bytes:&mut Vec<u8>) {
+    bytes.clear();
+    for value in values {bytes.extend_from_slice(&value.to_le_bytes());}
+}
 fn capture(
     region: Region,
     prefs: Preferences,
@@ -957,6 +998,7 @@ fn capture(
     state: Arc<Mutex<Status>>,
     stop: mpsc::Receiver<CaptureControl>,
     ready: mpsc::Sender<Result<(), String>>,
+    transcribe_microphone: bool,
 ) {
     let result = (|| -> Result<Option<PathBuf>, String> {
         let mut segments = Vec::new();
@@ -974,6 +1016,7 @@ fn capture(
                 &stop,
                 &ready,
                 elapsed,
+                transcribe_microphone,
             )?;
             elapsed += seconds;
             if let Some(path) = path {
@@ -1132,6 +1175,7 @@ fn record(
     stop: &mpsc::Receiver<CaptureControl>,
     ready: &mpsc::Sender<Result<(), String>>,
     elapsed: f64,
+    transcribe_microphone: bool,
 ) -> Result<(Option<PathBuf>, CaptureControl, f64), String> {
     let mut tracks = Vec::new();
     if ["system", "both"].contains(&prefs.audio.as_str()) {
@@ -1222,6 +1266,7 @@ fn record(
     let _ = ready.send(Ok(()));
     let mut error = None;
     let mut reason = CaptureControl::Stop;
+    let mut last_status=Instant::now();
     loop {
         match stop.recv_timeout(Duration::from_millis(25)) {
             Ok(CaptureControl::Resume) => continue,
@@ -1245,8 +1290,10 @@ fn record(
         if error.is_some() {
             break;
         }
-        state.lock().map_err(|_| "Estado ocupado")?.seconds =
-            elapsed + started.elapsed().as_secs_f64();
+        if last_status.elapsed() >= Duration::from_millis(250) {
+            state.lock().map_err(|_| "Estado ocupado")?.seconds = elapsed + started.elapsed().as_secs_f64();
+            last_status=Instant::now();
+        }
     }
     let seconds = started.elapsed().as_secs_f64();
     {
@@ -1337,12 +1384,22 @@ fn record(
         }
         std::thread::sleep(Duration::from_millis(50));
     }
+    let mut preserve_microphone = false;
+    if transcribe_microphone {
+        if let Some(track) = tracks.iter().find(|track| track.path.file_name().is_some_and(|name| name == "microphone.pcm")) {
+            if let Err(error) = crate::video_transcript::prepare(&binary, &track.path, track.rate, track.channels) {
+                preserve_microphone = true;
+                let _ = fs::write(dir.join("speech-error.txt"), error);
+            }
+        }
+    }
     drop(tracks);
     // Only remove intermediate files after a complete, nonempty MP4 exists.
     if fs::metadata(&output).map_err(|e| e.to_string())?.len() == 0 {
         return Err("El video quedo vacio".into());
     }
     for file in ["video.mkv", "system.pcm", "microphone.pcm"] {
+        if file == "microphone.pcm" && preserve_microphone { continue; }
         let _ = fs::remove_file(dir.join(file));
     }
     Ok((Some(output), reason, seconds))
@@ -1350,7 +1407,29 @@ fn record(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn video_remains_busy_until_finalization() {
+        let screen = Screen::new();
+        for phase in ["recording", "paused", "saving"] {
+            screen.state.lock().unwrap().phase = phase.into();
+            assert!(screen.busy());
+        }
+        screen.state.lock().unwrap().phase = "idle".into();
+        assert!(!screen.busy());
+    }
     use super::*;
+    #[test]
+    fn pcm_scratch_reuses_allocation_without_changing_samples() {
+        let mut bytes=Vec::with_capacity(8192);
+        let pointer=bytes.as_ptr();
+        let values=[i16::MIN,-1,0,1,i16::MAX];
+        pcm_bytes(&values,&mut bytes);
+        assert_eq!(bytes,values.iter().flat_map(|value|value.to_le_bytes()).collect::<Vec<_>>());
+        pcm_bytes(&[123,-456],&mut bytes);
+        assert_eq!(bytes,[123i16,-456].iter().flat_map(|value|value.to_le_bytes()).collect::<Vec<_>>());
+        assert_eq!(bytes.as_ptr(),pointer);
+        pcm_bytes(&[],&mut bytes);assert!(bytes.is_empty());
+    }
     #[test]
     fn existing_video_preferences_keep_their_shortcut() {
         let p: Preferences = serde_json::from_str(r#"{"audio":"none","hotkey":"alt+x"}"#).unwrap();
@@ -1429,6 +1508,7 @@ mod tests {
                     &stop_rx,
                     &ready_tx,
                     0.,
+                    false,
                 );
                 if let Err(error) = &result {
                     let _ = ready_tx.send(Err(error.clone()));

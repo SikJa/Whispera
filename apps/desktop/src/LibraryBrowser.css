@@ -1,0 +1,32 @@
+.library-section { min-width: 0; }
+.library-tabs { display: flex; gap: 6px; border-bottom: 1px solid var(--border); margin-bottom: 20px; padding-bottom: 10px; }
+.library-tabs [aria-selected=true], .library-filters [aria-pressed=true] { background: var(--muted); color: var(--foreground); }
+.library-tabs [aria-selected=false], .library-filters [aria-pressed=false] { color: var(--muted-foreground); background: transparent; }
+.library-toolbar { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.library-search { display: flex; flex: 1 1 180px; align-items: center; gap: 8px; min-width: 0; color: var(--muted-foreground); }
+.library-search input { width: 100%; }
+.library-filters { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 14px; }
+.desktop-app .library-filters button { font-size: 12px; padding: 7px 10px; }
+.library-summary { display: flex; justify-content: space-between; gap: 12px; min-height: 38px; align-items: center; color: var(--muted-foreground); font-size: 12px; }
+.library-summary [role=status] { color: #abc9b7; }
+.library-list { padding: 0; margin: 0; list-style: none; }
+.library-item { display: grid; grid-template-columns: 52px minmax(0, 1fr) auto; gap: 12px; align-items: center; padding: 14px 0; border-bottom: 1px solid var(--border); }
+.library-thumb { width: 52px; height: 48px; display: grid; place-items: center; border-radius: 6px; overflow: hidden; background: #ffffff06; color: #b8c4bc; }
+.library-kind-link { color: #a8c9dc; }
+.library-kind-video { color: #d1b994; }
+.library-thumb img { width: 100%; height: 100%; object-fit: contain; }
+.library-item-copy { min-width: 0; }
+.library-item-copy p { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; font-size: 13px; line-height: 1.5; }
+.library-item-copy small { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; color: var(--muted-foreground); font-size: 11px; margin-top: 6px; }
+.library-item-actions { display: flex; flex-wrap: wrap; gap: 2px; }
+.desktop-app .library-icon { width: 32px; height: 32px; flex: 0 0 32px; padding: 0; border-radius: 6px; }
+.library-icon svg { flex-shrink: 0; }
+.library-delete { grid-column: 1 / -1; display: flex; align-items: center; flex-wrap: wrap; gap: 8px; font-size: 12px; }
+.library-delete span { flex: 1 1 160px; }
+.library-empty { padding: 36px 0; text-align: center; color: var(--muted-foreground); font-size: 13px; }
+.library-more { margin-top: 16px; }
+@media (max-width: 800px) {
+  .library-item { grid-template-columns: 44px minmax(0, 1fr); gap: 10px; }
+  .library-thumb { width: 44px; height: 44px; }
+  .library-item-actions { grid-column: 2; }
+}

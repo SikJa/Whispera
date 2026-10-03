@@ -5,6 +5,9 @@
 node_modules/
 target/
 dist/
+browser-dist/
+apps/desktop/public/library/
+private-preview/
 test-results/
 *.log
 *.dmp

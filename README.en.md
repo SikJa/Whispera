@@ -26,7 +26,7 @@
 
 ## What is it?
 
-**Whispera (K) 0.1.6** is a modified version of [SikJa's Whispera](https://github.com/SikJa/Whispera).
+**Whispera (K) 0.2.0** is a modified version of [SikJa's Whispera](https://github.com/SikJa/Whispera).
 It keeps the original dictation and animated folder, and adds region screenshots
 and screen recording. The original code retains its credits and MIT license.
 
@@ -141,6 +141,18 @@ Your key is shown only once. Copy it and paste it in Whispera. It starts with `g
 
 ## What each user configures
 
+Version 0.2.0 adds a unified clipboard library (text, links, images, videos and
+files), native drag, search, groups, pins, retention controls and its own shortcut.
+The image editor combines captures on a canvas with original backgrounds, blur,
+custom colors, padding, corners and shadows. Capture uses native in-memory frames,
+preserves open menus, adds compact Line tools and more shapes, and supports PNG
+snapshots during video. Video controls disappear while finalization runs in the
+background. Long dictation can transcribe completed chunks while you keep talking.
+
+Optional microphone transcription adds a TXT companion to videos. Whether a target
+app inserts that text inline depends on which clipboard/drop formats it accepts.
+See [release notes and limitations](docs/releases/0.2.0.md).
+
 | Setting | Required? | Details |
 |---|:---:|---|
 | **Groq API key** | Yes | Stored in Windows Credential Manager, never in files |
@@ -156,9 +168,10 @@ Your key is shown only once. Copy it and paste it in Whispera. It starts with `g
 
 - Audio and dictionary vocabulary are sent to **Groq** when transcribing (HTTPS)
 - Your key is stored in **Windows Credential Manager**, not in text files
-- Recordings, history and logs stay in `%APPDATA%\app.whispera.desktop`
+- Local data stays in `%APPDATA%\app.whispera.desktop.preview` and `%LOCALAPPDATA%\app.whispera.desktop.preview`
 - **No Whispera server** — no analytics, no telemetry, no account
-- Local data is **not automatically deleted** (including cancelled recordings)
+- Completed/cancelled audio and eligible history expire after 48 hours. The library
+  has separate retention settings and preserves pins. Use incognito for sensitive content.
 
 More → [docs/PRIVACY.md](docs/PRIVACY.md)
 
@@ -169,6 +182,8 @@ Requirements: Windows, Node.js 22+, Rust stable (MSVC), C++ Build Tools, WebView
 ```bash
 cd apps/desktop
 npm ci
+npm ci --ignore-scripts --prefix vendor/edge-drop
+npm run build          # includes the clipboard renderer
 npm run desktop        # dev with hot-reload
 ```
 
@@ -178,6 +193,10 @@ cd src-tauri && cargo test --locked      # Rust tests
 ```
 
 The installer is generated at `src-tauri/target/release/bundle/nsis/`.
+
+After building, run `npx playwright install chromium` and `npm run test:release`.
+The suites use an isolated server, silent headless browsers, synthetic media and
+mocked native IPC. Real microphone/paste checks are separate opt-in tests.
 
 ## License
 

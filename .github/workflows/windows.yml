@@ -23,12 +23,21 @@ jobs:
       - name: Install frontend dependencies
         working-directory: apps/desktop
         run: npm ci
-      - name: Rust tests
+      - name: Install clipboard renderer dependencies (no Electron download)
+        working-directory: apps/desktop/vendor/edge-drop
+        run: npm ci --ignore-scripts
+      - name: Rust unit tests (no desktop or network fixtures)
         working-directory: apps/desktop/src-tauri
         run: cargo test --locked
       - name: Build installer
         working-directory: apps/desktop
         run: npm run tauri build -- --bundles nsis
+      - name: Install headless browser
+        working-directory: apps/desktop
+        run: npx playwright install chromium
+      - name: Silent headless regression tests
+        working-directory: apps/desktop
+        run: npm run test:release
       - name: Checksums
         shell: pwsh
         run: Get-ChildItem apps/desktop/src-tauri/target/release/bundle/nsis/*.exe | ForEach-Object { "$((Get-FileHash $_.FullName -Algorithm SHA256).Hash)  $($_.Name)" } | Out-File apps/desktop/src-tauri/target/release/bundle/nsis/SHA256SUMS.txt -Encoding ascii

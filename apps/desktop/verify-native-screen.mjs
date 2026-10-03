@@ -9,7 +9,7 @@ import {chromium} from 'playwright';
 import {PNG} from 'pngjs';
 import {restoreCaptureHistory} from './tests/native-history.mjs';
 const root=path.resolve('../..'),out=path.join(root,'.local/native-check');fs.mkdirSync(out,{recursive:true});
-const db=new DatabaseSync(path.join(process.env.APPDATA,'app.whispera.desktop','whispera.sqlite'),{readOnly:true});
+const db=new DatabaseSync(path.join(process.env.APPDATA,process.env.WHISPERA_TEST_IDENTIFIER??'app.whispera.desktop.preview','whispera.sqlite'),{readOnly:true});
 const historyBefore=db.prepare('SELECT value FROM kv WHERE key=?').get('capture_history')?.value??null;db.close();
 fs.writeFileSync(path.join(out,'state.json'),JSON.stringify({historyBefore,files:[]},null,2));
 const browser=await chromium.connectOverCDP('http://127.0.0.1:9223'),context=browser.contexts()[0];

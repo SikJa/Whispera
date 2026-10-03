@@ -14,7 +14,7 @@ import FileImport from './FileImport';
 import ScreenRecorder, { ScreenOverlay, ScreenIndicator } from './ScreenRecorder';
 import { ScreenInk, ScreenTools, ScreenHud } from './ScreenEditor';
 import SoundLab, { soundPairs } from "./SoundLab";
-import { Pencil, Volume2, RotateCcw, Play } from 'lucide-react';
+import { Pencil, Volume2, RotateCcw, Play, ClipboardList as CopyButtonIcon } from 'lucide-react';
 import { invoke } from "@tauri-apps/api/core";
 import { selectionHex } from "./palette";
 import * as api from "./client";
@@ -23,6 +23,7 @@ import "./desktop.css";
 import { SetupGate } from './Onboarding';
 import GroqKeyGuide from './GroqKeyGuide';
 import { ShortcutSettings, CaptureHistory } from './CaptureSettings';
+import LibrarySettings from './LibrarySettings';
 
 const routes = [
   { id: "transcription", name: "Transcripción", icon: AudioLines, group: "Preferencias" },
@@ -33,6 +34,7 @@ const routes = [
   { id: "screen", name: "Capturas y video", icon: Play },
   { id: "sounds", name: "Sonidos", icon: Volume2 },
   { id: "history", name: "Historial", icon: History, group: "Tu espacio" },
+  { id: "library", name: "Portapapeles", icon: CopyButtonIcon },
   { id: "diagnostics", name: "Diagnóstico", icon: Activity },
 ] as const;
 type Route = typeof routes[number]["id"];
@@ -43,6 +45,7 @@ const descriptions: Record<Route, string> = {
   diagnostics: "El estado de Whispera.",
   sounds: "Inicio y fin del dictado.",
   screen: "Seleccioná, marcá y pegá. Imagen o video, con tus atajos.",
+  library: "Tu historial local de textos, imágenes, videos y archivos.",
 };
 
 function SettingsApp() {
@@ -86,6 +89,7 @@ function SettingsApp() {
         {message && <div className="notice" role="status">{message}<button aria-label="Cerrar aviso" onClick={() => setMessage("")}><X size={14} /></button></div>}
         <SectionReveal key={route}>
         {route === 'screen' && <ScreenRecorder />}
+        {route === 'library' && <LibrarySettings />}
         {route==='sounds'&&<><div className="form-row"><label htmlFor="sounds-on">Sonidos de grabación</label><SettingsSwitch id="sounds-on" label="Activar sonidos" checked={data.settings.sounds} onChange={v=>patch({sounds:v})}/></div><div className="form-row"><label htmlFor="sound-theme">Inicio y fin</label><select id="sound-theme" value={data.settings.soundTheme} onChange={e=>patch({soundTheme:e.target.value})}>{soundPairs.map(p=><option value={p.id} key={p.id}>{p.name}</option>)}</select></div><div className="page-actions">{(['start','stop'] as const).map(cue=><button key={cue} onClick={()=>{const audio=new Audio(`/sound-lab/${data.settings.soundTheme}-${cue}.wav`);audio.volume=.35;void audio.play().catch(e=>setMessage(String(e)));}}><Play size={15}/>{cue==='start'?'Escuchar inicio':'Escuchar fin'}</button>)}</div></>}
         {route==='diagnostics'&&<><div className="form-row"><label htmlFor="watchdog">Recuperar interfaz sin respuesta</label><SettingsSwitch id="watchdog" label="Vigilancia de interfaz" checked={data.settings.watchdog} onChange={v=>patch({watchdog:v})}/></div><button disabled={!api.native||busy} onClick={()=>run(()=>invoke('restart_app'),'Reiniciando')}><RotateCcw size={16}/>Reiniciar Whispera</button></>}
         {route === "transcription" && <>
@@ -99,6 +103,7 @@ function SettingsApp() {
 
           <h3>Al terminar</h3><div className="form-row"><label htmlFor="copy">Copiar automáticamente<span>El texto queda en tu portapapeles.</span></label><SettingsSwitch id="copy" label="Copiar al finalizar" checked={data.settings.autoCopy} onChange={checked => patch({ autoCopy: checked })} /></div>
           <div className="form-row"><label htmlFor="paste">Pegar en el destino original</label><SettingsSwitch id="paste" label="Pegar al finalizar dictado" checked={data.settings.autoPaste} onChange={checked=>patch({autoPaste:checked})}/></div>
+          <div className="form-row"><label htmlFor="incremental">Transcribir mientras grabo</label><SettingsSwitch id="incremental" label="Transcripcion anticipada" checked={data.settings.incrementalTranscription} onChange={checked=>patch({incrementalTranscription:checked})}/></div>
           <div className="form-row"><label htmlFor="trim">Reducir silencios en el envío</label><SettingsSwitch id="trim" label="Recortar silencios" checked={data.settings.trimSilence} onChange={checked=>patch({trimSilence:checked})}/></div>
           <div className="page-actions"><Button variant="secondary" size="lg" disabled={busy || !api.native} onClick={() => run(()=>invoke('open_import'), "Ventana de audio abierta") }><Upload data-icon="inline-start" />Transcribir archivo</Button></div>
         </>}

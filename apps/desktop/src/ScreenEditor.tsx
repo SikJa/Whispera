@@ -1,12 +1,12 @@
 import { useEffect, useRef, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
-import { MotionConfig } from 'motion/react';
-import ControlledFolder from './ControlledFolder';
-import { contrastInk } from './palette';
+import { PaletteContents } from './PalettePanel';
+import { selectionHex } from './palette';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
-import { ArrowUpRight, ChevronLeft, ChevronRight, Maximize2, Pause, Play, Copy, Highlighter, Minus, MousePointer2, Pencil, Printer, Redo2, RotateCcw, Save, Square, SquareDashed, Trash2, Type, Undo2, X } from 'lucide-react';
-import { blurredTile, bounds, commit, constrained, emptyHistory, hitTest, paint, redo, undo, type History, type Mark, type Point, type Tool } from './screen-annotations';
+import { ArrowUpRight, Camera, ChevronLeft, ChevronRight, Circle, Triangle, Diamond, Hexagon, Star, MoreHorizontal, SlidersHorizontal, Pause, Play, Copy, Highlighter, Minus, MousePointer2, Pencil, Printer, Redo2, RotateCcw, Save, Square, SquareDashed, Trash2, Type, Undo2, X } from 'lucide-react';
+import { blurredTile, bounds, commit, constrained, emptyHistory, hitTest, isShape, paint, redo, undo, type Shape, type History, type Mark, type Point, type Tool } from './screen-annotations';
 import './screen-recorder.css';
+import './capture-line.css';
 import { showWhenReady } from './screen-ready';
 import CaptureFrame from './CaptureFrame';
 
@@ -19,6 +19,7 @@ const tools = [
   ['arrow', ArrowUpRight, 'Flecha', 'A'], ['rectangle', Square, 'Recuadro', 'R'], ['highlight', Highlighter, 'Resaltador', 'H'],
   ['text', Type, 'Texto', 'T'], ['blur', SquareDashed, 'Bloque difuminado', 'B'],
 ] as const;
+const shapes = [['rectangle',Square,'Rectángulo'],['ellipse',Circle,'Círculo / elipse'],['triangle',Triangle,'Triángulo'],['diamond',Diamond,'Rombo'],['hexagon',Hexagon,'Hexágono'],['star',Star,'Estrella']] as const;
 function preferences() {
   try { const p = JSON.parse(localStorage.getItem('whispera.ink.v1') ?? '{}');
     return { color: /^#[0-9a-f]{6}$/i.test(p.color) ? p.color : defaults.color, width: [2,3,5,8].includes(p.width) ? p.width : 3 };
@@ -160,7 +161,7 @@ function Ink({ context }: { context: Context }) {
   const point = (e: React.PointerEvent) => ({ x:Math.max(0,Math.min(context.width,e.clientX)),y:Math.max(0,Math.min(context.height,e.clientY)) });
   return <div className="screen-ink" data-tool={tool} data-session={context.id} data-kind={context.kind}>
     {context.kind==='image'&&<CaptureFrame className="screen-image-frame" width={context.width} height={context.height} color={context.frame_color}/>}
-    <canvas ref={canvas} aria-label={context.kind === 'image' ? 'Editar captura' : 'Dibujar sobre video'} width={Math.round(context.width*context.scale)} height={Math.round(context.height*context.scale)}
+    <canvas ref={canvas} style={context.kind === 'image' ? {borderRadius:Math.min(14,context.width/2,context.height/2)} : undefined} aria-label={context.kind === 'image' ? 'Editar captura' : 'Dibujar sobre video'} width={Math.round(context.width*context.scale)} height={Math.round(context.height*context.scale)}
       onPointerDown={e => {
         if (e.button !== 0 || busy) return; e.preventDefault(); commitText(); const p = point(e); e.currentTarget.setPointerCapture(e.pointerId);
         if (tool === 'text') { setText({point:p,value:''}); return; }
@@ -193,27 +194,20 @@ export function ScreenHud() { const context = useContext(); return context ? con
 type VideoStatus = {phase:string;seconds:number;error:string};
 function VideoHud({context}:{context:Context}) {
   const [status,setStatus]=useState<VideoStatus>({phase:'starting',seconds:0,error:''});
-  const [appearance,setAppearance]=useState({color:'#9024DC',pattern:'wave' as 'wave'|'stairs'});
-  const [compact,setCompact]=useState(()=>{try{return localStorage.getItem('whispera.video.compact')==='true';}catch{return false;}});
-  const [step,setStep]=useState(0);
   const [busy,setBusy]=useState(false);
   const [error,setError]=useState('');
   useEffect(()=>{
     let alive=true;let timer:ReturnType<typeof setTimeout>;
     const poll=async()=>{try{const value=await invoke<VideoStatus>('screen_status');if(alive)setStatus(old=>old.phase===value.phase&&Math.floor(old.seconds)===Math.floor(value.seconds)&&old.error===value.error?old:value);}catch(e){if(alive)setError(String(e));}finally{if(alive)timer=setTimeout(poll,400);}};
-    void (async()=>{const data=await invoke<typeof appearance>('screen_appearance');if(!alive)return;setAppearance(data);await invoke('screen_overlay_layout',{id:context.id,compact});if(alive){await showWhenReady('screen_editor_ready',{id:context.id},()=>alive);void poll();}})().catch(e=>{if(alive)setError(String(e));});
+    void (async()=>{await invoke('screen_overlay_layout',{id:context.id,compact:true});if(alive){await showWhenReady('screen_editor_ready',{id:context.id},()=>alive);void poll();}})().catch(e=>{if(alive)setError(String(e));});
     return()=>{alive=false;clearTimeout(timer);};
   },[context.id]);
-  useEffect(()=>{if(compact||status.phase!=='recording')return;const timer=setInterval(()=>setStep(v=>v+1),650);return()=>clearInterval(timer);},[compact,status.phase]);
-  const run=async(command:string)=>{setBusy(true);setError('');try{await invoke(command);}catch(e){setError(String(e));}finally{setBusy(false);}};
-  const toggle=async()=>{try{await invoke('screen_overlay_layout',{id:context.id,compact:!compact});setCompact(!compact);try{localStorage.setItem('whispera.video.compact',String(!compact));}catch{/* Optional preference. */}}catch(e){setError(String(e));}};
+  const run=async(command:string)=>{setBusy(true);setError('');try{await invoke(command,command==='screen_video_snapshot'?{id:context.id}:undefined);}catch(e){setError(String(e));}finally{setBusy(false);}};
   const paused=status.phase==='paused';
   const label=paused?'En pausa':status.phase==='pausing'?'Pausando…':status.phase==='resuming'?'Reanudando…':status.phase==='saving'?'Preparando…':'Grabando';
   const time=`${Math.floor(status.seconds/60).toString().padStart(2,'0')}:${Math.floor(status.seconds%60).toString().padStart(2,'0')}`;
-  const scale=context.hud_scale??.85;
-  return <div className="capture-hud" data-compact={compact} data-paused={paused} data-above={context.hud_above&&!compact} aria-label="Controles de video">
-    {!compact&&<div className="capture-hud-folder" style={{top:(context.hud_above?0:58)+180*scale,left:(Math.max(250,321*scale+24)-321*scale)/2,width:321,height:270,transform:`scale(${scale})`,transformOrigin:'top left'}}><MotionConfig reducedMotion="user"><ControlledFolder color="black" customColor={appearance.color} size="md" pattern={appearance.pattern} visualState={paused?'rest':'hover'} recordingStep={status.phase==='recording'?step:undefined}/></MotionConfig><div className="screen-folder-caption" style={{color:contrastInk(appearance.color)}}><span role="status"><i/>{label}</span><output aria-label="Tiempo grabado">{time}</output></div></div>}
-    <div className="capture-hud-controls">{compact&&<span className="capture-hud-time" title={label}><i/>{time}</span>}<button disabled={busy||!['recording','paused'].includes(status.phase)} aria-label={paused?'Reanudar video':'Pausar video'} title={paused?'Reanudar':'Pausar'} onClick={()=>void run('screen_pause')}>{paused?<Play size={18}/>:<Pause size={18}/>}</button><button disabled={busy||['saving','cancelling'].includes(status.phase)} aria-label="Cancelar video" title="Cancelar y descartar el video" onClick={()=>void run('screen_cancel')}><X size={18}/></button><button aria-label={compact?'Mostrar carpeta':'Ocultar carpeta'} title={compact?'Mostrar carpeta':'Ocultar carpeta'} onClick={()=>void toggle()}>{compact?<Maximize2 size={17}/>:<Minus size={17}/>}</button></div>
+  return <div className="capture-hud capture-line-hud" data-compact="true" data-paused={paused} aria-label="Controles de video">
+    <div className="capture-hud-controls"><span className="capture-hud-time" title={label}><i/><output aria-label="Tiempo grabado">{time}</output></span><button disabled={busy||!['recording','paused'].includes(status.phase)} aria-label="Capturar imagen del video" title="Capturar y copiar el área grabada" onClick={()=>void run('screen_video_snapshot')}><Camera size={16}/></button><button disabled={busy||!['recording','paused'].includes(status.phase)} aria-label={paused?'Reanudar video':'Pausar video'} title={paused?'Reanudar':'Pausar'} onClick={()=>void run('screen_pause')}><span className="t-icon-swap" data-state={paused?'b':'a'}><span className="t-icon" data-icon="a"><Pause size={16}/></span><span className="t-icon" data-icon="b"><Play size={16}/></span></span></button><button className="capture-stop" disabled={busy||!['recording','paused'].includes(status.phase)} aria-label="Detener video" title="Detener y guardar video" onClick={()=>void run('screen_stop')}><Square size={12} fill="currentColor"/></button><button disabled={busy||['saving','cancelling'].includes(status.phase)} aria-label="Cancelar video" title="Cancelar y descartar el video" onClick={()=>void run('screen_cancel')}><X size={16}/></button></div>
     {(error||status.error)&&<div role="alert" className="capture-hud-error">{error||status.error}</div>}
   </div>;
 }
@@ -248,21 +242,46 @@ function ImageActions({context}:{context:Context}) {
 function Toolbar({ context }: { context:Context }) {
   const {feedback,send,setError,notice}=useEditorControls(context);
   const [compact,setCompact] = useState(false);
-  const toggleCompact=async()=>{
-    try { if(!compact&&context.kind==='video')await send({action:'tool',value:'pointer'});await invoke('screen_overlay_layout',{id:context.id,compact:!compact});setCompact(!compact); }catch(e){setError(String(e));}
+  const [shape,setShape]=useState<Shape>('rectangle');
+  const [panel,setPanel]=useState<'shapes'|'color'|'width'|'more'>();
+  const [closing,setClosing]=useState(false);
+  const [layout,setLayout]=useState({railX:4,railY:4,menuX:58,menuY:4});
+  const timer=useRef<ReturnType<typeof setTimeout>>(undefined), epoch=useRef(0);
+  const panelElement=useRef<HTMLDivElement>(null), panelAnchor=useRef(0);
+  const closePanel=()=>{
+    const request=++epoch.current;setClosing(true);clearTimeout(timer.current);
+    const duration=matchMedia('(prefers-reduced-motion: reduce)').matches?0:parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--dropdown-close-dur'))||150;
+    timer.current=setTimeout(()=>{setPanel(undefined);setClosing(false);void invoke<typeof layout>('screen_tools_panel',{id:context.id,open:false,compact,anchor:0,panelHeight:100}).then(next=>{if(request===epoch.current)setLayout(next);}).catch(e=>setError(String(e)));},duration);
   };
-  return <div className="capture-toolbar" data-session={context.id} data-compact={compact} aria-label="Herramientas de captura">
-    <div className="capture-tool-header"><button aria-label={compact?'Expandir herramientas':'Contraer herramientas'} title={compact?'Expandir herramientas':'Contraer herramientas'} onClick={()=>void toggleCompact()}>{compact?<ChevronLeft size={17}/>:<ChevronRight size={17}/>}</button></div>
+  const openPanel=async(name:NonNullable<typeof panel>,button:HTMLButtonElement)=>{
+    if(panel===name&&!closing){closePanel();return;}
+    const request=++epoch.current;clearTimeout(timer.current);setClosing(false);
+    const anchor=button.getBoundingClientRect().top-layout.railY+16;
+    panelAnchor.current=anchor;
+    try{const next=await invoke<typeof layout>('screen_tools_panel',{id:context.id,open:true,compact,anchor,panelHeight:name==='color'?380:name==='shapes'?208:name==='more'?240:210});if(request===epoch.current){setLayout(next);setPanel(name);}}catch(e){setError(String(e));}
+  };
+  useEffect(()=>{if(!panel)return;const blur=()=>closePanel();const outside=(e:PointerEvent)=>{if(!(e.target as HTMLElement).closest('.capture-line,.capture-line-panel'))closePanel();};const key=(e:KeyboardEvent)=>{if(e.key==='Escape'){e.preventDefault();e.stopImmediatePropagation();closePanel();}};window.addEventListener('blur',blur);window.addEventListener('pointerdown',outside);window.addEventListener('keydown',key,true);return()=>{window.removeEventListener('blur',blur);window.removeEventListener('pointerdown',outside);window.removeEventListener('keydown',key,true);};},[panel,compact]);
+  useEffect(()=>()=>{clearTimeout(timer.current);++epoch.current;},[]);
+  useEffect(()=>{
+    const element=panelElement.current;if(!element||closing)return;
+    const request=epoch.current;let height=0;
+    const observer=new ResizeObserver(()=>{const next=element.offsetHeight+8;if(next===height)return;height=next;void invoke<typeof layout>('screen_tools_panel',{id:context.id,open:true,compact,anchor:panelAnchor.current,panelHeight:height}).then(value=>{if(epoch.current===request)setLayout(value);}).catch(e=>setError(String(e)));});
+    observer.observe(element);return()=>observer.disconnect();
+  },[panel,closing,compact,context.id]);
+  const choose=async(value:Tool)=>{closePanel();await send({action:'tool',value});};
+  const ShapeIcon=shapes.find(s=>s[0]===(isShape(feedback.tool)?feedback.tool:shape))![1];
+  const toggleCompact=async()=>{
+    try { clearTimeout(timer.current);++epoch.current;setPanel(undefined);setClosing(false);if(!compact&&context.kind==='video')await send({action:'tool',value:'pointer'});await invoke('screen_overlay_layout',{id:context.id,compact:!compact});setLayout({railX:4,railY:4,menuX:58,menuY:4});setCompact(!compact); }catch(e){setError(String(e));}
+  };
+  return <><div className="capture-toolbar capture-line" style={{left:layout.railX,top:layout.railY}} data-session={context.id} data-compact={compact} aria-label="Herramientas de captura">
     {compact ? <button className="capture-pointer" aria-label="Usar mouse normal" title="Volver al mouse (V)" aria-pressed={feedback.tool==='pointer'} onClick={()=>void send({action:'tool',value:'pointer'})}><MousePointer2 size={18}/></button> : <>
-      <div className="capture-tool-list" role="toolbar" aria-label="Dibujo" aria-orientation="vertical">{tools.map(([name,Icon,label,key])=><button key={name} title={`${label} (${key})`} aria-label={label} aria-pressed={feedback.tool===name} disabled={feedback.busy} onClick={()=>void send({action:'tool',value:name})}><Icon size={18}/></button>)}</div>
-      <div className="capture-colors" role="group" aria-label="Color del trazo">
-        {['#ff4545','#ffca3a','#4cdb91','#5da9ff','#ffffff'].map(color=><button className="capture-swatch" key={color} style={{background:color}} aria-label={`Color ${color}`} aria-pressed={feedback.color===color} onClick={()=>void send({action:'color',value:color})}/>)}
-        <input aria-label="Color personalizado" title="Color personalizado" type="color" value={feedback.color} onChange={e=>void send({action:'color',value:e.target.value})}/>
-      </div>
-      <div className="capture-widths" role="group" aria-label="Grosor del trazo">{([[2,'Fino'],[3,'Normal'],[5,'Medio'],[8,'Grueso']] as const).map(([width,label])=><button key={width} title={label} aria-label={`Grosor ${label.toLowerCase()}`} aria-pressed={feedback.width===width} onClick={()=>void send({action:'width',value:String(width)})}><span style={{width:width+2,height:width+2}}/></button>)}</div>
-      <div className="capture-history-actions"><button title="Deshacer (Ctrl+Z)" aria-label="Deshacer" disabled={!feedback.canUndo||feedback.busy} onClick={()=>void send({action:'undo'})}><Undo2 size={17}/></button><button title="Rehacer (Ctrl+Y / Ctrl+Shift+Z)" aria-label="Rehacer" disabled={!feedback.canRedo||feedback.busy} onClick={()=>void send({action:'redo'})}><Redo2 size={17}/></button></div>
-      <button title="Borrar todas las marcas (se puede deshacer)" aria-label="Borrar todas las marcas" disabled={!feedback.count||feedback.busy} onClick={()=>void send({action:'clear'})}><Trash2 size={17}/></button>
+      <div className="capture-tool-list" role="toolbar" aria-label="Dibujo" aria-orientation="vertical">{tools.map(([name,Icon,label,key])=>name==='rectangle'?<button key={name} title="Formas" aria-label="Formas" aria-expanded={panel==='shapes'&&!closing} aria-pressed={isShape(feedback.tool)} disabled={feedback.busy} onClick={e=>void openPanel('shapes',e.currentTarget)}><ShapeIcon size={17}/></button>:<button key={name} title={`${label} (${key})`} aria-label={label} aria-pressed={feedback.tool===name} disabled={feedback.busy} onClick={()=>void send({action:'tool',value:name})}><Icon size={17} strokeWidth={1.7}/></button>)}</div>
+      <div className="capture-line-style"><button aria-label="Elegir color" title="Color del trazo" aria-expanded={panel==='color'&&!closing} onClick={e=>void openPanel('color',e.currentTarget)}><i className="capture-line-swatch" style={{background:feedback.color}}/></button><button title="Grosor" aria-label="Grosor" aria-expanded={panel==='width'&&!closing} onClick={e=>void openPanel('width',e.currentTarget)}><SlidersHorizontal size={17}/></button><button title="Más herramientas" aria-label="Más herramientas" aria-expanded={panel==='more'&&!closing} onClick={e=>void openPanel('more',e.currentTarget)}><MoreHorizontal size={17}/></button></div>
     </>}
+    <div className="capture-tool-header"><button aria-label={compact?'Expandir herramientas':'Contraer herramientas'} title={compact?'Expandir herramientas':'Contraer herramientas'} onClick={()=>void toggleCompact()}>{compact?<ChevronRight size={17}/>:<ChevronLeft size={17}/>}</button></div>
     {notice}
-  </div>;
+  </div>{panel&&<div ref={panelElement} className={`capture-line-panel t-dropdown ${closing?'is-closing':'is-open'}`} style={{left:layout.menuX,top:layout.menuY}} data-origin="top-center" role="dialog" aria-label={panel==='shapes'?'Formas':panel==='color'?'Color del trazo':panel==='width'?'Grosor':'Más herramientas'}>
+    {panel==='color'?<div className="palette-dialog"><PaletteContents title="Color del trazo" value={{base:'black',hex:feedback.color}} onChange={value=>void send({action:'color',value:selectionHex(value)})} close={closePanel}/></div>:<><div className="capture-panel-heading">{panel==='shapes'?'Formas':panel==='width'?'Grosor':'Más herramientas'}<button title="Cerrar panel" aria-label="Cerrar panel" onClick={closePanel}><X size={15}/></button></div>
+    {panel==='shapes'?<div className="capture-shapes">{shapes.map(([name,Icon,label])=><button key={name} aria-label={label} aria-pressed={feedback.tool===name} onClick={()=>{setShape(name);void choose(name);}}><Icon size={22}/><span>{label==='Círculo / elipse'?'Elipse':label}</span></button>)}</div>:panel==='width'?<div className="capture-stroke-options">{([[2,'Fino'],[3,'Normal'],[5,'Medio'],[8,'Grueso']] as const).map(([width,label])=><button key={width} aria-label={`Grosor ${label.toLowerCase()}`} aria-pressed={feedback.width===width} onClick={()=>void send({action:'width',value:String(width)})}><i style={{height:width}}/>{width} px</button>)}</div>:<div className="capture-menu-actions">{([['undo',Undo2,'Deshacer',!feedback.canUndo],['redo',Redo2,'Rehacer',!feedback.canRedo],['delete',X,'Eliminar selección',!feedback.count],['clear',Trash2,'Borrar todas las marcas',!feedback.count]] as const).map(([action,Icon,label,disabled])=><button key={action} disabled={disabled||feedback.busy} onClick={()=>void send({action})}><Icon size={16}/>{label}</button>)}</div>}</>}
+  </div>}</>;
 }

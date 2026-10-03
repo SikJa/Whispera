@@ -20,6 +20,7 @@ pub struct Settings {
     pub recorder_scale: f64,
     pub trim_silence: bool,
     pub watchdog: bool,
+    pub incremental_transcription: bool,
 }
 impl Default for Settings {
     fn default() -> Self {
@@ -37,6 +38,7 @@ impl Default for Settings {
             recorder_scale: 0.85,
             trim_silence: true,
             watchdog: true,
+            incremental_transcription: true,
         }
     }
 }

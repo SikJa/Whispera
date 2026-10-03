@@ -22,17 +22,18 @@ pub struct HitRect {
 
 #[tauri::command]
 pub fn recorder_region(window: tauri::WebviewWindow, rects: Vec<HitRect>) -> Result<(), String> {
-    if window.label() != "recorder" || rects.is_empty() || rects.len() > 32 {
+    if !(["recorder", "library"].contains(&window.label()) || window.label().starts_with("media-")) || rects.is_empty() || rects.len() > 32 {
         return Err("Region no valida".into());
     }
+    let bound = if window.label() == "library" { 16384. } else { 2000. };
     if rects.iter().any(|r| {
         [r.x, r.y, r.width, r.height].iter().any(|v| !v.is_finite())
             || r.width <= 0.
             || r.height <= 0.
-            || r.width > 2000.
-            || r.height > 2000.
-            || r.x.abs() > 2000.
-            || r.y.abs() > 2000.
+            || r.width > bound
+            || r.height > bound
+            || r.x.abs() > bound
+            || r.y.abs() > bound
     }) {
         return Err("Coordenadas invalidas".into());
     }

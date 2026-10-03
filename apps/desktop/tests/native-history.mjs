@@ -1,6 +1,6 @@
 import {DatabaseSync} from 'node:sqlite';
 import path from 'node:path';
-const database=()=>new DatabaseSync(path.join(process.env.APPDATA,'app.whispera.desktop','whispera.sqlite'));
+const database=()=>new DatabaseSync(path.join(process.env.APPDATA,process.env.WHISPERA_TEST_IDENTIFIER??'app.whispera.desktop.preview','whispera.sqlite'));
 export function snapshotCaptureHistory() {
   const db=database();try{return db.prepare('SELECT value FROM kv WHERE key=?').get('capture_history')?.value??null;}finally{db.close();}
 }

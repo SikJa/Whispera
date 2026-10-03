@@ -40,7 +40,7 @@ pub fn capture(app: &tauri::AppHandle, active: bool) -> Result<(), String> {
     let store = app.state::<crate::storage::Store>();
     let settings: crate::storage::Settings = store.get("settings")?;
     let screen: crate::screen::Preferences = store.get("screen_preferences").unwrap_or_default();
-    let values = [settings.hotkey, screen.hotkey, screen.image_hotkey];
+    let values = [settings.hotkey, screen.hotkey, screen.image_hotkey, crate::library::hotkey(app)];
     state.active.store(true, Ordering::SeqCst);
     if active {
         // Windows consumes registered shortcuts before a focused input sees them.
@@ -165,8 +165,10 @@ pub async fn save_all_shortcuts(
     voice: String,
     video: String,
     image: String,
+    library: Option<String>,
 ) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
+        let library = library.unwrap_or_else(|| crate::library::hotkey(&app));
         let screen = app.state::<crate::screen::Screen>();
         let _screen_gate = screen.gate.lock().map_err(|_| "Captura ocupada")?;
         let engine = app.state::<crate::engine::Engine>();
@@ -174,21 +176,22 @@ pub async fn save_all_shortcuts(
         if screen.busy() || crate::health::busy(&engine.recorder.snapshot().phase) {
             return Err("Termina la grabacion antes de cambiar los atajos".into());
         }
-        let next = [parse(&voice)?, parse(&video)?, parse(&image)?];
+        let next = [parse(&voice)?, parse(&video)?, parse(&image)?, parse(&library)?];
         if next.contains(&parse("Escape")?)
-            || next[0] == next[1]
-            || next[0] == next[2]
-            || next[1] == next[2]
+            || next.iter().enumerate().any(|(i, key)| next[..i].contains(key))
         {
-            return Err("Elegi tres atajos distintos. Escape se reserva para salir.".into());
+            return Err("Elegi cuatro atajos distintos. Escape se reserva para salir.".into());
         }
         let store = app.state::<crate::storage::Store>();
         let mut settings: crate::storage::Settings = store.get("settings")?;
         let mut preferences: crate::screen::Preferences = store.get("screen_preferences")?;
+        let mut library_preferences = crate::library::settings(&store)?;
+        if !library_preferences.is_object() { library_preferences = serde_json::json!({}); }
         let old = [
             parse(&settings.hotkey)?,
             parse(&preferences.hotkey)?,
             parse(&preferences.image_hotkey)?,
+            parse(&crate::library::hotkey(&app))?,
         ];
         let result = (|| -> Result<(), String> {
             for key in old {
@@ -206,8 +209,10 @@ pub async fn save_all_shortcuts(
             settings.hotkey = voice;
             preferences.hotkey = video;
             preferences.image_hotkey = image;
+            library_preferences["toggleHotkey"] = serde_json::json!(library);
             settings.validate()?;
             store.put_many(&[
+                ("library_settings", library_preferences),
                 (
                     "settings",
                     serde_json::to_value(&settings).map_err(|e| e.to_string())?,

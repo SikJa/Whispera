@@ -3,7 +3,7 @@ use reqwest::multipart;
 use std::path::Path;
 
 pub fn entry() -> Result<keyring::Entry, String> {
-    keyring::Entry::new("Whispera.Desktop", "groq")
+    keyring::Entry::new("Whispera.Desktop.Preview", "groq")
         .map_err(|_| "No se pudo abrir el almacen de credenciales de Windows".into())
 }
 pub fn corrections(text: &str, rules: &[Rule]) -> String {
@@ -98,6 +98,24 @@ async fn transcribe_inner(
     rules: &[Rule],
     apply: bool,
 ) -> Result<String, String> {
+    let json = request(path, settings, rules, false).await?;
+    let text = json
+        .get("text")
+        .and_then(|v| v.as_str())
+        .ok_or("Groq no devolvio texto")?;
+    Ok(if apply {
+        corrections(text, rules)
+    } else {
+        text.to_owned()
+    })
+}
+
+pub async fn request(
+    path: &Path,
+    settings: &Settings,
+    rules: &[Rule],
+    word_times: bool,
+) -> Result<serde_json::Value, String> {
     let ext = path
         .extension()
         .and_then(|s| s.to_str())
@@ -128,8 +146,14 @@ async fn transcribe_inner(
     let mut form = multipart::Form::new()
         .part("file", file)
         .text("model", settings.model.clone())
-        .text("response_format", "json")
+        .text(
+            "response_format",
+            if word_times { "verbose_json" } else { "json" },
+        )
         .text("temperature", "0");
+    if word_times {
+        form = form.text("timestamp_granularities[]", "word");
+    }
     if !rules.is_empty() {
         form = form.text("prompt", prompt(rules));
     }
@@ -156,15 +180,7 @@ async fn transcribe_inner(
         .json()
         .await
         .map_err(|_| "Groq devolvio una respuesta no valida")?;
-    let text = json
-        .get("text")
-        .and_then(|v| v.as_str())
-        .ok_or("Groq no devolvio texto")?;
-    Ok(if apply {
-        corrections(text, rules)
-    } else {
-        text.to_owned()
-    })
+    Ok(json)
 }
 #[cfg(test)]
 mod tests {

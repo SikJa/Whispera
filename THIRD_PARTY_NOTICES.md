@@ -15,6 +15,19 @@ Before public release, review the complete dependency license inventory, includi
 This notice is attribution, not a claim that a complete legal audit has been performed.
 # Screen recording
 
+## Clipboard library
+
+Edge Drop renderer: Deepender25, Apache-2.0, revision
+469fd0d56d8d4073ed5a6fbcab36953db8203cae.
+Source: https://github.com/Deepender25/Edge-Drop . License retained in
+apps/desktop/vendor/edge-drop/LICENSE and distributed with library assets.
+Whispera modifies filters, settings chrome and the native bridge.
+Plus Jakarta Sans and JetBrains Mono fonts: SIL Open Font License 1.1.
+Framer Motion and Zustand: MIT; GSAP: see its retained package license.
+drag-rs 2.1.1: CrabNebula Ltd., MIT OR Apache-2.0.
+Source: https://github.com/crabnebula-dev/drag-rs . No Electron runtime is launched.
+
+
 The screen recorder launches FFmpeg as a separate executable, obtained through
 `ffmpeg-static` 5.3.0. Its Windows binary is the Gyan.dev FFmpeg 6.1.1 essentials
 build (GPL v3). Its license and build/source information are included alongside

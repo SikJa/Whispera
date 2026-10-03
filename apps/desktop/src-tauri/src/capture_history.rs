@@ -20,12 +20,14 @@ pub fn remember(store: &Store, kind: &str, path: &Path) -> Result<(), String> {
         Recent {
             id: uuid::Uuid::new_v4().to_string(),
             kind: kind.into(),
-            path,
+            path: path.clone(),
             created_at: chrono::Utc::now().to_rfc3339(),
         },
     );
     entries.truncate(12);
-    store.put("capture_history", &entries)
+    store.put("capture_history", &entries)?;
+    crate::library::enqueue(Path::new(&path));
+    Ok(())
 }
 #[tauri::command]
 pub fn screen_recent(store: State<Store>) -> Result<Vec<Recent>, String> {
@@ -51,7 +53,7 @@ pub async fn screen_recent_copy(app: tauri::AppHandle, id: String) -> Result<(),
                 .write_image(&image)
                 .map_err(|e| e.to_string())
         } else {
-            crate::screen::copy_file(Path::new(&entry.path))
+            crate::video_transcript::copy_files(&app, &[std::path::PathBuf::from(&entry.path)])
         }
     })
     .await

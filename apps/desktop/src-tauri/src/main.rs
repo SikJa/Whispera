@@ -16,6 +16,7 @@ mod legacy;
 mod onboarding;
 mod paste;
 mod paste_focus;
+mod profile;
 mod screen;
 mod screen_editor;
 mod shortcuts;
@@ -407,7 +408,7 @@ fn main() {
             paste_focus::start();
             let dir = app.path().app_data_dir()?;
             std::fs::create_dir_all(&dir)?;
-            let store = Store::open(&dir.join("whispera.sqlite")).map_err(std::io::Error::other)?;
+            let store = profile::open(&dir.join("whispera.sqlite")).map_err(std::io::Error::other)?;
             store
                 .event("Whispera 2 iniciada")
                 .map_err(std::io::Error::other)?;

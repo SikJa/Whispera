@@ -91,6 +91,8 @@ pub async fn recording_action(action: String, app: tauri::AppHandle) -> Result<(
         .map_err(|e| e.to_string())?
 }
 pub fn control(app: &tauri::AppHandle, action: &str) -> Result<(), String> {
+    // Capture before microphone/keyring initialization can yield or change focus.
+    let original_target = if action == "start" { crate::paste::capture() } else { None };
     let engine = app.state::<Engine>();
     let _guard = engine.gate.lock().map_err(|_| "El motor esta ocupado")?;
     let state = engine.recorder.snapshot();
@@ -147,7 +149,7 @@ pub fn control(app: &tauri::AppHandle, action: &str) -> Result<(), String> {
                 jobs.retain(|_, job| !job.done.load(Ordering::SeqCst));
                 jobs.insert(id, crate::incremental::Live { stop, done, task });
             }
-            *engine.paste_target.lock().map_err(|_| "Destino ocupado")? = crate::paste::capture();
+            *engine.paste_target.lock().map_err(|_| "Destino ocupado")? = original_target;
             crate::sounds::play(&app.state::<Store>().get::<Settings>("settings")?, false);
         }
         "pause" => {
@@ -229,6 +231,9 @@ fn schedule(
                     .unwrap_or_default();
                 let target = engine.paste_target.lock().ok().and_then(|mut p| p.take());
                 if live_dictation && settings.auto_paste {
+                    if let Some(window) = app.get_webview_window("recorder") {
+                        let _ = window.hide();
+                    }
                     let app_copy = app.clone();
                     let value = text.clone();
                     let pasted = tauri::async_runtime::spawn_blocking(move || -> Result<(), String> {
@@ -243,6 +248,7 @@ fn schedule(
                         match target { Some(target) => crate::paste::restore_and_paste(target), None => Err("Texto copiado. No habia un campo de destino externo al iniciar.".into()) }
                     }).await.map_err(|e| e.to_string()).and_then(|r| r);
                     if let Err(e) = pasted {
+                        let _ = app.state::<Store>().event(&e);
                         engine.recorder.change(|s| s.error = e);
                     }
                 }

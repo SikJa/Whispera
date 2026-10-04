@@ -245,7 +245,7 @@ fn schedule(
                             }
                         }
                         if !copied { return Err("No se pudo verificar el portapapeles. El texto esta guardado.".into()); }
-                        match target { Some(target) => crate::paste::restore_and_paste(target), None => Err("Texto copiado. No habia un campo de destino externo al iniciar.".into()) }
+                        match target { Some(target) => crate::paste::restore_and_paste_text(target, &value), None => Err("Texto copiado. No habia un campo de destino externo al iniciar.".into()) }
                     }).await.map_err(|e| e.to_string()).and_then(|r| r);
                     if let Err(e) = pasted {
                         let _ = app.state::<Store>().event(&e);

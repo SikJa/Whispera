@@ -17,6 +17,7 @@ pub struct Target {
     hwnd: isize,
     focus: isize,
     pid: u32,
+    field: Option<u64>,
 }
 // WebView/Electron child controls can belong to a renderer process. Window
 // ancestry, rather than the child's PID, proves it is still our original field.
@@ -35,11 +36,13 @@ pub fn capture() -> Option<Target> {
         if thread == 0 || pid == std::process::id() {
             return None;
         }
+        let tracked = crate::paste_focus::capture(hwnd.0 as isize, pid);
         let mut info = GUITHREADINFO {
             cbSize: std::mem::size_of::<GUITHREADINFO>() as u32,
             ..Default::default()
         };
         GetGUIThreadInfo(thread, &mut info).ok()?;
+        if let Some(field) = tracked { info.hwndFocus = HWND(field.focus as _); }
         if !field_belongs_to(hwnd, info.hwndFocus) {
             return None;
         }
@@ -47,10 +50,17 @@ pub fn capture() -> Option<Target> {
             hwnd: hwnd.0 as isize,
             focus: info.hwndFocus.0 as isize,
             pid,
+            field: tracked.map(|field| field.token),
         })
     }
 }
 pub fn restore_and_paste(target: Target) -> Result<(), String> {
+    restore_and_paste_checked(target, None)
+}
+pub fn restore_and_paste_text(target: Target, expected: &str) -> Result<(), String> {
+    restore_and_paste_checked(target, Some(expected))
+}
+fn restore_and_paste_checked(target: Target, expected: Option<&str>) -> Result<(), String> {
     unsafe {
         let hwnd = HWND(target.hwnd as _);
         let mut pid = 0;
@@ -60,7 +70,7 @@ pub fn restore_and_paste(target: Target) -> Result<(), String> {
                 "El destino original ya no existe. Texto conservado en el portapapeles.".into(),
             );
         }
-        if target.focus != 0 {
+        if target.focus != 0 && target.field.is_none() {
             let focus = HWND(target.focus as _);
             if !field_belongs_to(hwnd, focus) {
                 return Err(
@@ -96,11 +106,14 @@ pub fn restore_and_paste(target: Target) -> Result<(), String> {
             }
         }
         let _ = SetForegroundWindow(hwnd);
-        if field_belongs_to(hwnd, focus) {
+        if target.field.is_none() && field_belongs_to(hwnd, focus) {
             let _ = SetFocus(Some(focus));
         }
         for id in attached.into_iter().rev() {
             let _ = AttachThreadInput(current, id, false);
+        }
+        if let Some(field) = target.field {
+            let _ = crate::paste_focus::focus(field, true);
         }
         for _ in 0..8 {
             if GetForegroundWindow() == hwnd {
@@ -113,13 +126,27 @@ pub fn restore_and_paste(target: Target) -> Result<(), String> {
                 if GetForegroundWindow() != hwnd || modifiers_down() {
                     continue;
                 }
-                if !field_belongs_to(hwnd, focus) {
+                if target.field.is_none() && !field_belongs_to(hwnd, focus) {
                     return Err("El campo original ya no existe. Texto conservado en el portapapeles.".into());
                 }
-                if GetGUIThreadInfo(thread, &mut info).is_err() || info.hwndFocus != focus {
+                if GetGUIThreadInfo(thread, &mut info).is_err()
+                    || (target.field.is_none() && info.hwndFocus != focus)
+                    || !field_belongs_to(hwnd, info.hwndFocus) {
                     // Activation of a renderer can lag behind the top-level
                     // window. Retry readiness, never the actual Ctrl+V.
                     continue;
+                }
+                if target.field.is_some_and(|field| !crate::paste_focus::focus(field, false)) {
+                    continue;
+                }
+                if GetForegroundWindow() != hwnd || modifiers_down() { continue; }
+                if let Some(expected) = expected {
+                    let clipboard: Result<String, _> = clipboard_win::get_clipboard(clipboard_win::formats::Unicode);
+                    match clipboard {
+                        Ok(value) if value == expected => {}
+                        Ok(_) => return Err("El portapapeles cambio antes del pegado. La transcripcion sigue en el historial.".into()),
+                        Err(_) => continue,
+                    }
                 }
                 // Submit once only. Retrying Ctrl+V could duplicate already inserted text.
                 let keys = [

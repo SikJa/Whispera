@@ -17,6 +17,7 @@ mod onboarding;
 mod paste;
 mod paste_focus;
 mod profile;
+mod windows_capture_keys;
 mod screen;
 mod screen_editor;
 mod shortcuts;
@@ -445,6 +446,7 @@ fn main() {
             if let Err(e) = shortcuts::register(app.handle(), &video.image_hotkey) {
                 let _ = app.state::<Store>().event(&e);
             }
+            windows_capture_keys::start(app.handle());
             use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
             let show = MenuItem::with_id(app, "settings", "Configuracion", true, None::<&str>)?;
             let record = MenuItem::with_id(app, "recorder", "Abrir grabadora", true, None::<&str>)?;
@@ -574,6 +576,8 @@ fn main() {
             onboarding::complete_setup,
             onboarding::set_startup,
             onboarding::validate_key,
+            windows_capture_keys::windows_capture_shortcuts,
+            windows_capture_keys::save_windows_capture_shortcuts,
             snapshot,
             save_settings,
             read_settings,

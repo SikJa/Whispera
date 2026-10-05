@@ -1,9 +1,9 @@
-export function installNativeMock({kind='video',width=640,height=480,scale=1,setupComplete=true}={}) {
+export function installNativeMock({kind='video',width=640,height=480,scale=1,setupComplete=true,selectionPhase,frozenImage}={}) {
   window.calls=[]; const callbacks=new Map(), listeners=new Map();let next=1;
   window.videoPreferences={audio:'none',hotkey:'Control+Shift+F9',image_hotkey:'Control+Shift+F10',frame_color:'#ffffff',image_auto_copy:false};
   window.voiceShortcut='Alt+KeyZ';
   window.libraryPreferences={toggleHotkey:'Alt+C',captureGlobal:true,incognito:false,historyLimit:250,autoDeleteHours:48};
-  window.videoStatus={phase:'idle',seconds:0,path:'',error:'',copied:false};
+  window.videoStatus={phase:selectionPhase??(new URLSearchParams(location.search).get('view')==='screen-select'?'selecting':'idle'),seconds:0,path:'',error:'',copied:false};
   window.editorContext={id:'test-session',kind,width,height,scale};
   window.feedback={};window.exports=[];window.failExport=false;
   window.emitNative=(event,payload)=>{for(const [id,v] of listeners)if(v.event===event)callbacks.get(v.handler)?.({event,id,payload});};
@@ -22,7 +22,7 @@ export function installNativeMock({kind='video',width=640,height=480,scale=1,set
       if(command==='read_settings')return{color:'#9024DC',recorderScale:.85,pattern:'wave'};
       if(command==='screen_recent')return[{id:'recent-1',kind:'image',created_at:'2026-10-02T00:00:00Z',path:'test.png'}];
       if(command==='screen_selection_kind')return kind;
-      if(command==='screen_selection_image')return new ArrayBuffer(0);
+      if(command==='screen_selection_image')return frozenImage?new Uint8Array(frozenImage).buffer:new ArrayBuffer(0);
       if(command==='screen_preferences')return window.videoPreferences;
       if(command==='library_preferences')return window.libraryPreferences;
       if(command==='library_action'&&args.action==='settings'){window.libraryPreferences={...window.libraryPreferences,...args.value};return window.libraryPreferences;}

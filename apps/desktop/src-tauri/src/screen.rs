@@ -58,7 +58,8 @@ pub struct Screen {
     pub gate: Mutex<()>,
     pub kind: Mutex<String>,
     selection_ready: AtomicBool,
-    snapshots: Mutex<std::collections::HashMap<String, (Region, Vec<u8>)>>,
+    selection_started: Mutex<Option<Instant>>,
+    snapshots: Mutex<std::collections::HashMap<String, crate::screen_capture::FrozenFrame>>,
 }
 struct Active {
     stop: mpsc::Sender<CaptureControl>,
@@ -82,6 +83,7 @@ impl Screen {
             gate: Mutex::new(()),
             kind: Mutex::new("video".into()),
             selection_ready: AtomicBool::new(false),
+            selection_started: Mutex::new(None),
             snapshots: Mutex::new(std::collections::HashMap::new()),
         }
     }
@@ -372,6 +374,7 @@ fn select_locked(app: &tauri::AppHandle, screen: &Screen, kind: &str) -> Result<
     if screen.busy() {
         return Err("Ya hay una grabacion o seleccion de pantalla".into());
     }
+    *screen.selection_started.lock().map_err(|_| "Captura ocupada")? = Some(Instant::now());
     if kind != "image" { ffmpeg(app)?; }
     let monitors = app.available_monitors().map_err(|e| e.to_string())?;
     if monitors.is_empty() {
@@ -385,7 +388,7 @@ fn select_locked(app: &tauri::AppHandle, screen: &Screen, kind: &str) -> Result<
             .transpose()?;
         for (index, monitor) in monitors.iter().enumerate() {
             let region = Region { x: monitor.position().x, y: monitor.position().y, width: monitor.size().width, height: monitor.size().height };
-            snapshots.insert(format!("screen-select-{index}"), (region, crate::screen_capture::png(region)?));
+            snapshots.insert(format!("screen-select-{index}"), crate::screen_capture::freeze(region)?);
         }
     }
     hide_selectors(app);
@@ -401,26 +404,7 @@ fn select_locked(app: &tauri::AppHandle, screen: &Screen, kind: &str) -> Result<
     let result = (|| {
         for (index, monitor) in monitors.iter().enumerate() {
             let label = format!("screen-select-{index}");
-            let window = match app.get_webview_window(&label) {
-                Some(w) => w,
-                None => tauri::WebviewWindowBuilder::new(
-                    app,
-                    &label,
-                    tauri::WebviewUrl::App("overlay.html?view=screen-select".into()),
-                )
-                .title("Seleccionar area · Whispera")
-                .transparent(true)
-                .background_color(tauri::window::Color(0, 0, 0, 0))
-                .content_protected(true)
-                .decorations(false)
-                .shadow(false)
-                .always_on_top(true)
-                .skip_taskbar(true)
-                .resizable(false)
-                .visible(false)
-                .build()
-                .map_err(|e| e.to_string())?,
-            };
+            let window = selector_window(app, &label)?;
             window.set_focusable(true).map_err(|e| e.to_string())?;
             window
                 .set_ignore_cursor_events(false)
@@ -445,6 +429,38 @@ fn select_locked(app: &tauri::AppHandle, screen: &Screen, kind: &str) -> Result<
     }
     result
 }
+fn selector_window(app: &tauri::AppHandle, label: &str) -> Result<tauri::WebviewWindow, String> {
+    Ok(match app.get_webview_window(label) {
+                Some(w) => w,
+                None => tauri::WebviewWindowBuilder::new(
+                    app,
+                    label,
+                    tauri::WebviewUrl::App("overlay.html?view=screen-select".into()),
+                )
+                .title("Seleccionar area · Whispera")
+                .transparent(true)
+                .background_color(tauri::window::Color(0, 0, 0, 0))
+                .content_protected(true)
+                .decorations(false)
+                .shadow(false)
+                .always_on_top(true)
+                .skip_taskbar(true)
+                .resizable(false)
+                .visible(false)
+                .build()
+                .map_err(|e| e.to_string())?,
+    })
+}
+/// Prepare hidden selectors once, outside the first shortcut's critical path.
+pub fn warm_selectors(app: &tauri::AppHandle) -> Result<(), String> {
+    let screen = app.state::<Screen>();
+    let Ok(_gate) = screen.gate.try_lock() else { return Ok(()); };
+    if screen.busy() { return Ok(()); }
+    for (index, _) in app.available_monitors().map_err(|e| e.to_string())?.iter().enumerate() {
+        selector_window(app, &format!("screen-select-{index}"))?;
+    }
+    Ok(())
+}
 #[tauri::command]
 pub async fn screen_select(app: tauri::AppHandle) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || select(&app))
@@ -468,7 +484,7 @@ pub fn screen_selection_kind(screen: State<Screen>) -> String {
 #[tauri::command]
 pub fn screen_selection_image(screen: State<Screen>, window: tauri::WebviewWindow) -> Result<tauri::ipc::Response, String> {
     let snapshots = screen.snapshots.lock().map_err(|_| "Captura ocupada")?;
-    let bytes = snapshots.get(window.label()).map(|(_, bytes)| bytes.clone()).unwrap_or_default();
+    let bytes = snapshots.get(window.label()).map(|frame| frame.preview_bmp()).unwrap_or_default();
     Ok(tauri::ipc::Response::new(bytes))
 }
 #[tauri::command]
@@ -497,6 +513,9 @@ pub fn screen_overlay_ready(
         }
         if window.label() == "screen-select-0" {
             window.set_focus().map_err(|e| e.to_string())?;
+            if let Some(started) = app.state::<Screen>().selection_started.lock().map_err(|_| "Captura ocupada")?.take() {
+                let _ = app.state::<Store>().event(&format!("Selector de captura listo en {} ms", started.elapsed().as_millis()));
+            }
         }
     }
     Ok(true)
@@ -557,8 +576,8 @@ pub async fn screen_start(
         if kind == "image" {
             let bytes = {
                 let mut snapshots = screen.snapshots.lock().map_err(|_| "Captura ocupada")?;
-                let (monitor, bytes) = snapshots.get(window.label()).ok_or("La imagen de seleccion ya no esta disponible")?;
-                let cropped = crate::screen_capture::crop_png(bytes, *monitor, region)?;
+                let frame = snapshots.get(window.label()).ok_or("La imagen de seleccion ya no esta disponible")?;
+                let cropped = frame.crop_png(region)?;
                 snapshots.clear();
                 cropped
             };

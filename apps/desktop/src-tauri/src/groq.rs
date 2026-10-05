@@ -1,6 +1,15 @@
 use crate::storage::{Rule, Settings};
 use reqwest::multipart;
-use std::path::Path;
+use std::{path::Path, sync::OnceLock};
+
+fn client() -> Result<&'static reqwest::Client, String> {
+    static CLIENT: OnceLock<Result<reqwest::Client, String>> = OnceLock::new();
+    CLIENT.get_or_init(|| reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(180))
+        .pool_idle_timeout(std::time::Duration::from_secs(120))
+        .build().map_err(|_| "No se pudo iniciar la conexion".to_owned()))
+        .as_ref().map_err(Clone::clone)
+}
 
 pub fn entry() -> Result<keyring::Entry, String> {
     keyring::Entry::new("Whispera.Desktop.Preview", "groq")
@@ -160,10 +169,7 @@ pub async fn request(
     if settings.language != "auto" {
         form = form.text("language", settings.language.clone());
     }
-    let response = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(180))
-        .build()
-        .map_err(|_| "No se pudo iniciar la conexion")?
+    let response = client()?
         .post("https://api.groq.com/openai/v1/audio/transcriptions")
         .bearer_auth(key)
         .multipart(form)
@@ -185,6 +191,64 @@ pub async fn request(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn transcription_transport_reuses_connection_without_reusing_credentials() {
+        use std::{io::{BufRead, BufReader, Write}, net::TcpListener,
+            sync::{Arc, Mutex, atomic::{AtomicUsize, Ordering}}, time::{Duration, Instant}};
+        let listener=TcpListener::bind("127.0.0.1:0").unwrap();
+        let url=format!("http://{}/fixture",listener.local_addr().unwrap());
+        listener.set_nonblocking(true).unwrap();
+        let completed=Arc::new(AtomicUsize::new(0));
+        let headers=Arc::new(Mutex::new(Vec::new()));
+        let done=completed.clone();let observed=headers.clone();
+        let server=std::thread::spawn(move|| {
+            let deadline=Instant::now()+Duration::from_secs(5);
+            let mut connections=0;let mut workers=vec![];
+            while done.load(Ordering::SeqCst)<2 && Instant::now()<deadline {
+                match listener.accept() {
+                    Ok((mut socket,_))=> {
+                        connections+=1;let done=done.clone();let observed=observed.clone();
+                        workers.push(std::thread::spawn(move|| {
+                            // Accepted sockets inherit nonblocking mode on Windows.
+                            socket.set_nonblocking(false).unwrap();
+                            socket.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
+                            let mut reader=BufReader::new(socket.try_clone().unwrap());
+                            while done.load(Ordering::SeqCst)<2 {
+                                let mut request=String::new();
+                                loop {
+                                    let mut line=String::new();
+                                    if reader.read_line(&mut line).unwrap_or(0)==0 {return;}
+                                    if line=="\r\n" {break;}
+                                    request.push_str(&line);
+                                }
+                                observed.lock().unwrap().push(request.to_lowercase());
+                                socket.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: keep-alive\r\n\r\nok").unwrap();
+                                done.fetch_add(1,Ordering::SeqCst);
+                            }
+                        }));
+                    }
+                    Err(e) if e.kind()==std::io::ErrorKind::WouldBlock=>std::thread::sleep(Duration::from_millis(5)),
+                    Err(e)=>panic!("Local fixture: {e}"),
+                }
+            }
+            for worker in workers {worker.join().unwrap();}connections
+        });
+        tauri::async_runtime::block_on(async {
+            for token in ["first","second"] {
+                let body=client().unwrap().get(&url).bearer_auth(token).timeout(Duration::from_secs(3))
+                    .send().await.unwrap().text().await.unwrap();
+                assert_eq!(body,"ok");
+                // Hyper returns the consumed connection to its pool asynchronously.
+                // Real dictations are separated by microphone recording time.
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        });
+        let connections=server.join().unwrap();
+        let requests=headers.lock().unwrap();
+        assert_eq!(connections,1,"successive requests should share the local TCP connection: {requests:?}");
+        assert!(requests[0].contains("authorization: bearer first"));
+        assert!(requests[1].contains("authorization: bearer second"));
+    }
     fn rule(source: &str, target: &str) -> Rule {
         Rule {
             id: source.into(),

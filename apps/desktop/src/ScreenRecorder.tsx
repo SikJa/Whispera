@@ -25,21 +25,25 @@ export function ScreenOverlay() {
     let alive=true; let imageUrl:string|undefined; let resetId=0; const off:UnlistenFn[]=[];
     const reset=async(mode:'video'|'image')=>{
       const id=++resetId;
-      const appearance=await invoke<Appearance>('screen_appearance');
-      const bytes=mode==='image'?await invoke<ArrayBuffer>('screen_selection_image'):undefined;
+      const [appearance,bytes]=await Promise.all([
+        invoke<Appearance>('screen_appearance'),
+        mode==='image'?invoke<ArrayBuffer>('screen_selection_image'):Promise.resolve(undefined),
+      ]);
       if(!alive||id!==resetId)return;
       if(imageUrl)URL.revokeObjectURL(imageUrl);
-      imageUrl=bytes&&bytes.byteLength?URL.createObjectURL(new Blob([bytes],{type:'image/png'})):undefined;
+      imageUrl=bytes&&bytes.byteLength?URL.createObjectURL(new Blob([bytes],{type:'image/bmp'})):undefined;
       if(imageUrl){const image=new Image();image.src=imageUrl;await image.decode();}
       if(!alive||id!==resetId)return;
       setSnapshot(imageUrl);setFrameColor(appearance.frameColor??'#ffffff');setStage(undefined);setKind(mode);setEpoch(v=>v+1);setInitialized(true);
-      await showWhenReady('screen_overlay_ready',undefined,()=>alive);
+      await showWhenReady('screen_overlay_ready',undefined,()=>alive&&id===resetId);
     };
     void(async()=>{
       for(const promise of [listen('screen-hide',()=>{++resetId;if(imageUrl)URL.revokeObjectURL(imageUrl);imageUrl=undefined;if(alive){setSnapshot(undefined);setStage(undefined);setInitialized(false);}}),listen<'video'|'image'>('screen-reset',e=>void reset(e.payload)),listen<Stage>('screen-stage',e=>{if(alive)setStage(e.payload);})]){
         const remove=await promise;if(!alive)remove();else off.push(remove);
       }
-      if(alive)await reset(await invoke<'video'|'image'>('screen_selection_kind'));
+      // Preloaded windows only register listeners; no hidden rendering/polling loop.
+      if(alive&&(await invoke<Status>('screen_status')).phase==='selecting')
+        await reset(await invoke<'video'|'image'>('screen_selection_kind'));
     })().catch(()=>{});
     return()=>{alive=false;if(imageUrl)URL.revokeObjectURL(imageUrl);off.forEach(remove=>remove());};
   },[]);

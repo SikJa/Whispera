@@ -221,7 +221,9 @@ fn schedule(
         s.progress = "Preparando audio".into();
     });
     tauri::async_runtime::spawn(async move {
+        let processing_started = std::time::Instant::now();
         let result = process(&app, &id).await;
+        let text_ready_ms = processing_started.elapsed().as_millis();
         let engine = app.state::<Engine>();
         match result {
             Ok(text) => {
@@ -238,11 +240,13 @@ fn schedule(
                     let value = text.clone();
                     let pasted = tauri::async_runtime::spawn_blocking(move || -> Result<(), String> {
                         let mut copied = false;
-                        for _ in 0..3 {
-                            if app_copy.clipboard().write_text(&value).is_ok() {
-                                std::thread::sleep(std::time::Duration::from_millis(100));
-                                if app_copy.clipboard().read_text().ok().as_deref() == Some(&value) { copied = true; break; }
+                        for attempt in 0..3 {
+                            if app_copy.clipboard().read_text().ok().as_deref() == Some(&value)
+                                || (app_copy.clipboard().write_text(&value).is_ok()
+                                    && app_copy.clipboard().read_text().ok().as_deref() == Some(&value)) {
+                                copied = true; break;
                             }
+                            if attempt < 2 { std::thread::sleep(std::time::Duration::from_millis(20)); }
                         }
                         if !copied { return Err("No se pudo verificar el portapapeles. El texto esta guardado.".into()); }
                         match target { Some(target) => crate::paste::restore_and_paste_text(target, &value), None => Err("Texto copiado. No habia un campo de destino externo al iniciar.".into()) }
@@ -257,6 +261,8 @@ fn schedule(
                     s.text = text;
                     s.progress.clear();
                 });
+                let _ = app.state::<Store>().event(&format!("Dictado: texto listo en {text_ready_ms} ms; copia/pegado en {} ms",
+                    processing_started.elapsed().as_millis().saturating_sub(text_ready_ms)));
                 if hide_after_completion(live_dictation, &engine.recorder.snapshot()) {
                     if let Some(window) = app.get_webview_window("recorder") {
                         let _ = window.hide();

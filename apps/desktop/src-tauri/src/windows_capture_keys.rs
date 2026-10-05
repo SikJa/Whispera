@@ -62,7 +62,9 @@ fn ensure_hook(app: &tauri::AppHandle) -> Result<(), String> {
             while let Ok(action) = receiver.recv() {
                 if !ENABLED.load(Ordering::SeqCst) { continue; }
                 let result = match action {
-                    Action::Whispera if !worker_app.state::<crate::screen::Screen>().busy() => crate::screen::select_image(&worker_app),
+                    // select_image already handles an open editor and checks the gate.
+                    // The old busy check silently discarded Print Screen in editing mode.
+                    Action::Whispera => crate::screen::select_image(&worker_app),
                     Action::Windows => open_windows_capture(),
                     _ => Ok(()),
                 };

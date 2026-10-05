@@ -447,6 +447,12 @@ fn main() {
                 let _ = app.state::<Store>().event(&e);
             }
             windows_capture_keys::start(app.handle());
+            let capture_app = app.handle().clone();
+            tauri::async_runtime::spawn_blocking(move || {
+                if let Err(error) = screen::warm_selectors(&capture_app) {
+                    let _ = capture_app.state::<Store>().event(&format!("Preparacion de capturas: {error}"));
+                }
+            });
             use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
             let show = MenuItem::with_id(app, "settings", "Configuracion", true, None::<&str>)?;
             let record = MenuItem::with_id(app, "recorder", "Abrir grabadora", true, None::<&str>)?;

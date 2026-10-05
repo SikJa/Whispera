@@ -34,7 +34,10 @@ pub fn start() {
                     Err(mpsc::RecvTimeoutError::Timeout) => None,
                     Err(mpsc::RecvTimeoutError::Disconnected) => return,
                 };
-                remember(&automation, &mut recent, &mut order);
+                // Focus checks must not wait behind another scan of the foreground field.
+                if !matches!(&request, Some(Request::Focus(..))) {
+                    remember(&automation, &mut recent, &mut order);
+                }
                 match request {
                     Some(Request::Capture(hwnd, pid, reply)) => {
                         let tracked = recent.get(&hwnd).filter(|field| field.pid == pid).map(|field| {
@@ -52,7 +55,7 @@ pub fn start() {
                             let mut pid = 0;
                             GetWindowThreadProcessId(hwnd, Some(&mut pid));
                             if pid != field.pid || !IsWindow(Some(hwnd)).as_bool() || GetForegroundWindow() != hwnd
-                                || !belongs_to_window(&automation, &field.element, hwnd) { return false; }
+                                || (restore && !belongs_to_window(&automation, &field.element, hwnd)) { return false; }
                             if restore && field.element.SetFocus().is_err() { return false; }
                             automation.GetFocusedElement().and_then(|current| automation.CompareElements(&current, &field.element))
                                 .map(|equal| equal.as_bool()).unwrap_or(false)

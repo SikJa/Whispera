@@ -2,7 +2,7 @@
 
 Implementado desde 0.2.15 para Windows x64.
 
-Configuración → Actualizaciones muestra la versión instalada, los cambios disponibles y «Actualizar y reiniciar». También se accede desde el menú de bandeja, que muestra la versión nueva cuando hay una actualización. La app consulta al iniciar y cada seis horas; la instalación siempre requiere pulsar el botón.
+Configuración → Actualizaciones muestra la versión instalada, los cambios disponibles y «Actualizar y reiniciar». También se accede desde el menú de bandeja, que muestra la versión nueva cuando hay una actualización. La app consulta al iniciar y cada cinco minutos; la instalación siempre requiere pulsar el botón.
 
 El instalador se descarga desde las releases de este repositorio mediante HTTPS y se verifica con la firma oficial de Tauri. Antes de instalar, se respalda SQLite y se conserva la carpeta de instalación. Whispera vuelve a abrirse al terminar. La clave Groq permanece en el almacén de credenciales de Windows.
 
@@ -31,3 +31,5 @@ Usuarios con 0.2.14 o anteriores deben instalar una vez la versión con el actua
 La prueba nativa descarga una pequeña fixture firmada por HTTP local y rechaza bytes alterados; el transporte de producción utiliza HTTPS. Las pruebas de interfaz simulan IPC para cubrir consulta, novedades, errores, progreso y bloqueo durante trabajo activo. La publicación comprueba también los archivos subidos a GitHub antes de habilitar la release.
 
 Referencia oficial: https://v2.tauri.app/plugin/updater/
+
+Desde 0.2.17, la disponibilidad aparece debajo de la marca en la barra lateral. Si Configuración está oculta o minimizada, la app la abre una vez por versión detectada, esperando a que finalicen dictados, transcripciones, capturas y videos activos. La consulta periódica no es una notificación instantánea ni instala automáticamente.

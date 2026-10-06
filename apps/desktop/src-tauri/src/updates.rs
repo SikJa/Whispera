@@ -95,7 +95,7 @@ pub async fn updater_install(app:tauri::AppHandle,window:tauri::WebviewWindow)->
         let bytes=update.download(|chunk,total|{
             downloaded+=chunk as u64;
             if last.elapsed()>=Duration::from_millis(150){last=Instant::now();change(&app,|s|{s.downloaded=downloaded;s.total=total;});}
-        },||{}).await.map_err(|e|format!("No se pudo descargar o verificar la actualización: {e}"))?;
+        },||{change(&app,|s|{s.phase="verifying".into();});}).await.map_err(|e|format!("No se pudo descargar o verificar la actualización: {e}"))?;
         let handle=app.clone();
         tauri::async_runtime::spawn_blocking(move||{
             let state=handle.state::<Updates>();
@@ -119,9 +119,32 @@ pub fn start(app:&tauri::AppHandle){
     let app=app.clone();
     tauri::async_runtime::spawn(async move{
         tokio::time::sleep(Duration::from_secs(8)).await;
+        let mut announced:Option<String>=None;
         loop {
-            let _=updater_check(app.clone()).await;
-            tokio::time::sleep(Duration::from_secs(6*60*60)).await;
+            if let Ok(status)=updater_check(app.clone()).await {
+                if let Some(version)=status.version {
+                    if announced.as_deref()!=Some(version.as_str()) {
+                        // Wait only while an update notice is pending; never interrupt active work.
+                        loop {
+                            let current=snapshot(&app);
+                            if current.version.as_deref()!=Some(version.as_str())||current.phase!="available" {break;}
+                            if idle(&app).is_ok() {
+                                if let Some(window)=app.get_webview_window("main") {
+                                    if !window.is_visible().unwrap_or(true)||window.is_minimized().unwrap_or(false) {
+                                        if crate::open_settings(app.clone()).is_ok() {
+                                            let _=app.emit_to("main","updater-open",());
+                                        }
+                                    }
+                                }
+                                announced=Some(version);
+                                break;
+                            }
+                            tokio::time::sleep(Duration::from_secs(2)).await;
+                        }
+                    }
+                }
+            }
+            tokio::time::sleep(Duration::from_secs(5*60)).await;
         }
     });
 }

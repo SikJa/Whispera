@@ -20,7 +20,7 @@ export default function SoundSettings({ settings, patch, onError }: {
     audio.current = null;
   }
   useEffect(() => stop, []);
-  function preview(theme: string, cue: 'start' | 'stop' | 'pair') {
+  function preview(theme: string, cue: 'start' | 'stop') {
     stop();
     const token = generation.current;
     function play(kind: 'start' | 'stop') {
@@ -35,16 +35,15 @@ export default function SoundSettings({ settings, patch, onError }: {
         if (generation.current === token) onError('No se pudo reproducir la muestra de sonido.');
       });
     }
-    play(cue === 'stop' ? 'stop' : 'start');
-    if (cue === 'pair') timers.current.push(setTimeout(() => play('stop'), 1000));
+    play(cue);
     timers.current.push(setTimeout(stop, 2000));
   }
   return <>
     <div className="form-row"><label htmlFor="sounds-on">Sonidos de grabación</label><SettingsSwitch id="sounds-on" label="Activar sonidos" checked={settings.sounds} onChange={sounds => patch({ sounds })}/></div>
-    <div className="form-row"><label htmlFor="sound-theme">Inicio y fin<span>Al elegir uno, escuchás una muestra de inicio y fin.</span></label><select id="sound-theme" value={settings.soundTheme} onChange={e => {
+    <div className="form-row"><label htmlFor="sound-theme">Inicio y fin<span>Usá los botones para escuchar el sonido antes de guardarlo.</span></label><select id="sound-theme" value={settings.soundTheme} onChange={e => {
       const soundTheme = e.target.value;
       patch({ soundTheme });
-      preview(soundTheme, 'pair');
+      stop();
     }}>{soundPairs.map(p => <option value={p.id} key={p.id}>{p.name}</option>)}</select></div>
     <div className="page-actions">{(['start', 'stop'] as const).map(cue => <button key={cue} onClick={() => preview(settings.soundTheme, cue)}><Play size={15}/>{cue === 'start' ? 'Escuchar inicio' : 'Escuchar fin'}</button>)}</div>
   </>;

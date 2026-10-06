@@ -55,7 +55,6 @@ const descriptions: Record<Route, string> = {
 
 function SettingsApp() {
   const updater=useUpdates();
-  const [dismissedUpdate,setDismissedUpdate]=useState<string>();
   const [historyKind,setHistoryKind] = useState<'text'|'captures'>('text');
   const [data, setData] = useState<api.Snapshot>();
   const [route, setRoute] = useState<Route>("transcription");
@@ -88,6 +87,7 @@ function SettingsApp() {
   return <div className="desktop-app" style={{ "--accent": data.settings.color } as React.CSSProperties}>
     <aside className="desktop-sidebar">
       <a className="desktop-brand" href="?view=settings"><span className="brand-mark"><img src="/cristal/128x128.png" alt="" /></span><span className="brand-copy"><strong>Whispera</strong><small>Voz, capturas y video</small></span></a>
+      {updater.status.version&&<button className="sidebar-update" aria-label="Actualización disponible" onClick={()=>setRoute('updates')}><Download size={16}/><span><strong>Actualización disponible</strong><small>Whispera {updater.status.version}</small></span><ArrowUpRight size={14}/></button>}
       <nav aria-label="Configuración">{routes.map(item => <React.Fragment key={item.id}>{"group" in item && <p className="nav-group">{item.group}</p>}<button aria-label={item.name} title={item.name} aria-current={route === item.id ? "page" : undefined} className={route === item.id ? "active" : ""} onClick={() => { setRoute(item.id); setSearch(""); setMessage(""); }}><item.icon size={17} /><span>{item.name}</span>{item.id === "dictionary" && <small>{data.rules.length}</small>}</button></React.Fragment>)}</nav>
       <div className="sidebar-bottom"><a className="recorder-link" href="?view=record" onClick={e=>{if(api.native){e.preventDefault();void run(()=>invoke('open_recorder'),'Grabadora abierta');}}}><AudioLines size={18} /><span>Abrir grabadora</span><ArrowUpRight size={15} /></a><span className="engine-status"><i />{api.native ? "Whispera 2" : "Vista previa"}<small>Groq</small></span></div>
     </aside>
@@ -95,7 +95,6 @@ function SettingsApp() {
       <section className="desktop-content">
         <div className="page-heading"><div><h1>{title}</h1><p>{descriptions[route]}</p></div>{["transcription", "appearance", "color", "sounds", "diagnostics"].includes(route) && <SaveButton key={route} busy={busy} onSave={save} />}</div>
         {message && <div className="notice" role="status">{message}<button aria-label="Cerrar aviso" onClick={() => setMessage("")}><X size={14} /></button></div>}
-        {updater.status.version&&route!=='updates'&&dismissedUpdate!==updater.status.version&&<div className="update-banner" role="status"><span>Whispera {updater.status.version} disponible</span><button onClick={()=>setRoute('updates')}>Ver actualización</button><button onClick={()=>setDismissedUpdate(updater.status.version!)}>Más tarde</button></div>}
         <SectionReveal key={route}>
         {route==='updates'&&<UpdatesPanel updater={updater}/>}
         {route === 'screen' && <ScreenRecorder />}

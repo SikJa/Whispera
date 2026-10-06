@@ -26,12 +26,20 @@ try{
   await page.getByRole('progressbar',{name:'Descarga de actualización'}).waitFor();
   assert.equal(await page.getByRole('progressbar').getAttribute('value'),'50');
   assert.equal(await page.getByRole('button',{name:'Descargando…'}).isDisabled(),true);
+  await page.screenshot({path:'../../.local/update-progress-download.png'});
+  assert.equal(await page.locator('.desktop-sidebar').getByRole('button',{name:'Actualización disponible'}).count(),1);
   await page.evaluate(()=>{window.updateStatus={...window.updateStatus,phase:'available'};window.emitNative('updater-status',window.updateStatus,'main');});
   await page.getByRole('button',{name:'Capturas y video',exact:true}).click();
-  await page.getByRole('button',{name:'Ver actualización',exact:true}).waitFor();
-  await page.getByRole('button',{name:'Más tarde',exact:true}).click();
-  assert.equal(await page.getByRole('button',{name:'Ver actualización',exact:true}).count(),0);
+  await page.getByRole('button',{name:'Actualización disponible',exact:true}).waitFor();
+  await page.getByRole('button',{name:'Actualización disponible',exact:true}).click();
+  await page.getByText('Disponible: 0.2.16').waitFor();
+  await page.evaluate(()=>{window.updateStatus={...window.updateStatus,phase:'verifying'};window.emitNative('updater-status',window.updateStatus,'main');});
+  await page.getByText('Verificando el instalador',{exact:true}).waitFor();
+  assert.equal(await page.getByRole('button',{name:'Verificando…',exact:true}).isDisabled(),true);
+  await page.evaluate(()=>{window.updateStatus={...window.updateStatus,phase:'installing'};window.emitNative('updater-status',window.updateStatus,'main');});
+  await page.getByText('Instalando actualización',{exact:true}).waitFor();
+  await page.screenshot({path:'../../.local/update-progress-installing.png'});
   await page.evaluate(()=>window.emitNative('updater-open',null,'main'));
   await page.getByText('Disponible: 0.2.16').waitFor();
-  console.log('PASS: current/new updates, network retry, active-work guard, progress, deferred notice and tray navigation. IPC mocked.');
+  console.log('PASS: current/new updates, network retry, active-work guard, download/verification/install progress, persistent sidebar notice and tray navigation. IPC mocked.');
 }finally{await browser.close();}

@@ -27,7 +27,7 @@ pub fn capture(app: &tauri::AppHandle, active: bool) -> Result<(), String> {
         return Err("Enfoca el campo del atajo".into());
     }
     if active
-        && (app.state::<crate::screen::Screen>().busy()
+        && (crate::screen::busy(app)
             || crate::health::busy(
                 &app.state::<crate::engine::Engine>()
                     .recorder
@@ -173,7 +173,7 @@ pub async fn save_all_shortcuts(
         let _screen_gate = screen.gate.lock().map_err(|_| "Captura ocupada")?;
         let engine = app.state::<crate::engine::Engine>();
         let _voice_gate = engine.gate.lock().map_err(|_| "Dictado ocupado")?;
-        if screen.busy() || crate::health::busy(&engine.recorder.snapshot().phase) {
+        if crate::screen::busy(&app) || crate::health::busy(&engine.recorder.snapshot().phase) {
             return Err("Termina la grabacion antes de cambiar los atajos".into());
         }
         let next = [parse(&voice)?, parse(&video)?, parse(&image)?, parse(&library)?];

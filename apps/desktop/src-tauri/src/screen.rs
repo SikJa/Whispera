@@ -1,5 +1,6 @@
 //! Local region capture. FFmpeg is a separate bundled executable; no cloud upload.
 use crate::storage::{Settings, Store};
+use crate::capture_session as session;
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use serde::{Deserialize, Serialize};
 use std::{
@@ -53,6 +54,7 @@ pub struct Status {
     pub copied: bool,
 }
 pub struct Screen {
+    pub secondary: bool,
     pub state: Arc<Mutex<Status>>,
     active: Mutex<Option<Active>>,
     pub gate: Mutex<()>,
@@ -76,6 +78,7 @@ enum CaptureControl {
 impl Screen {
     pub fn new() -> Self {
         Self {
+            secondary: false,
             state: Arc::new(Mutex::new(Status {
                 phase: "idle".into(),
                 ..Default::default()
@@ -177,18 +180,20 @@ pub(crate) fn command(binary: &Path) -> Command {
     cmd.creation_flags(0x08000000).stdout(Stdio::null());
     cmd
 }
-fn hide_selectors(app: &tauri::AppHandle) {
-    if let Ok(mut snapshots) = app.state::<Screen>().snapshots.lock() { snapshots.clear(); }
-    release_escape(app);
-    crate::screen_editor::hide(app);
+fn hide_selectors(app: &tauri::AppHandle, screen: &Screen) {
+    if let Ok(mut snapshots) = screen.snapshots.lock() { snapshots.clear(); }
+    release_escape(app, screen.secondary);
+    crate::screen_editor::hide_session(app, screen.secondary);
     for (label, window) in app.webview_windows() {
-        if label.starts_with("screen-select-") {
+        if label.starts_with(if screen.secondary {"image-select-"} else {"screen-select-"}) {
             let _ = window.hide();
             let _ = window.emit("screen-hide", ());
         }
     }
 }
-fn release_escape(app: &tauri::AppHandle) {
+fn release_escape(app: &tauri::AppHandle, secondary: bool) {
+    let other=session::screen(app,if secondary {"screen"}else{"image-session"});
+    if other.busy(){return;}
     use tauri_plugin_global_shortcut::GlobalShortcutExt;
     let Ok(key) = crate::shortcuts::parse("Escape") else {
         return;
@@ -208,6 +213,7 @@ fn release_escape(app: &tauri::AppHandle) {
     }
 }
 pub fn escape(app: &tauri::AppHandle) -> Result<(), String> {
+    if app.state::<session::ImageCapture>().screen.busy(){return cancel_selection_for(app.clone(), "image-session");}
     let screen = app.state::<Screen>();
     let _gate = screen.gate.lock().map_err(|_| "Video ocupado")?;
     stop_locked(app, &screen)?;
@@ -286,12 +292,14 @@ pub fn screen_appearance(store: State<Store>) -> Result<serde_json::Value, Strin
     )
 }
 #[tauri::command]
-pub fn screen_status(screen: State<Screen>) -> Status {
-    screen
+pub fn screen_status(app: tauri::AppHandle, window: tauri::WebviewWindow) -> Status {
+    let screen=session::screen(&app,window.label());
+    let status=screen
         .state
         .lock()
         .unwrap_or_else(|e| e.into_inner())
-        .clone()
+        .clone();
+    status
 }
 #[tauri::command]
 pub async fn screen_save_preferences(
@@ -306,7 +314,7 @@ fn save_preferences(preferences: Preferences, app: tauri::AppHandle) -> Result<(
     use tauri_plugin_global_shortcut::GlobalShortcutExt;
     let screen = app.state::<Screen>();
     let _gate = screen.gate.lock().map_err(|_| "Video ocupado")?;
-    if screen.busy() {
+    if busy(&app) {
         return Err("Detene la grabacion antes de cambiar preferencias".into());
     }
     if !["none", "system", "microphone", "both"].contains(&preferences.audio.as_str())
@@ -358,19 +366,32 @@ fn save_preferences(preferences: Preferences, app: tauri::AppHandle) -> Result<(
 fn valid_frame_color(color: &str) -> bool {
     color.len() == 7 && color.starts_with('#') && color[1..].bytes().all(|v| v.is_ascii_hexdigit())
 }
+pub fn busy(app:&tauri::AppHandle)->bool {
+    app.state::<Screen>().busy() || app.state::<session::ImageCapture>().screen.busy()
+}
+pub fn report_image_error(app:&tauri::AppHandle,error:String) {
+    let parallel=app.state::<session::ImageCapture>();
+    let target=if parallel.screen.busy() || app.state::<Screen>().active.lock().map(|a|a.is_some()).unwrap_or(false) {"image-session"}else{"screen"};
+    if let Ok(mut state)=session::screen(app,target).state.lock(){state.error=error.clone();}
+    let _=app.state::<Store>().event(&error);
+}
 pub fn select(app: &tauri::AppHandle) -> Result<(), String> {
     let screen = app.state::<Screen>();
     let _gate = screen.gate.lock().map_err(|_| "Video ocupado")?;
     select_locked(app, &screen, "video")
 }
 pub fn select_image(app: &tauri::AppHandle) -> Result<(), String> {
-    let screen = app.state::<Screen>();
-    let _gate = screen.gate.lock().map_err(|_| "Captura ocupada")?;
-    if screen.state.lock().map_err(|_| "Estado ocupado")?.phase == "editing" {
-        hide_selectors(app);
-        screen.state.lock().map_err(|_| "Estado ocupado")?.phase = "idle".into();
+    let primary=app.state::<Screen>();
+    let phase=primary.state.lock().map_err(|_|"Estado ocupado")?.phase.clone();
+    let concurrent=app.state::<session::ImageCapture>().screen.busy() ||
+        ["starting","recording","paused","pausing","resuming","reframing","saving","cancelling"].contains(&phase.as_str());
+    let screen=session::screen(app,if concurrent {"image-session"}else{"screen"});
+    let _gate=screen.gate.lock().map_err(|_|"Captura ocupada")?;
+    if screen.state.lock().map_err(|_|"Estado ocupado")?.phase=="editing" {
+        hide_selectors(app,&screen);
+        screen.state.lock().map_err(|_|"Estado ocupado")?.phase="idle".into();
     }
-    select_locked(app, &screen, "image")
+    select_locked(app,&screen,"image")
 }
 fn select_locked(app: &tauri::AppHandle, screen: &Screen, kind: &str) -> Result<(), String> {
     if screen.busy() {
@@ -385,15 +406,15 @@ fn select_locked(app: &tauri::AppHandle, screen: &Screen, kind: &str) -> Result<
     // Freeze before activation can dismiss a menu in the target app.
     let mut snapshots = std::collections::HashMap::new();
     if kind == "image" {
-        let _exclude = app.get_webview_window("screen-ink")
+        let _exclude = if !screen.secondary {app.get_webview_window("screen-ink")} else {None}
             .map(|w| w.hwnd().map_err(|e| e.to_string()).and_then(|h| crate::screen_capture::InkExclusion::new(windows::Win32::Foundation::HWND(h.0))))
             .transpose()?;
         for (index, monitor) in monitors.iter().enumerate() {
             let region = Region { x: monitor.position().x, y: monitor.position().y, width: monitor.size().width, height: monitor.size().height };
-            snapshots.insert(format!("screen-select-{index}"), crate::screen_capture::freeze(region)?);
+            snapshots.insert(format!("{}select-{index}",if screen.secondary {"image-"}else{"screen-"}), crate::screen_capture::freeze(region)?);
         }
     }
-    hide_selectors(app);
+    hide_selectors(app, screen);
     *screen.snapshots.lock().map_err(|_| "Captura ocupada")? = snapshots;
     crate::shortcuts::register(app, "Escape")?;
     screen.selection_ready.store(false, Ordering::SeqCst);
@@ -405,7 +426,7 @@ fn select_locked(app: &tauri::AppHandle, screen: &Screen, kind: &str) -> Result<
     *screen.kind.lock().map_err(|_| "Estado ocupado")? = kind.into();
     let result = (|| {
         for (index, monitor) in monitors.iter().enumerate() {
-            let label = format!("screen-select-{index}");
+            let label = format!("{}select-{index}",if screen.secondary {"image-"}else{"screen-"});
             let window = selector_window(app, &label)?;
             set_frame_region(&window, None)?;
             window.set_focusable(true).map_err(|e| e.to_string())?;
@@ -427,7 +448,7 @@ fn select_locked(app: &tauri::AppHandle, screen: &Screen, kind: &str) -> Result<
         Ok(())
     })();
     if result.is_err() {
-        hide_selectors(app);
+        hide_selectors(app, &screen);
         screen.state.lock().map_err(|_| "Estado ocupado")?.phase = "idle".into();
     }
     result
@@ -460,7 +481,8 @@ pub fn warm_selectors(app: &tauri::AppHandle) -> Result<(), String> {
     let Ok(_gate) = screen.gate.try_lock() else { return Ok(()); };
     if screen.busy() { return Ok(()); }
     for (index, _) in app.available_monitors().map_err(|e| e.to_string())?.iter().enumerate() {
-        selector_window(app, &format!("screen-select-{index}"))?;
+        selector_window(app, &format!("{}select-{index}",if screen.secondary {"image-"}else{"screen-"}))?;
+        selector_window(app, &format!("image-select-{index}"))?;
     }
     Ok(())
 }
@@ -494,8 +516,8 @@ pub(crate) fn set_frame_region(window: &tauri::WebviewWindow, rect: Option<Rect>
 }
 #[tauri::command]
 pub fn screen_frame_drag(app: tauri::AppHandle, window: tauri::WebviewWindow, active: bool) -> Result<(), String> {
-    if !window.label().starts_with("screen-select-") {return Err("Vista incorrecta".into());}
-    let ctx=crate::screen_editor::screen_editor_context(app.state::<crate::screen_editor::Editor>()).ok_or("Captura no disponible")?;
+    if !session::selector(window.label()) {return Err("Vista incorrecta".into());}
+    let ctx=crate::screen_editor::context_for(&app,window.label()).ok_or("Captura no disponible")?;
     if ctx.source_label!=window.label(){return Err("Vista incorrecta".into());}
     set_frame_region(&window,if active {None}else{Some(ctx.rect)})?;
     crate::screen_editor::raise_controls(&app);
@@ -504,8 +526,8 @@ pub fn screen_frame_drag(app: tauri::AppHandle, window: tauri::WebviewWindow, ac
 #[tauri::command]
 pub async fn screen_resize_region(app: tauri::AppHandle, window: tauri::WebviewWindow, id:String, rect:Rect) -> Result<(),String> {
     tauri::async_runtime::spawn_blocking(move|| {
-        let screen=app.state::<Screen>();let _gate=screen.gate.lock().map_err(|_|"Captura ocupada")?;
-        let ctx=crate::screen_editor::screen_editor_context(app.state::<crate::screen_editor::Editor>()).ok_or("Captura no disponible")?;
+        let screen=session::screen(&app,window.label());let _gate=screen.gate.lock().map_err(|_|"Captura ocupada")?;
+        let ctx=crate::screen_editor::context_for(&app,window.label()).ok_or("Captura no disponible")?;
         if ctx.id!=id||ctx.source_label!=window.label(){return Err("La captura ya termino".into());}
         let next=region(rect,ctx.scale,window.inner_position().map_err(|e|e.to_string())?,window.inner_size().map_err(|e|e.to_string())?)?;
         let phase=screen.state.lock().map_err(|_|"Estado ocupado")?.phase.clone();
@@ -529,15 +551,18 @@ pub async fn screen_select_image(app: tauri::AppHandle) -> Result<(), String> {
         .map_err(|e| e.to_string())?
 }
 #[tauri::command]
-pub fn screen_selection_kind(screen: State<Screen>) -> String {
-    screen
+pub fn screen_selection_kind(app:tauri::AppHandle,window:tauri::WebviewWindow) -> String {
+    let screen=session::screen(&app,window.label());
+    let kind=screen
         .kind
         .lock()
         .unwrap_or_else(|e| e.into_inner())
-        .clone()
+        .clone();
+    kind
 }
 #[tauri::command]
-pub fn screen_selection_image(screen: State<Screen>, window: tauri::WebviewWindow) -> Result<tauri::ipc::Response, String> {
+pub fn screen_selection_image(app:tauri::AppHandle, window: tauri::WebviewWindow) -> Result<tauri::ipc::Response, String> {
+    let screen=session::screen(&app,window.label());
     let snapshots = screen.snapshots.lock().map_err(|_| "Captura ocupada")?;
     let bytes = snapshots.get(window.label()).map(|frame| frame.preview_bmp()).unwrap_or_default();
     Ok(tauri::ipc::Response::new(bytes))
@@ -547,12 +572,12 @@ pub fn screen_overlay_ready(
     app: tauri::AppHandle,
     window: tauri::WebviewWindow,
 ) -> Result<bool, String> {
-    if !app.state::<Screen>().selection_ready.load(Ordering::SeqCst) {
+    let screen=session::screen(&app,window.label());
+    if !screen.selection_ready.load(Ordering::SeqCst) {
         return Ok(false);
     }
-    if window.label().starts_with("screen-select-")
-        && app
-            .state::<Screen>()
+    if session::selector(window.label())
+        && screen
             .state
             .lock()
             .map_err(|_| "Estado ocupado")?
@@ -566,9 +591,9 @@ pub fn screen_overlay_ready(
             SetWindowPos(windows::Win32::Foundation::HWND(window.hwnd().map_err(|e| e.to_string())?.0), Some(HWND_TOPMOST), 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE)
                 .map_err(|e| e.to_string())?;
         }
-        if window.label() == "screen-select-0" {
+        if window.label() == session::label(window.label(),"screen-select-0") {
             window.set_focus().map_err(|e| e.to_string())?;
-            if let Some(started) = app.state::<Screen>().selection_started.lock().map_err(|_| "Captura ocupada")?.take() {
+            if let Some(started) = screen.selection_started.lock().map_err(|_| "Captura ocupada")?.take() {
                 let _ = app.state::<Store>().event(&format!("Selector de captura listo en {} ms", started.elapsed().as_millis()));
             }
         }
@@ -576,15 +601,24 @@ pub fn screen_overlay_ready(
     Ok(true)
 }
 #[tauri::command]
-pub async fn screen_cancel_selection(app: tauri::AppHandle) -> Result<(), String> {
-    tauri::async_runtime::spawn_blocking(move || cancel_selection(app))
+pub async fn screen_cancel_selection(app: tauri::AppHandle, window:tauri::WebviewWindow) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || cancel_selection_for(app,window.label()))
         .await
         .map_err(|e| e.to_string())?
 }
-pub fn cancel_selection(app: tauri::AppHandle) -> Result<(), String> {
-    let screen = app.state::<Screen>();
+pub fn cancel_selection_for(app: tauri::AppHandle, scope:&str) -> Result<(), String> {
+    let screen = session::screen(&app,scope);
     let _gate = screen.gate.lock().map_err(|_| "Video ocupado")?;
     cancel_selection_locked(&app, &screen)
+}
+pub fn finish_image(app:tauri::AppHandle,id:&str)->Result<(),String> {
+    let screen=session::screen(&app,id);
+    let _gate=screen.gate.lock().map_err(|_|"Captura ocupada")?;
+    // A cancelled export must not close a newer selection in the same window.
+    if crate::screen_editor::context_for(&app,id).map(|ctx|ctx.id==id).unwrap_or(false) {
+        cancel_selection_locked(&app,&screen)?;
+    }
+    Ok(())
 }
 fn cancel_selection_locked(app: &tauri::AppHandle, screen: &Screen) -> Result<(), String> {
     if ["selecting", "editing"].contains(
@@ -595,7 +629,7 @@ fn cancel_selection_locked(app: &tauri::AppHandle, screen: &Screen) -> Result<()
             .phase
             .as_str(),
     ) {
-        hide_selectors(app);
+        hide_selectors(app, &screen);
         screen.state.lock().map_err(|_| "Estado ocupado")?.phase = "idle".into();
     }
     Ok(())
@@ -607,10 +641,10 @@ pub async fn screen_start(
     rect: Rect,
 ) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
-        if !window.label().starts_with("screen-select-") {
+        if !session::selector(window.label()) {
             return Err("Seleccion no disponible".into());
         }
-        let screen = app.state::<Screen>();
+        let screen = session::screen(&app,window.label());
         let _gate = screen.gate.lock().map_err(|_| "Video ocupado")?;
         if screen.state.lock().map_err(|_| "Estado ocupado")?.phase != "selecting" {
             return Err("La seleccion ya termino".into());
@@ -623,7 +657,7 @@ pub async fn screen_start(
         )?;
         let kind = screen.kind.lock().map_err(|_| "Estado ocupado")?.clone();
         for (label, other) in app.webview_windows() {
-            if label.starts_with("screen-select-") && label != window.label() {
+            if label.starts_with(if screen.secondary {"image-select-"} else {"screen-select-"}) && label != window.label() {
                 let _ = other.hide();
             }
         }
@@ -645,7 +679,7 @@ pub async fn screen_start(
             if preferences.image_auto_copy {
                 match crate::screen_editor::copy_immediately(&app, &window, rect, region, bytes) {
                     Ok(true) => {
-                        hide_selectors(&app);
+                        hide_selectors(&app, &screen);
                         *screen.state.lock().map_err(|_| "Estado ocupado")? = Status {
                             phase: "idle".into(),
                             copied: true,
@@ -654,18 +688,18 @@ pub async fn screen_start(
                     }
                     Ok(false) => {} // Clipboard failure: keep the original image open for retry.
                     Err(error) => {
-                        hide_selectors(&app);
+                        hide_selectors(&app, &screen);
                         screen.state.lock().map_err(|_| "Estado ocupado")?.phase = "error".into();
-                        report_error(&app, error.clone());
+                        report_image_error(&app, error.clone());
                         return Err(error);
                     }
                 }
                 return Ok(());
             }
             if let Err(error) = crate::screen_editor::open_with_image(&app, &window, rect, region, "image", Some(bytes)) {
-                hide_selectors(&app);
+                hide_selectors(&app, &screen);
                 screen.state.lock().map_err(|_| "Estado ocupado")?.phase = "error".into();
-                report_error(&app, error.clone());
+                report_image_error(&app, error.clone());
                 return Err(error);
             }
             return Ok(());
@@ -720,7 +754,7 @@ pub async fn screen_start(
             if let Ok(status) = state.lock() {
                 if status.phase == "error" {
                     let _ = history_app.state::<Store>().event(&status.error);
-                    hide_selectors(&history_app);
+                    hide_selectors(&history_app, &history_app.state::<Screen>());
                 }
             }
         });
@@ -734,7 +768,7 @@ pub async fn screen_start(
                         let _ = active.stop.send(CaptureControl::Cancel);
                         let _ = active.thread.join();
                     }
-                    hide_selectors(&app);
+                    hide_selectors(&app, &screen);
                     report_error(&app, error.clone());
                     return Err(error);
                 }
@@ -763,13 +797,13 @@ fn stop_locked(app: &tauri::AppHandle, screen: &Screen) -> Result<(), String> {
     if let Some(active) = active {
         let _ = active.stop.send(CaptureControl::Stop);
         // The worker finalizes the MP4 without keeping the capture UI visible.
-        hide_selectors(app);
+        hide_selectors(app, screen);
         active
             .thread
             .join()
             .map_err(|_| "El motor de video se cerro inesperadamente")?;
     }
-    hide_selectors(app);
+    hide_selectors(app, screen);
     Ok(())
 }
 #[tauri::command]
@@ -813,7 +847,7 @@ pub async fn screen_cancel(app: tauri::AppHandle) -> Result<(), String> {
                 .join()
                 .map_err(|_| "El motor de video se cerro")?;
         }
-        hide_selectors(&app);
+        hide_selectors(&app, &screen);
         Ok(())
     })
     .await
@@ -1065,6 +1099,31 @@ fn pcm_bytes(values:&[i16],bytes:&mut Vec<u8>) {
     bytes.clear();
     for value in values {bytes.extend_from_slice(&value.to_le_bytes());}
 }
+fn cleanup_cancelled_session(dir:&Path,parts:&[PathBuf])->Result<(),String> {
+    let uuid=dir.file_name().and_then(|v|v.to_str()).and_then(|v|uuid::Uuid::parse_str(v).ok()).ok_or("Directorio de captura invalido")?;
+    if dir.parent().and_then(|v|v.file_name()).and_then(|v|v.to_str())!=Some("screen-recordings") {
+        return Err("Directorio de captura invalido".into());
+    }
+    let resolved=dir.canonicalize().map_err(|e|e.to_string())?;
+    if resolved.file_name().and_then(|v|v.to_str()).and_then(|v|uuid::Uuid::parse_str(v).ok())!=Some(uuid)
+        || resolved.parent().and_then(|v|v.file_name()).and_then(|v|v.to_str())!=Some("screen-recordings") {
+        return Err("Directorio de captura invalido".into());
+    }
+    // MSIX can redirect this UUID folder while the configured parent still resolves
+    // to LocalAppData. Delete only part directories created by this worker, after
+    // checking every resolved target remains directly inside the actual session.
+    let targets:Result<Vec<_>,String>=parts.iter().enumerate().map(|(index,part)|{
+        if part.parent()!=Some(dir)||part.file_name().and_then(|v|v.to_str())!=Some(format!("part-{index:04}").as_str()) {
+            return Err("Parte de captura invalida".into());
+        }
+        let target=part.canonicalize().map_err(|e|e.to_string())?;
+        if target.parent()!=Some(resolved.as_path())||target.file_name()!=part.file_name(){return Err("Parte de captura fuera de la sesion".into());}
+        Ok(target)
+    }).collect();
+    for target in targets? {fs::remove_dir_all(target).map_err(|e|e.to_string())?;}
+    // Never recursively delete the session root: unexpected files are preserved.
+    fs::remove_dir(resolved).map_err(|e|e.to_string())
+}
 fn capture(
     mut region: Region,
     prefs: Preferences,
@@ -1078,11 +1137,13 @@ fn capture(
     let result = (|| -> Result<Option<PathBuf>, String> {
         let output_size=((region.width+1)/2*2,(region.height+1)/2*2);
         let mut segments = Vec::new();
+        let mut parts = Vec::new();
         let mut elapsed = 0.;
         let mut cancelled = false;
         'capture: loop {
-            let part = dir.join(format!("part-{:04}", segments.len()));
+            let part = dir.join(format!("part-{:04}", parts.len()));
             fs::create_dir_all(&part).map_err(|e| e.to_string())?;
+            parts.push(part.clone());
             let (path, action, seconds) = record(
                 region,
                 output_size,
@@ -1124,24 +1185,7 @@ fn capture(
             }
         }
         if cancelled {
-            // This UUID directory was created for this session; never touch previous captures.
-            let resolved = dir.canonicalize().map_err(|e| e.to_string())?;
-            let root = dir
-                .parent()
-                .ok_or("Directorio de captura invalido")?
-                .canonicalize()
-                .map_err(|e| e.to_string())?;
-            if resolved.parent() != Some(root.as_path())
-                || root.file_name().and_then(|name| name.to_str()) != Some("screen-recordings")
-                || dir
-                    .file_name()
-                    .and_then(|name| name.to_str())
-                    .and_then(|name| uuid::Uuid::parse_str(name).ok())
-                    .is_none()
-            {
-                return Err("Directorio de captura invalido".into());
-            }
-            fs::remove_dir_all(&resolved).map_err(|e| e.to_string())?;
+            cleanup_cancelled_session(&dir,&parts)?;
             return Ok(None);
         }
         state.lock().map_err(|_| "Estado ocupado")?.phase = "saving".into();
@@ -1489,6 +1533,32 @@ fn record(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn cancelled_cleanup_preserves_unexpected_files_and_rejects_foreign_parts() {
+        let root=PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target/cancel-check/screen-recordings");
+        let dir=root.join(uuid::Uuid::new_v4().to_string());
+        let part=dir.join("part-0000");fs::create_dir_all(&part).unwrap();
+        fs::write(part.join("capture.log"),"test").unwrap();
+        let outside=root.join(uuid::Uuid::new_v4().to_string());fs::create_dir_all(&outside).unwrap();
+        fs::write(outside.join("keep.txt"),"preserve").unwrap();
+        assert!(cleanup_cancelled_session(&dir,&[part.clone(),outside.clone()]).is_err());
+        assert!(part.join("capture.log").is_file());assert!(outside.join("keep.txt").is_file());
+        fs::write(dir.join("keep.txt"),"unexpected").unwrap();
+        assert!(cleanup_cancelled_session(&dir,&[part]).is_err());
+        assert!(dir.join("keep.txt").is_file());assert!(outside.join("keep.txt").is_file());
+        fs::remove_file(dir.join("keep.txt")).unwrap();fs::remove_dir(dir).unwrap();
+        fs::remove_file(outside.join("keep.txt")).unwrap();fs::remove_dir(outside).unwrap();
+    }
+    #[test]
+    fn cancelled_cleanup_handles_windows_virtualized_app_cache() {
+        // Own fresh UUID only: never inspect or delete another user's recording.
+        let root=PathBuf::from(std::env::var_os("LOCALAPPDATA").unwrap()).join("app.whispera.desktop.preview/screen-recordings");
+        let dir=root.join(uuid::Uuid::new_v4().to_string());
+        let part=dir.join("part-0000");fs::create_dir_all(&part).unwrap();
+        fs::write(part.join("capture.log"),"isolated cleanup regression test").unwrap();
+        cleanup_cancelled_session(&dir,&[part]).unwrap();
+        assert!(!dir.exists());
+    }
     #[test]
     fn video_remains_busy_until_finalization() {
         let screen = Screen::new();

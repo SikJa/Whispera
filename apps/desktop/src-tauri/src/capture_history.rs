@@ -1,6 +1,6 @@
 use crate::storage::Store;
 use serde::{Deserialize, Serialize};
-use std::{fs, path::Path, process::Command};
+use std::{fs, path::Path, process::Command, sync::Mutex};
 use tauri::{Manager, State};
 use tauri_plugin_clipboard_manager::ClipboardExt;
 
@@ -11,7 +11,10 @@ pub struct Recent {
     path: String,
     created_at: String,
 }
+static UPDATE:Mutex<()>=Mutex::new(());
 pub fn remember(store: &Store, kind: &str, path: &Path) -> Result<(), String> {
+    // Image exports and video finalization can finish on separate worker threads.
+    let _update=UPDATE.lock().map_err(|_|"Historial ocupado")?;
     let mut entries: Vec<Recent> = store.get("capture_history")?;
     let path = path.to_string_lossy().into_owned();
     entries.retain(|entry| entry.path != path);
@@ -71,6 +74,22 @@ pub fn screen_recent_reveal(store: State<Store>, id: String) -> Result<(), Strin
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn simultaneous_images_and_videos_do_not_lose_history_entries() {
+        let store=std::sync::Arc::new(Store::open(Path::new(":memory:")).unwrap());
+        let barrier=std::sync::Arc::new(std::sync::Barrier::new(12));
+        let threads:Vec<_>=(0..12).map(|i|{
+            let store=store.clone();let barrier=barrier.clone();
+            std::thread::spawn(move||{
+                barrier.wait();
+                remember(&store,if i%2==0 {"image"}else{"video"},Path::new(&format!("concurrent-{i}"))).unwrap();
+            })
+        }).collect();
+        for thread in threads {thread.join().unwrap();}
+        let entries:Vec<Recent>=store.get("capture_history").unwrap();
+        assert_eq!(entries.len(),12);
+        for i in 0..12 {assert!(entries.iter().any(|e|e.path==format!("concurrent-{i}")));}
+    }
     #[test]
     fn recent_history_is_bounded_and_deduplicated() {
         let store = Store::open(Path::new(":memory:")).unwrap();

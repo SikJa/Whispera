@@ -137,7 +137,7 @@ export default function ScreenRecorder() {
     </>
     <div className="screen-record-actions">
       <button disabled={!native || busy || occupied} onClick={() => void run(() => invoke('screen_select'))}>Seleccionar área y grabar</button>
-      <button disabled={!native||busy||occupied} onClick={()=>void run(()=>invoke('screen_select_image'))}>Capturar imagen</button>
+      <button disabled={!native||busy||(occupied&&!['recording','paused'].includes(status.phase))} onClick={()=>void run(()=>invoke('screen_select_image'))}>Capturar imagen</button>
       {status.phase === 'recording' && <p role="status">Grabando. Pulsá otra vez tu atajo para terminar.</p>}
       {status.phase === 'selecting' && <p role="status">Seleccioná el área. Escape cancela.</p>}
       {status.phase === 'saving' && <p role="status">Preparando video para pegar…</p>}

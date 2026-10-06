@@ -1,6 +1,7 @@
 #![cfg_attr(target_os = "windows", windows_subsystem = "windows")]
 mod audio;
 mod capture_history;
+mod capture_session;
 mod library;
 mod library_media;
 mod video_transcript;
@@ -335,7 +336,7 @@ fn main() {
                         if shortcuts::parse("Escape")
                             .map(|key| key == *shortcut)
                             .unwrap_or(false)
-                            && app.state::<screen::Screen>().busy()
+                            && (app.state::<screen::Screen>().busy() || app.state::<capture_session::ImageCapture>().screen.busy())
                         {
                             tauri::async_runtime::spawn_blocking(move || {
                                 if let Err(error) = screen::escape(&app) {
@@ -354,7 +355,7 @@ fn main() {
                         {
                             tauri::async_runtime::spawn_blocking(move || {
                                 if let Err(error) = screen::select_image(&app) {
-                                    screen::report_error(&app, error);
+                                    screen::report_image_error(&app, error);
                                 }
                             });
                             return;
@@ -425,6 +426,7 @@ fn main() {
             }
             app.manage(shortcuts::Capture::default());
             app.manage(screen::Screen::new());
+            app.manage(capture_session::ImageCapture::default());
             app.manage(screen_editor::Editor::default());
             app.manage(engine::Engine::new(dir.clone()).map_err(std::io::Error::other)?);
             health::start(app.handle());
@@ -509,7 +511,7 @@ fn main() {
                         let app = app.clone();
                         tauri::async_runtime::spawn_blocking(move || {
                             if let Err(error) = screen::select_image(&app) {
-                                screen::report_error(&app, error);
+                                screen::report_image_error(&app, error);
                             }
                         });
                     }
@@ -634,10 +636,11 @@ fn main() {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                 api.prevent_close();
                 let _ = window.hide();
-                if window.label().starts_with("screen-select-") {
+                if capture_session::selector(window.label()) {
                     let app = window.app_handle().clone();
+                    let scope=window.label().to_string();
                     tauri::async_runtime::spawn_blocking(move || {
-                        let _ = screen::cancel_selection(app);
+                        let _ = screen::cancel_selection_for(app,&scope);
                     });
                 }
             }

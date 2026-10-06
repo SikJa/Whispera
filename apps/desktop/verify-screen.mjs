@@ -20,6 +20,16 @@ try {
   assert.deepEqual(await page.evaluate(() => window.videoPreferences), { audio: 'both', hotkey: 'Control+Shift+F9', image_hotkey:'Control+Shift+F10', frame_color:'#ffffff', image_auto_copy:true });
   await page.getByRole('button', { name: 'Seleccionar área y grabar' }).click();
   assert.ok(await page.evaluate(() => window.calls.some(c => c.command === 'screen_select')));
+  await page.evaluate(()=>{window.videoStatus={...window.videoStatus,phase:'recording'};});
+  const imageButton=page.getByRole('button',{name:'Capturar imagen',exact:true});
+  await page.waitForFunction(()=>document.querySelector('.screen-record-actions button:first-child')?.disabled===true);
+  await page.waitForFunction(()=>document.querySelector('.screen-record-actions button:nth-child(2)')?.disabled===false);
+  await imageButton.click();
+  assert.ok(await page.evaluate(()=>window.calls.some(c=>c.command==='screen_select_image')));
+  assert.equal(await page.evaluate(()=>window.videoStatus.phase),'recording','screenshot action leaves video recording');
+  await page.evaluate(()=>{window.videoStatus={...window.videoStatus,phase:'paused'};});
+  await imageButton.click();
+  assert.equal(await page.evaluate(()=>window.videoStatus.phase),'paused');
   await page.goto((process.env.WHISPERA_TEST_URL || 'http://127.0.0.1:5190') + '/?view=screen-select');
   await page.locator('.screen-selection').waitFor();
   await page.mouse.move(600, 450); await page.mouse.down(); await page.mouse.move(200, 200); await page.mouse.up();

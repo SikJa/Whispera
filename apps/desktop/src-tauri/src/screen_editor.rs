@@ -1,5 +1,6 @@
 //! Separate ink and tool windows: annotations enter the recording; controls do not.
 use crate::screen::{self, Rect, Region};
+use crate::capture_session as session;
 use serde::{Deserialize, Serialize};
 use std::{
     fs,
@@ -10,7 +11,7 @@ use std::{
     },
     time::{Duration, Instant},
 };
-use tauri::{Emitter, Manager, State};
+use tauri::{Emitter, Manager};
 use tauri_plugin_clipboard_manager::ClipboardExt;
 use tauri_plugin_dialog::DialogExt;
 
@@ -38,13 +39,23 @@ pub struct Editor {
     image: Mutex<Vec<u8>>,
     feedback: Mutex<serde_json::Value>,
 }
+impl Editor {
+    fn clear(&self) {
+        self.configured.store(false,Ordering::SeqCst);
+        if let Ok(mut value)=self.context.lock(){*value=None;}
+        if let Ok(mut bytes)=self.image.lock(){bytes.clear();}
+        if let Ok(mut region)=self.region.lock(){*region=None;}
+        if let Ok(mut monitor)=self.monitor.lock(){*monitor=None;}
+        if let Ok(mut feedback)=self.feedback.lock(){*feedback=serde_json::json!({});}
+    }
+}
 #[derive(Clone, Deserialize, Serialize)]
 pub struct Action {
     pub action: String,
     pub value: Option<String>,
 }
 fn context(app: &tauri::AppHandle, id: &str) -> Result<Context, String> {
-    app.state::<Editor>()
+    session::editor(app,id)
         .context
         .lock()
         .map_err(|_| "Editor ocupado")?
@@ -53,22 +64,18 @@ fn context(app: &tauri::AppHandle, id: &str) -> Result<Context, String> {
         .cloned()
         .ok_or_else(|| "La captura ya termino".into())
 }
-pub fn hide(app: &tauri::AppHandle) {
-    for label in ["screen-ink", "screen-tools", "screen-hud"] {
-        if let Some(w) = app.get_webview_window(label) {
-            let _ = w.hide();
-            let _ = w.emit("screen-editor-reset", Option::<Context>::None);
+pub fn hide_session(app: &tauri::AppHandle, secondary:bool) {
+    let scope=if secondary {"image-session"}else{"screen"};
+    for base in ["screen-ink","screen-tools","screen-hud"] {
+        if let Some(w)=app.get_webview_window(&session::label(scope,base)) {
+            let _=w.hide();let _=w.emit("screen-editor-reset",Option::<Context>::None);
         }
     }
-    if let Some(editor) = app.try_state::<Editor>() {
-        editor.configured.store(false, Ordering::SeqCst);
-        if let Ok(mut value) = editor.context.lock() {
-            *value = None;
-        }
-        if let Ok(mut bytes) = editor.image.lock() {
-            bytes.clear();
-        }
-    }
+    let editor=session::editor(app,scope);
+    editor.clear();
+}
+pub fn context_for(app:&tauri::AppHandle,scope:&str)->Option<Context> {
+    session::editor(app,scope).context.lock().unwrap_or_else(|e|e.into_inner()).clone()
 }
 fn window(
     app: &tauri::AppHandle,
@@ -81,9 +88,9 @@ fn window(
     let builder = tauri::WebviewWindowBuilder::new(
         app,
         label,
-        tauri::WebviewUrl::App(format!("overlay.html?view={label}").into()),
+        tauri::WebviewUrl::App(format!("overlay.html?view={}",label.replacen("image-","screen-",1)).into()),
     )
-    .title(match label {
+    .title(match label.replacen("image-","screen-",1).as_str() {
         "screen-tools" => "Whispera · Herramientas de captura",
         "screen-hud" => "Whispera · Controles de captura",
         _ => "Whispera · Anotaciones",
@@ -101,10 +108,10 @@ fn window(
     // Owned tool windows stay above the ink when it gains focus. Merely
     // setting an already-topmost window topmost again does not establish this
     // ordering; the ink could then intercept every subsequent toolbar click.
-    let builder = if protected {
+    let builder = if protected && !label.ends_with("-ink") {
         builder
             .parent(
-                &app.get_webview_window("screen-ink")
+                &app.get_webview_window(&session::label(label,"screen-ink"))
                     .ok_or("Editor no disponible")?,
             )
             .map_err(|e| e.to_string())?
@@ -112,7 +119,7 @@ fn window(
         builder
     };
     let window = builder.build().map_err(|e| e.to_string())?;
-    if label == "screen-ink" {
+    if label.ends_with("-ink") {
         let app = app.clone();
         window.on_window_event(move |event| {
             if matches!(event, tauri::WindowEvent::Focused(true)) {
@@ -124,13 +131,19 @@ fn window(
 }
 pub(crate) fn raise_controls(app: &tauri::AppHandle) {
     let mut windows=Vec::new();
-    if let Some(ctx)=app.state::<Editor>().context.lock().ok().and_then(|c|c.clone()) {
-        if let Some(source)=app.get_webview_window(&ctx.source_label){windows.push(source);}
-    }
-    for label in ["screen-tools", "screen-hud"] {
-        if let Some(window) = app.get_webview_window(label) {
-            if window.is_visible().unwrap_or(false) {
-                windows.push(window);
+    for scope in ["screen","image-session"] {
+        // The still editor must also stay above the primary video's controls.
+        if session::secondary(scope) {
+            if let Some(ink)=app.get_webview_window("image-ink") {
+                if ink.is_visible().unwrap_or(false){windows.push(ink);}
+            }
+        }
+        if let Some(ctx)=context_for(app,scope) {
+            if let Some(source)=app.get_webview_window(&ctx.source_label){if source.is_visible().unwrap_or(false){windows.push(source);}}
+        }
+        for base in ["screen-tools","screen-hud"] {
+            if let Some(window)=app.get_webview_window(&session::label(scope,base)) {
+                if window.is_visible().unwrap_or(false){windows.push(window);}
             }
         }
     }
@@ -212,10 +225,10 @@ fn dock_bounds(
     label: &str,
     compact: bool,
 ) -> Result<Region, String> {
-    if label == "screen-tools" {
+    if label.ends_with("-tools") {
         return Ok(tool_bounds(region, monitor, ctx.scale, compact));
     }
-    if label != "screen-hud" {
+    if !label.ends_with("-hud") {
         return Err("Vista incorrecta".into());
     }
     let (dock, _) = hud_anchor(region, monitor, ctx.scale, ctx.hud_scale);
@@ -340,7 +353,7 @@ pub fn copy_immediately(
     })();
     if let Err(error) = copy {
         open_with_image(app, source, rect, region, "image", Some(original))?;
-        *app.state::<Editor>()
+        *session::editor(app,source.label())
             .feedback
             .lock()
             .map_err(|_| "Editor ocupado")? = serde_json::json!({"error": format!("No se pudo copiar automaticamente: {error}. La imagen sigue abierta para reintentar.")});
@@ -356,7 +369,7 @@ pub(crate) fn open_with_image(
     kind: &str,
     image: Option<Vec<u8>>,
 ) -> Result<(), String> {
-    hide(app);
+    hide_session(app,session::secondary(source.label()));
     let bytes = match image {
         Some(bytes) => bytes,
         None if kind == "image" => screenshot(app, region, true)?,
@@ -381,7 +394,7 @@ pub(crate) fn open_with_image(
     );
     let hud_above = hud_anchor(region, monitor, scale, hud_scale).1;
     let ctx = Context {
-        id: uuid::Uuid::new_v4().to_string(),
+        id: format!("{}{}",if session::secondary(source.label()) {"image-"}else{""},uuid::Uuid::new_v4()),
         kind: kind.into(),
         width: rect.width,
         height: rect.height,
@@ -398,13 +411,13 @@ pub(crate) fn open_with_image(
             .unwrap_or_default()
             .frame_color,
     };
-    let editor = app.state::<Editor>();
+    let editor = session::editor(app,source.label());
     *editor.region.lock().map_err(|_| "Editor ocupado")? = Some(region);
     *editor.monitor.lock().map_err(|_| "Editor ocupado")? = Some(monitor);
     *editor.image.lock().map_err(|_| "Editor ocupado")? = bytes;
     *editor.context.lock().map_err(|_| "Editor ocupado")? = Some(ctx.clone());
     *editor.feedback.lock().map_err(|_| "Editor ocupado")? = serde_json::json!({});
-    let ink = window(app, "screen-ink", false)?;
+    let ink = window(app, &session::label(source.label(),"screen-ink"), session::secondary(source.label()))?;
     ink.set_position(tauri::PhysicalPosition::new(region.x, region.y))
         .map_err(|e| e.to_string())?;
     ink.set_size(tauri::PhysicalSize::new(region.width, region.height))
@@ -413,10 +426,11 @@ pub(crate) fn open_with_image(
         .map_err(|e| e.to_string())?;
     ink.set_focusable(kind != "video")
         .map_err(|e| e.to_string())?;
-    let tools = window(app, "screen-tools", true)?;
+    if session::secondary(source.label()){screen::protect(&ink)?;}
+    let tools = window(app, &session::label(source.label(),"screen-tools"), true)?;
     screen::protect(&tools)?;
     place_controls(&tools, &ctx, region, monitor, false)?;
-    let hud = window(app, "screen-hud", true)?;
+    let hud = window(app, &session::label(source.label(),"screen-hud"), true)?;
     screen::protect(&hud)?;
     place_controls(&hud, &ctx, region, monitor, false)?;
     for w in [&ink, &tools, &hud] {
@@ -430,7 +444,7 @@ pub(crate) fn open_with_image(
     Ok(())
 }
 pub(crate) fn resize(app:&tauri::AppHandle,source:&tauri::WebviewWindow,id:&str,rect:Rect,region:Region,bytes:Option<Vec<u8>>) -> Result<(),String> {
-    let mut ctx=context(app,id)?;let editor=app.state::<Editor>();
+    let mut ctx=context(app,id)?;let editor=session::editor(app,source.label());
     let monitor=editor.monitor.lock().map_err(|_|"Editor ocupado")?.ok_or("Pantalla no disponible")?;
     ctx.rect=rect;ctx.width=rect.width;ctx.height=rect.height;
     ctx.hud_scale=fit_hud_scale(region,monitor,ctx.scale,app.state::<crate::storage::Store>().get::<crate::storage::Settings>("settings")?.recorder_scale);
@@ -438,34 +452,29 @@ pub(crate) fn resize(app:&tauri::AppHandle,source:&tauri::WebviewWindow,id:&str,
     if let Some(bytes)=bytes{*editor.image.lock().map_err(|_|"Editor ocupado")?=bytes;}
     *editor.region.lock().map_err(|_|"Editor ocupado")?=Some(region);
     *editor.context.lock().map_err(|_|"Editor ocupado")?=Some(ctx.clone());
-    let ink=app.get_webview_window("screen-ink").ok_or("Editor no disponible")?;
+    let ink=app.get_webview_window(&session::label(source.label(),"screen-ink")).ok_or("Editor no disponible")?;
     ink.set_position(tauri::PhysicalPosition::new(region.x,region.y)).map_err(|e|e.to_string())?;
     ink.set_size(tauri::PhysicalSize::new(region.width,region.height)).map_err(|e|e.to_string())?;
     for label in ["screen-tools","screen-hud"] {
-        if let Some(window)=app.get_webview_window(label){place_controls(&window,&ctx,region,monitor,false)?;}
+        if let Some(window)=app.get_webview_window(&session::label(source.label(),label)){place_controls(&window,&ctx,region,monitor,false)?;}
     }
     screen::set_frame_region(source,Some(rect))?;
-    for window in [Some(ink),app.get_webview_window("screen-tools"),app.get_webview_window("screen-hud"),Some(source.clone())].into_iter().flatten(){
+    for window in [Some(ink),app.get_webview_window(&session::label(source.label(),"screen-tools")),app.get_webview_window(&session::label(source.label(),"screen-hud")),Some(source.clone())].into_iter().flatten(){
         window.emit("screen-editor-reset",&ctx).map_err(|e|e.to_string())?;
     }
     raise_controls(app);
     Ok(())
 }
 #[tauri::command]
-pub fn screen_editor_context(editor: State<Editor>) -> Option<Context> {
-    editor
-        .context
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .clone()
+pub fn screen_editor_context(app:tauri::AppHandle,window:tauri::WebviewWindow) -> Option<Context> {
+    context_for(&app,window.label())
 }
 #[tauri::command]
 pub fn screen_editor_image(app: tauri::AppHandle, id: String) -> Result<Vec<u8>, String> {
     if context(&app, &id)?.kind != "image" {
         return Err("No hay una imagen activa".into());
     }
-    Ok(app
-        .state::<Editor>()
+    Ok(session::editor(&app,&id)
         .image
         .lock()
         .map_err(|_| "Editor ocupado")?
@@ -478,14 +487,14 @@ pub fn screen_editor_ready(
     id: String,
 ) -> Result<bool, String> {
     let ctx = context(&app, &id)?;
-    if !app.state::<Editor>().configured.load(Ordering::SeqCst) {
+    if !session::editor(&app,&id).configured.load(Ordering::SeqCst) {
         return Ok(false);
     }
-    if !["screen-tools", "screen-ink", "screen-hud"].contains(&window.label()) {
+    if !["screen-tools", "screen-ink", "screen-hud"].iter().any(|base|session::label(&id,base)==window.label()) {
         return Err("Vista incorrecta".into());
     }
     window.show().map_err(|e| e.to_string())?;
-    if window.label() == "screen-ink" && ctx.kind == "image" {
+    if window.label() == session::label(&id,"screen-ink") && ctx.kind == "image" {
         window.set_focus().map_err(|e| e.to_string())?;
     }
     // Focusing the ink window can raise it above other topmost windows.
@@ -501,7 +510,7 @@ pub fn screen_overlay_layout(
     compact: bool,
 ) -> Result<(), String> {
     let ctx = context(&app, &id)?;
-    let editor = app.state::<Editor>();
+    let editor = session::editor(&app,&id);
     let region = editor
         .region
         .lock()
@@ -519,9 +528,9 @@ pub fn screen_overlay_layout(
 #[tauri::command]
 pub fn screen_tools_panel(app: tauri::AppHandle, window: tauri::WebviewWindow, id: String,
     open: bool, compact: bool, anchor: f64, panel_height: f64) -> Result<serde_json::Value, String> {
-    if window.label() != "screen-tools" { return Err("Vista incorrecta".into()); }
+    if window.label() != session::label(&id,"screen-tools") { return Err("Vista incorrecta".into()); }
     let ctx=context(&app,&id)?;
-    let editor=app.state::<Editor>();
+    let editor=session::editor(&app,&id);
     let region=editor.region.lock().map_err(|_|"Editor ocupado")?.ok_or("Captura no disponible")?;
     let monitor=editor.monitor.lock().map_err(|_|"Editor ocupado")?.ok_or("Monitor no disponible")?;
     let rail=tool_bounds(region,monitor,ctx.scale,compact);
@@ -575,7 +584,7 @@ pub fn screen_editor_action(
         {
             return Err("Herramienta desconocida".into());
         }
-        if let Some(w) = app.get_webview_window("screen-ink") {
+        if let Some(w) = app.get_webview_window(&session::label(&id,"screen-ink")) {
             let passthrough = ctx.kind == "video" && tool == "pointer";
             w.set_ignore_cursor_events(passthrough)
                 .map_err(|e| e.to_string())?;
@@ -587,7 +596,7 @@ pub fn screen_editor_action(
         raise_controls(&app);
     }
     app.emit_to(
-        "screen-ink",
+        session::label(&id,"screen-ink"),
         "screen-editor-action",
         serde_json::json!({"id":id,"action":action}),
     )
@@ -600,13 +609,13 @@ pub fn screen_editor_feedback(
     feedback: serde_json::Value,
 ) -> Result<(), String> {
     context(&app, &id)?;
-    *app.state::<Editor>()
+    *session::editor(&app,&id)
         .feedback
         .lock()
         .map_err(|_| "Editor ocupado")? = feedback.clone();
     for label in ["screen-tools", "screen-hud"] {
         app.emit_to(
-            label,
+            session::label(&id,label),
             "screen-editor-feedback",
             serde_json::json!({"id":id,"feedback":feedback}),
         )
@@ -615,12 +624,8 @@ pub fn screen_editor_feedback(
     Ok(())
 }
 #[tauri::command]
-pub fn screen_editor_feedback_get(editor: State<Editor>) -> serde_json::Value {
-    editor
-        .feedback
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .clone()
+pub fn screen_editor_feedback_get(app:tauri::AppHandle,window:tauri::WebviewWindow) -> serde_json::Value {
+    session::editor(&app,window.label()).feedback.lock().unwrap_or_else(|e|e.into_inner()).clone()
 }
 #[tauri::command]
 pub fn screen_editor_print(
@@ -628,7 +633,7 @@ pub fn screen_editor_print(
     id: String,
     window: tauri::WebviewWindow,
 ) -> Result<(), String> {
-    if context(&app, &id)?.kind != "image" || window.label() != "screen-ink" {
+    if context(&app, &id)?.kind != "image" || window.label() != session::label(&id,"screen-ink") {
         return Err("No hay imagen para imprimir".into());
     }
     window.print().map_err(|e| e.to_string())
@@ -643,7 +648,7 @@ pub async fn screen_image_export(
 ) -> Result<bool, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let ctx = context(&app, &id)?;
-        if ctx.kind != "image" || window.label() != "screen-ink" || bytes.len() > 64 * 1024 * 1024 {
+        if ctx.kind != "image" || window.label() != session::label(&id,"screen-ink") || bytes.len() > 64 * 1024 * 1024 {
             return Err("Imagen no disponible".into());
         }
         let image = tauri::image::Image::from_bytes(&bytes).map_err(|e| e.to_string())?;
@@ -678,6 +683,7 @@ pub async fn screen_image_export(
                 let Some(path) = path else {
                     return Ok(false);
                 };
+                context(&app,&id)?;
                 let path = path.into_path().map_err(|e| e.to_string())?;
                 fs::write(&path, &bytes).map_err(|e| e.to_string())?;
                 path
@@ -689,7 +695,7 @@ pub async fn screen_image_export(
             "image",
             &saved_path,
         )?;
-        screen::cancel_selection(app.clone())?;
+        screen::finish_image(app.clone(),&id)?;
         Ok(true)
     })
     .await
@@ -707,7 +713,7 @@ pub async fn screen_video_snapshot(app: tauri::AppHandle, window: tauri::Webview
         if !["recording", "paused"].contains(&screen.state.lock().map_err(|_| "Estado ocupado")?.phase.as_str()) {
             return Err("El video no esta activo".into());
         }
-        let region = app.state::<Editor>().region.lock().map_err(|_| "Editor ocupado")?
+        let region = session::editor(&app,&id).region.lock().map_err(|_| "Editor ocupado")?
             .as_ref().copied().ok_or("Area de captura no disponible")?;
         // Keep live ink in this still frame; protected tools/HUD are excluded by Windows.
         let bytes = screenshot(&app, region, false)?;
@@ -755,8 +761,7 @@ pub async fn screen_editor_sample(
 ) -> Result<Vec<u8>, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let ctx = context(&app, &id)?;
-        let area = app
-            .state::<Editor>()
+        let area = session::editor(&app,&id)
             .region
             .lock()
             .map_err(|_| "Editor ocupado")?
@@ -771,6 +776,22 @@ pub async fn screen_editor_sample(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn closing_or_resizing_still_image_preserves_the_video_editor() {
+        let video=Editor::default();let image=Editor::default();
+        let video_region=Region{x:40,y:50,width:320,height:200};
+        *video.region.lock().unwrap()=Some(video_region);
+        *video.feedback.lock().unwrap()=serde_json::json!({"tool":"pen","count":3});
+        video.configured.store(true,Ordering::SeqCst);
+        *image.region.lock().unwrap()=Some(Region{x:100,y:80,width:180,height:120});
+        *image.image.lock().unwrap()=vec![1,2,3];
+        *image.region.lock().unwrap()=Some(Region{x:-500,y:150,width:280,height:170});
+        image.clear();
+        assert_eq!(*video.region.lock().unwrap(),Some(video_region));
+        assert_eq!(*video.feedback.lock().unwrap(),serde_json::json!({"tool":"pen","count":3}));
+        assert!(video.configured.load(Ordering::SeqCst));
+        assert!(image.region.lock().unwrap().is_none());assert!(image.image.lock().unwrap().is_empty());
+    }
     #[test]
     fn native_border_is_raised_even_when_both_windows_are_already_topmost() {
         use windows::{core::w,Win32::{Foundation::HWND,UI::WindowsAndMessaging::{CreateWindowExW,DestroyWindow,GetForegroundWindow,GetWindow,GetWindowRect,GW_HWNDPREV,WS_POPUP,WS_EX_TOOLWINDOW}}};
@@ -849,7 +870,7 @@ mod tests {
                             );
                         }
                         assert_eq!(full.x, small.x);
-                        if label == "screen-tools" {
+                        if label.ends_with("-tools") {
                             let gap = pixels(10., scale) as i32;
                             assert_eq!(small.y, fit_start(region.y + (region.height as i32-small.height as i32)/2, monitor.y, monitor.height, small.height, gap));
                         } else {

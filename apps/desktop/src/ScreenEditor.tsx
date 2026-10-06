@@ -10,6 +10,7 @@ import './screen-recorder.css';
 import './capture-line.css';
 import { showWhenReady } from './screen-ready';
 import CaptureFrame from './CaptureFrame';
+import IndicatorArtwork from './IndicatorArtwork';
 import type {CaptureContext} from './EditableCaptureFrame';
 
 type Context = CaptureContext;
@@ -249,7 +250,7 @@ function VideoHud({context}:{context:Context}) {
   const label=paused?'En pausa':status.phase==='pausing'?'Pausando…':status.phase==='resuming'?'Reanudando…':status.phase==='saving'?'Preparando…':'Grabando';
   const time=`${Math.floor(status.seconds/60).toString().padStart(2,'0')}:${Math.floor(status.seconds%60).toString().padStart(2,'0')}`;
   return <div className="capture-hud capture-line-hud" data-compact="true" data-paused={paused} aria-label="Controles de video">
-    <div className="capture-hud-controls"><span className="capture-hud-time" title={label}><i/><output aria-label="Tiempo grabado">{time}</output></span><button disabled={busy||!['recording','paused'].includes(status.phase)} aria-label="Capturar imagen del video" title="Capturar y copiar el área grabada" onClick={()=>void run('screen_video_snapshot')}><Camera size={16}/></button><button disabled={busy||!['recording','paused'].includes(status.phase)} aria-label={paused?'Reanudar video':'Pausar video'} title={paused?'Reanudar':'Pausar'} onClick={()=>void run('screen_pause')}><span className="t-icon-swap" data-state={paused?'b':'a'}><span className="t-icon" data-icon="a"><Pause size={16}/></span><span className="t-icon" data-icon="b"><Play size={16}/></span></span></button><button className="capture-stop" disabled={busy||!['recording','paused'].includes(status.phase)} aria-label="Detener video" title="Detener y guardar video" onClick={()=>void run('screen_stop')}><Square size={12} fill="currentColor"/></button><button disabled={busy||['saving','cancelling'].includes(status.phase)} aria-label="Cancelar video" title="Cancelar y descartar el video" onClick={()=>void run('screen_cancel')}><X size={16}/></button></div>
+    <div className="capture-hud-controls"><span className="capture-hud-time" title={label}><i/><output aria-label="Tiempo grabado">{time}</output></span><IndicatorArtwork kind="camera" compact active={status.phase==='recording'}/><button disabled={busy||!['recording','paused'].includes(status.phase)} aria-label="Capturar imagen del video" title="Capturar y copiar el área grabada" onClick={()=>void run('screen_video_snapshot')}><Camera size={16}/></button><button disabled={busy||!['recording','paused'].includes(status.phase)} aria-label={paused?'Reanudar video':'Pausar video'} title={paused?'Reanudar':'Pausar'} onClick={()=>void run('screen_pause')}><span className="t-icon-swap" data-state={paused?'b':'a'}><span className="t-icon" data-icon="a"><Pause size={16}/></span><span className="t-icon" data-icon="b"><Play size={16}/></span></span></button><button className="capture-stop" disabled={busy||!['recording','paused'].includes(status.phase)} aria-label="Detener video" title="Detener y guardar video" onClick={()=>void run('screen_stop')}><Square size={12} fill="currentColor"/></button><button disabled={busy||['saving','cancelling'].includes(status.phase)} aria-label="Cancelar video" title="Cancelar y descartar el video" onClick={()=>void run('screen_cancel')}><X size={16}/></button></div>
     {(error||status.error)&&<div role="alert" className="capture-hud-error">{error||status.error}</div>}
   </div>;
 }
@@ -274,7 +275,7 @@ function useEditorControls(context:Context) {
 }
 function ImageActions({context}:{context:Context}) {
   const {feedback,send,notice}=useEditorControls(context);
-  return <div className="capture-image-actions" aria-label="Acciones de captura">
+  return <div className="capture-image-actions" aria-label="Acciones de captura"><IndicatorArtwork kind="camera" compact/>
     <button className="capture-copy" disabled={feedback.busy} title="Copiar (Ctrl+C)" onClick={()=>void send({action:'copy'})}><Copy size={17}/>Copiar</button>
     <button disabled={feedback.busy} title="Guardar PNG (Ctrl+S)" aria-label="Guardar imagen" onClick={()=>void send({action:'save'})}><Save size={18}/></button>
     <button disabled={feedback.busy} title="Imprimir" aria-label="Imprimir imagen" onClick={()=>void send({action:'print'})}><Printer size={18}/></button>

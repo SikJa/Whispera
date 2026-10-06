@@ -37,11 +37,15 @@ try{
     assert.equal(await page.locator('.settings-section').evaluate(e=>getComputedStyle(e).opacity),'1','section must never start invisible');
   }
   await page.getByRole('button',{name:'Apariencia',exact:true}).click();
+  const cameraSize=await page.locator('.appearance-indicators .indicator-artwork').boundingBox();
+  assert.ok(await page.locator('#recorder-scale').evaluate(e=>e.closest('.form-row').textContent.includes('Tamaño de carpeta')));
+  assert.ok((await page.locator('#recorder-scale').boundingBox()).y<cameraSize.y,'folder size belongs above the fixed camera section');
   await page.locator('#recorder-scale').focus();await page.keyboard.press('Home');
   assert.equal(await page.locator('#recorder-scale').inputValue(),'0.6');
   assert.equal(await page.locator('#recorder-scale').evaluate(e=>e.style.getPropertyValue('--range-progress')),'0%');
   await page.getByText('Mín. 60 %',{exact:true}).waitFor();
   await page.keyboard.press('End');assert.equal(await page.locator('#recorder-scale').inputValue(),'1.25');
+  assert.equal((await page.locator('.appearance-indicators .indicator-artwork').boundingBox()).width,cameraSize.width,'folder scaling never changes the camera');
   await page.getByRole('button',{name:'Contraer sidebar',exact:true}).click();
   await page.waitForFunction(()=>document.querySelector('.settings-sidebar').getBoundingClientRect().width<65);
   await sidebar.getByRole('button',{name:'Sonidos',exact:true}).hover();

@@ -16,12 +16,12 @@ try {
   await image.click();await image.locator('..').filter({has:page.locator('input')}).waitFor();
   await page.waitForFunction(()=>document.querySelector('#shortcut-image').parentElement.dataset.listening==='true');
   await page.keyboard.press('Control+Shift+KeyS');assert.equal(await image.inputValue(),'Ctrl + Shift + S');
-  await page.keyboard.press('Escape');assert.equal(await image.inputValue(),'Ctrl + Shift + F10','Escape restores original shortcut');
+  await page.keyboard.press('Escape');assert.equal(await image.inputValue(),'Ctrl + Shift + S','Released combination is committed automatically');
   await image.click();await page.waitForFunction(()=>document.querySelector('#shortcut-image').parentElement.dataset.listening==='true');
   await page.keyboard.press('Control+Alt+F7');await page.keyboard.press('Tab');
   assert.equal(await image.inputValue(),'Ctrl + Alt + F7');
-  await page.getByRole('button',{name:'Guardar',exact:true}).click();
-  await page.getByText('Los cuatro atajos quedaron guardados.').waitFor();
+
+  await page.getByText('Guardado automáticamente',{exact:true}).waitFor();
   assert.deepEqual(await page.evaluate(()=>window.videoPreferences),{audio:'none',hotkey:'Alt+KeyX',image_hotkey:'Control+Alt+F7',frame_color:'#ffffff',image_auto_copy:false});
   const captures=await page.evaluate(()=>window.calls.filter(c=>c.command==='shortcut_capture').map(c=>c.args.active));
   assert.ok(captures.includes(true));assert.equal(captures.at(-1),false);

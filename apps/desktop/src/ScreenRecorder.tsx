@@ -7,6 +7,7 @@ import { type Settings } from './client';
 import './screen-recorder.css';
 import { showWhenReady } from './screen-ready';
 import CaptureFrame from './CaptureFrame';
+import {useAutoSave,AutoSaveStatus} from './useAutoSave';
 import EditableCaptureFrame,{type CaptureContext} from './EditableCaptureFrame';
 import { SettingsSwitch } from './ResourceControls';
 import { type CapturePreferences as Preferences, defaultCapturePreferences, VideoAudioSettings } from './CaptureSettings';
@@ -104,6 +105,12 @@ export default function ScreenRecorder() {
   const [windowsShortcuts, setWindowsShortcuts] = useState(false);
   useEffect(()=>{if(native)void invoke<boolean>('windows_capture_shortcuts').then(setWindowsShortcuts).catch(()=>{});},[]);
   const [preferences, setPreferences] = useState<Preferences>(defaultCapturePreferences);
+  const autosave=useAutoSave<Preferences>(async p=>{
+    if(!native)return;
+    const saved=await invoke<Preferences>('screen_preferences');
+    await invoke('screen_save_preferences',{preferences:{...saved,audio:p.audio,frame_color:p.frame_color,image_auto_copy:p.image_auto_copy}});
+  });
+  const changePreferences=(p:Preferences)=>{setPreferences(p);autosave.queue(p);};
   const [status, setStatus] = useState<Status>({ phase: 'idle', seconds: 0, path: '', error: '', copied: false });
   const [message, setMessage] = useState('');
   const [busy, setBusy] = useState(false);
@@ -128,12 +135,12 @@ export default function ScreenRecorder() {
   return <section className="screen-recorder-panel">
     <>
       <h3>Audio predeterminado</h3>
-      <VideoAudioSettings value={preferences.audio} disabled={occupied||busy} onChange={audio=>setPreferences(p=>({...p,audio}))}/>
+      <VideoAudioSettings value={preferences.audio} disabled={occupied||busy} onChange={audio=>changePreferences({...preferences,audio})}/>
       <h3>Capturas de imagen</h3>
       <div className="form-row"><label htmlFor="windows-capture-shortcuts">Impr Pant para Whispera<span>Mientras Whispera está abierto, las capturas de Windows pasan a Ctrl + Alt + Shift + F12.</span></label><SettingsSwitch id="windows-capture-shortcuts" label="Impr Pant para Whispera" checked={windowsShortcuts} disabled={!native||occupied||busy} onChange={enabled=>void run(async()=>{await invoke('save_windows_capture_shortcuts',{enabled});setWindowsShortcuts(enabled);},'Atajos de captura guardados.')}/></div>
-      <div className="form-row"><label htmlFor="image-auto-copy">Copiar al soltar la selección<span>Va directo al portapapeles, sin abrir el editor.</span></label><SettingsSwitch id="image-auto-copy" label="Copiar al soltar la selección" checked={preferences.image_auto_copy} disabled={occupied||busy} onChange={image_auto_copy=>setPreferences(p=>({...p,image_auto_copy}))}/></div>
-      <div className="form-row"><label htmlFor="screen-frame-color">Color del recuadro<span>Para capturas y video. Blanco por defecto.</span></label><input id="screen-frame-color" type="color" value={preferences.frame_color} disabled={occupied||busy} onChange={e=>setPreferences({...preferences,frame_color:e.target.value})}/></div>
-      <button disabled={!native || busy || occupied} onClick={() => void run(async () => { const saved=await invoke<Preferences>('screen_preferences'); await invoke('screen_save_preferences', { preferences:{...saved,audio:preferences.audio,frame_color:preferences.frame_color,image_auto_copy:preferences.image_auto_copy} }); }, 'Preferencias de pantalla guardadas.')}>Guardar preferencias</button>
+      <div className="form-row"><label htmlFor="image-auto-copy">Copiar al soltar la selección<span>Va directo al portapapeles, sin abrir el editor.</span></label><SettingsSwitch id="image-auto-copy" label="Copiar al soltar la selección" checked={preferences.image_auto_copy} disabled={occupied||busy} onChange={image_auto_copy=>changePreferences({...preferences,image_auto_copy})}/></div>
+      <div className="form-row"><label htmlFor="screen-frame-color">Color del recuadro<span>Para capturas y video. Blanco por defecto.</span></label><input id="screen-frame-color" type="color" value={preferences.frame_color} disabled={occupied||busy} onChange={e=>changePreferences({...preferences,frame_color:e.target.value})}/></div>
+      <AutoSaveStatus save={autosave}/>
       <p className="muted-note">Seleccioná el área y grabá. Al detener, el video queda en el portapapeles para pegar con Ctrl+V en aplicaciones que admitan archivos. Se conserva una copia temporal en esta computadora.</p>
     </>
     <div className="screen-record-actions">

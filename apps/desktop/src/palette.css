@@ -1,6 +1,6 @@
 .palette-trigger { display: flex; align-items: center; gap: 10px; height: 36px; padding: 0 12px; border: 1px solid #ffffff26; background: #222; color: #eee; border-radius: 8px; font-size: 13px; }
 .palette-trigger i { width: 17px; height: 17px; border-radius: 5px; border: 1px solid #ffffff40; }
-.palette-popover { width: min(320px, calc(100vw - 24px)); background: #1c1c1cf5; color: #ededed; border: 1px solid #ffffff26; border-radius: 8px; box-shadow: 0 16px 48px #0007; backdrop-filter: blur(18px); z-index: 30; }
+.palette-popover { width: min(320px, calc(100vw - 24px)); background: #1c1c1c; color: #ededed; border: 1px solid #ffffff26; border-radius: 8px; box-shadow: 0 16px 48px #0007; z-index: 30; }
 .palette-dialog { padding: 16px; outline: none; }
 .palette-heading { display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px; }
 .palette-heading h2 { font-size: 14px; font-weight: 600; margin: 0; }
@@ -18,5 +18,6 @@
 .palette-thumb[data-focus-visible] { outline: 2px solid #fff; outline-offset: 3px; }
 .palette-hue { margin: 18px 0; }
 .palette-track { height: 14px; width: 100%; border-radius: 7px; }
+.palette-hue .palette-thumb { top:50%; }
 .palette-field { display: flex; gap: 12px; align-items: center; font-size: 11px; color: #aaa; }
 .palette-field input { width: 100%; min-width: 0; height: 36px; background: #111; border: 1px solid #ffffff24; border-radius: 6px; color: #eee; padding: 0 10px; font-family: monospace; font-size: 13px; }

@@ -15,8 +15,8 @@ try {
   await page.getByRole('switch',{name:'Copiar al soltar la selección'}).click();
   assert.equal(await page.locator('.hotkey-field').count(),0);
   assert.equal(await page.locator('#screen-frame-color').inputValue(),'#ffffff');
-  await page.getByRole('button', { name: 'Guardar preferencias', exact: true }).click();
-  await page.getByText('Preferencias de pantalla guardadas.').waitFor();
+
+  await page.getByText('Guardado automáticamente',{exact:true}).waitFor();
   assert.deepEqual(await page.evaluate(() => window.videoPreferences), { audio: 'both', hotkey: 'Control+Shift+F9', image_hotkey:'Control+Shift+F10', frame_color:'#ffffff', image_auto_copy:true });
   await page.getByRole('button', { name: 'Seleccionar área y grabar' }).click();
   assert.ok(await page.evaluate(() => window.calls.some(c => c.command === 'screen_select')));

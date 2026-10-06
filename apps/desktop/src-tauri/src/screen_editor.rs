@@ -188,8 +188,22 @@ fn tool_bounds(region: Region, monitor: Region, scale: f64, compact: bool) -> Re
     } else {
         region.x + region.width as i32 - width as i32 - gap
     };
+    let mut x = fit_start(x, monitor.x, monitor.width, width, gap);
+    let hud_width = pixels(300., scale);
+    let hud_height = pixels(56., scale);
+    let left_room = x - monitor.x - gap;
+    let right_room = monitor.x + monitor.width as i32 - gap - x - width as i32;
+    if left_room < hud_width as i32 + gap && right_room < hud_width as i32 + gap
+        && full_height + hud_height + 3 * gap as u32 > monitor.height
+        && width + hud_width + 3 * gap as u32 <= monitor.width
+    {
+        // At large Windows scaling there may be no room beside a centered rail.
+        // Dock it to the nearer monitor edge so the recording bar stays usable.
+        x = if left_room <= right_room { monitor.x + gap }
+            else { monitor.x + monitor.width as i32 - width as i32 - gap };
+    }
     Region {
-        x: fit_start(x, monitor.x, monitor.width, width, gap),
+        x,
         y: fit_start(region.y + (region.height as i32-height as i32)/2, monitor.y, monitor.height, height, gap),
         width,
         height,
@@ -197,7 +211,7 @@ fn tool_bounds(region: Region, monitor: Region, scale: f64, compact: bool) -> Re
 }
 fn hud_anchor(region: Region, monitor: Region, scale: f64, _hud_scale: f64) -> (Region, bool) {
     let gap = pixels(10., scale) as i32;
-    let width = pixels(260., scale)
+    let width = pixels(300., scale)
         .min(monitor.width.saturating_sub(2 * gap as u32));
     let height = pixels(56., scale);
     let below = region.y + region.height as i32 + gap;
@@ -209,12 +223,39 @@ fn hud_anchor(region: Region, monitor: Region, scale: f64, _hud_scale: f64) -> (
         region.y + region.height as i32 - height as i32 - gap
     };
     let x = region.x + (region.width as i32 - width as i32) / 2;
-    let anchor = Region {
+    let mut anchor = Region {
         x: fit_start(x, monitor.x, monitor.width, width, gap),
         y: fit_start(y, monitor.y, monitor.height, height, gap),
         width,
         height,
     };
+    // The wide recording bar can cross the drawing rail for a narrow selection.
+    // Keep each dock visible and reserve a gap even near monitor edges.
+    let tools = tool_bounds(region, monitor, scale, false);
+    let overlaps = |dock: Region| {
+        dock.x < tools.x + tools.width as i32 + gap
+            && dock.x + dock.width as i32 + gap > tools.x
+            && dock.y < tools.y + tools.height as i32 + gap
+            && dock.y + dock.height as i32 + gap > tools.y
+    };
+    if overlaps(anchor) {
+        for (candidate_x, candidate_y) in [
+            (tools.x + tools.width as i32 + gap, anchor.y),
+            (tools.x - width as i32 - gap, anchor.y),
+            (anchor.x, tools.y - height as i32 - gap),
+            (anchor.x, tools.y + tools.height as i32 + gap),
+        ] {
+            let candidate = Region {
+                x: fit_start(candidate_x, monitor.x, monitor.width, width, gap),
+                y: fit_start(candidate_y, monitor.y, monitor.height, height, gap),
+                ..anchor
+            };
+            if !overlaps(candidate) {
+                anchor = candidate;
+                break;
+            }
+        }
+    }
     (anchor, false)
 }
 fn fit_hud_scale(region: Region, monitor: Region, scale: f64, preferred: f64) -> f64 {
@@ -836,6 +877,22 @@ pub async fn screen_editor_sample(
 }
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn video_bar_does_not_cover_drawing_tools_for_narrow_regions() {
+        for scale in [1., 1.25, 1.5, 2.] {
+            let monitor = Region { x: -800, y: -100, width: 800, height: 600 };
+            for (x,y) in [(-790,-90),(-410,170),(-100,400)] {
+                let region = Region { x, y, width: 64, height: 64 };
+                let hud = hud_anchor(region, monitor, scale, 0.85).0;
+                let tools = tool_bounds(region, monitor, scale, false);
+                assert!(hud.x + hud.width as i32 <= tools.x
+                    || tools.x + tools.width as i32 <= hud.x
+                    || hud.y + hud.height as i32 <= tools.y
+                    || tools.y + tools.height as i32 <= hud.y,
+                    "HUD {hud:?} covers tools {tools:?} at {scale}");
+            }
+        }
+    }
     use super::*;
     #[test]
     fn live_controls_move_together_without_resizing_showing_or_taking_focus() {
@@ -955,8 +1012,12 @@ mod tests {
                             assert_eq!(small.y, fit_start(region.y + (region.height as i32-small.height as i32)/2, monitor.y, monitor.height, small.height, gap));
                         } else {
                             assert_eq!(full, small);
-                            let gap = pixels(10., scale) as i32;
-                            assert_eq!(small.x, fit_start(region.x + (region.width as i32-small.width as i32)/2, monitor.x, monitor.width, small.width, gap));
+                            let tools = tool_bounds(region, monitor, scale, false);
+                            assert!(small.x + small.width as i32 <= tools.x
+                                || tools.x + tools.width as i32 <= small.x
+                                || small.y + small.height as i32 <= tools.y
+                                || tools.y + tools.height as i32 <= small.y,
+                                "HUD {small:?} overlaps drawing rail {tools:?}");
                         }
                     }
                 }

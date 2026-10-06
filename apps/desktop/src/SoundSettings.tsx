@@ -40,7 +40,7 @@ export default function SoundSettings({ settings, patch, onError }: {
   }
   return <>
     <div className="form-row"><label htmlFor="sounds-on">Sonidos de grabación</label><SettingsSwitch id="sounds-on" label="Activar sonidos" checked={settings.sounds} onChange={sounds => patch({ sounds })}/></div>
-    <div className="form-row"><label htmlFor="sound-theme">Inicio y fin<span>Usá los botones para escuchar el sonido antes de guardarlo.</span></label><select id="sound-theme" value={settings.soundTheme} onChange={e => {
+    <div className="form-row"><label htmlFor="sound-theme">Inicio y fin<span>Usá los botones para escuchar una muestra. Los cambios se guardan solos.</span></label><select id="sound-theme" value={settings.soundTheme} onChange={e => {
       const soundTheme = e.target.value;
       patch({ soundTheme });
       stop();

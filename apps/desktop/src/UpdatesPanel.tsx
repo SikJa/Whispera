@@ -13,7 +13,7 @@ export function useUpdates(){
     if(!native)return;
     let alive=true,revision=0,remove:UnlistenFn|undefined;
     void(async()=>{
-      const off=await listen<UpdateStatus>('updater-status',e=>{revision++;if(alive)setStatus(e.payload);},{target:'main'});
+      const off=await listen<UpdateStatus>('updater-status',e=>{revision++;if(alive){setStatus(e.payload);if(!e.payload.error)setError('');}},{target:'main'});
       if(!alive){off();return;}remove=off;const requested=revision;
       const s=await invoke<UpdateStatus>('updater_status');if(alive&&revision===requested&&s)setStatus(s);
     })().catch(()=>{});

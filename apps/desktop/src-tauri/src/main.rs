@@ -1,5 +1,6 @@
 #![cfg_attr(target_os = "windows", windows_subsystem = "windows")]
 mod updates;
+mod update_transport;
 mod audio;
 mod capture_history;
 mod capture_session;

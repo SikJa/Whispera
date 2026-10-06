@@ -2,8 +2,9 @@ import { useEffect, useState, type CSSProperties, type MouseEvent } from 'react'
 import { invoke } from '@tauri-apps/api/core';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { MotionConfig } from 'motion/react';
-import { Mic, Copy, Check, Pencil, Settings2, X, FolderOpen, AlertCircle } from 'lucide-react';
+import { Mic, Copy, Check, AlertCircle } from 'lucide-react';
 import ControlledFolder from './ControlledFolder';
+import IndicatorArtwork from './IndicatorArtwork';
 import FolderControls from './FolderControls';
 import { native, readSettings, type Settings } from './client';
 import { contrastInk } from './palette';
@@ -19,7 +20,6 @@ export default function FloatingRecorder() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [copied, setCopied] = useState(false);
-  const [cancelling, setCancelling] = useState(false);
   const scale = settings?.recorderScale ?? .85;
   useEffect(() => { if(native) void invoke('recorder_size',{scale}).catch(e=>setError(String(e))); },[scale]);
   useEffect(() => {
@@ -68,22 +68,18 @@ export default function FloatingRecorder() {
     if (!native || e.button !== 0 || (e.target as Element).closest('button, a, input')) return;
     e.preventDefault(); void getCurrentWindow().startDragging().catch(e => setError(String(e)));
   }
-  const color = settings?.color ?? '#9024DC';
+  const color = settings?.dictationArtwork==='metallic'?(settings.metallicColor??'#ffffff'):(settings?.color??'#9024DC');
   const visual = recording ? 'hover' : state.phase === 'processing' ? (step % 2 ? 'open' : 'rest') : 'rest';
   const time = `${Math.floor(state.seconds / 60).toString().padStart(2, '0')}:${Math.floor(state.seconds % 60).toString().padStart(2, '0')}`;
   return <main className="floating-recorder" data-phase={state.phase} aria-label="Grabadora flotante" style={{ transform: `scale(${scale})`, transformOrigin: 'top left', '--folder-color': color, '--folder-ink': contrastInk(color) } as CSSProperties}>
-    <MotionConfig reducedMotion="user"><div className="float-rig" onMouseDown={drag}>
-      <ControlledFolder color="black" customColor={color} visualState={visual} recordingStep={recording ? step : undefined} pattern={settings?.pattern ?? 'wave'} size="md" />
+    <MotionConfig reducedMotion="user"><div className="float-rig" data-artwork={settings?.dictationArtwork??'original'} onMouseDown={drag}>
+      {settings?.dictationArtwork==='metallic'?<IndicatorArtwork kind="folder" original={settings.metallicOriginal??true} color={color} active={state.phase==='recording'||state.phase==='processing'}/>:<ControlledFolder color="black" customColor={color} visualState={visual} recordingStep={recording ? step : undefined} pattern={settings?.pattern ?? 'wave'} size="md" />}
       <FolderControls color="black" customColor={color} open={open} placement={settings?.placement ?? 'right'} muted={state.muted} paused={state.phase === 'paused'} onMute={() => void run('recording_action', { action: 'mute' })} onPause={() => void run('recording_action', { action: 'pause' })} onStop={() => void run('recording_action', { action: 'stop' })} />
       <div className="float-readout"><span role="status" title={state.progress || labels[state.phase]}><i data-phase={state.phase} />{labels[state.phase]}</span><output aria-label="Tiempo grabado">{time}</output></div>
       <div className="float-actions">
         {!recording && state.phase !== 'processing' && <button aria-label="Grabar" title="Grabar" disabled={busy || !native} onClick={() => run('recording_action', { action: 'start' })}><Mic /></button>}
         {state.phase === 'done' && <button aria-label="Copiar transcripción" title={copied ? 'Copiado' : 'Copiar transcripción'} onClick={async () => { if (await run('copy_recording')) setCopied(true); }}>{copied ? <Check /> : <Copy />}</button>}
-        <button aria-label={state.phase === 'done' ? 'Editar transcripción' : 'Transcribir audio'} title={state.phase === 'done' ? 'Editar transcripción' : 'Transcribir audio'} disabled={!native} onClick={() => run(state.phase === 'done' ? 'open_recording_details' : 'open_import')}>{state.phase === 'done' ? <Pencil /> : <FolderOpen />}</button>
-        <button aria-label="Configuración" title="Configuración" disabled={!native} onClick={() => run('open_settings')}><Settings2 /></button>
-        <button aria-label={recording ? 'Cancelar grabación' : 'Ocultar grabadora'} title={recording ? 'Cancelar grabación' : 'Ocultar grabadora'} disabled={!native} onClick={() => recording ? setCancelling(true) : getCurrentWindow().hide()}><X /></button>
       </div>
-      {cancelling && recording && <div className="float-cancel"><span>¿Cancelar sin transcribir?</span><button onClick={async()=>{if(await run('recording_action',{action:'cancel'}))setCancelling(false);}}>Cancelar grabación</button><button onClick={()=>setCancelling(false)}>Seguir grabando</button></div>}
       {(error || state.error) && <button className="float-error" role="alert" title={error || state.error} onClick={() => run('open_recording_details')}><AlertCircle size={14} /><span>{error || state.error}</span></button>}
     </div></MotionConfig>
   </main>;

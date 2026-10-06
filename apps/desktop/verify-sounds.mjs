@@ -19,7 +19,7 @@ try {
   await page.locator('#sound-theme').selectOption('gota');
   await page.waitForTimeout(1200);
   assert.equal(await page.evaluate(() => window.samples.length), 0, 'selection must remain silent');
-  assert.equal(await page.evaluate(() => localStorage.getItem('whispera-v2-preview')), null, 'selection must not save settings');
+  assert.equal(await page.evaluate(() => JSON.parse(localStorage.getItem('whispera-v2-preview')).settings.soundTheme), 'gota', 'selection saves automatically');
   await page.getByRole('button',{name:'Escuchar inicio',exact:true}).click();
   assert.equal(await page.evaluate(() => new URL(window.samples.at(-1).src).pathname), '/sound-lab/gota-start.wav');
   await page.getByRole('button',{name:'Escuchar fin',exact:true}).click();
@@ -34,10 +34,9 @@ try {
   assert.equal(await page.evaluate(() => window.samples.length), count, 'leaving sounds cancels delayed playback');
   assert.equal(await page.evaluate(() => window.samples.every(s=>s.paused)), true);
   await page.getByRole('button',{name:'Sonidos',exact:true}).click();
-  await page.getByRole('button',{name:'Guardar',exact:true}).click();
   await page.waitForFunction(() => JSON.parse(localStorage.getItem('whispera-v2-preview') || '{}').settings?.soundTheme === 'seda');
   await page.reload();
   await page.getByRole('button',{name:'Sonidos',exact:true}).click();
   assert.equal(await page.locator('#sound-theme').inputValue(), 'seda');
-  console.log('PASS: silent selection, manual muted audio preview, explicit saving and cleanup.');
+  console.log('PASS: silent selection, manual muted audio preview, automatic saving and cleanup.');
 } finally { await browser.close(); await server?.close(); }

@@ -99,7 +99,7 @@ try{
  assert.equal(await page.locator('#library-limit').inputValue(),'120','Unsaved settings survive tab switches');
  await page.locator('#library-retention').selectOption('0');
  assert.equal(await page.locator('#library-captureGlobal').getAttribute('aria-checked'),'true');
- await page.getByRole('button',{name:'Guardar',exact:true}).click();
+
  await page.waitForFunction(()=>window.libraryPreferences.historyLimit===120);
  assert.equal(await page.evaluate(()=>window.libraryPreferences.autoDeleteHours),0);
  assert.equal(await page.evaluate(()=>window.libraryPreferences.transcribeVideo),true);
@@ -114,8 +114,8 @@ try{
  await page.getByRole('button',{name:'Atajos',exact:true}).click();
  const key=page.locator('#shortcut-library');await key.click();await page.waitForFunction(()=>document.querySelector('#shortcut-library').parentElement.dataset.listening==='true');
  await page.keyboard.press('Control+Alt+KeyB');await page.keyboard.press('Tab');
- await page.getByRole('button',{name:'Guardar',exact:true}).click();
- await page.getByText('Los cuatro atajos quedaron guardados.').waitFor();
+
+ await page.getByText('Guardado automáticamente',{exact:true}).waitFor();
  assert.equal(await page.evaluate(()=>window.libraryPreferences.toggleHotkey),'Control+Alt+KeyB');
  assert.ok(!await page.evaluate(()=>window.calls.some(c=>['screen_start','screen_select','library_drag','library_collect','library_pick'].includes(c.command))));assert.deepEqual(errors,[]);
  console.log('PASS: library tabs, real-API contract mocks, filters, search, copy/pin/delete/reveal/canvas/shelf, errors, pagination, settings persistence and shortcuts. Silent headless; no native effects.');

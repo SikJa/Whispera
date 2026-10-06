@@ -267,6 +267,15 @@ function Toolbar({ context }: { context:Context }) {
   const [layout,setLayout]=useState({railX:4,railY:4,menuX:58,menuY:4});
   const timer=useRef<ReturnType<typeof setTimeout>>(undefined), epoch=useRef(0);
   const panelElement=useRef<HTMLDivElement>(null), panelAnchor=useRef(0);
+  useEffect(()=>{
+    let alive=true,remove:UnlistenFn|undefined;
+    void listen<string>('screen-editor-drag',e=>{
+      if(!alive||e.payload!==context.id)return;
+      clearTimeout(timer.current);++epoch.current;
+      setPanel(undefined);setClosing(false);setLayout({railX:4,railY:4,menuX:58,menuY:4});
+    }).then(off=>{if(alive)remove=off;else off();});
+    return()=>{alive=false;remove?.();};
+  },[context.id]);
   const closePanel=()=>{
     const request=++epoch.current;setClosing(true);clearTimeout(timer.current);
     const duration=matchMedia('(prefers-reduced-motion: reduce)').matches?0:parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--dropdown-close-dur'))||150;

@@ -517,9 +517,18 @@ pub fn screen_frame_drag(app: tauri::AppHandle, window: tauri::WebviewWindow, ac
     if !session::selector(window.label()) {return Err("Vista incorrecta".into());}
     let ctx=crate::screen_editor::context_for(&app,window.label()).ok_or("Captura no disponible")?;
     if ctx.source_label!=window.label(){return Err("Vista incorrecta".into());}
+    crate::screen_editor::drag_controls(&app,&window,active)?;
     set_frame_region(&window,if active {None}else{Some(ctx.rect)})?;
     crate::screen_editor::raise_controls(&app);
     Ok(())
+}
+#[tauri::command]
+pub fn screen_frame_preview(app:tauri::AppHandle,window:tauri::WebviewWindow,id:String,rect:Rect)->Result<(),String> {
+    let ctx=crate::screen_editor::context_for(&app,window.label()).ok_or("Captura no disponible")?;
+    if ctx.id!=id||ctx.source_label!=window.label(){return Err("La captura ya termino".into());}
+    let next=region(rect,ctx.scale,window.inner_position().map_err(|e|e.to_string())?,window.inner_size().map_err(|e|e.to_string())?)?;
+    // Preview docks only: image bytes and the recording region are committed on release.
+    crate::screen_editor::preview_controls(&app,&window,next)
 }
 #[tauri::command]
 pub async fn screen_resize_region(app: tauri::AppHandle, window: tauri::WebviewWindow, id:String, rect:Rect) -> Result<(),String> {

@@ -31,7 +31,12 @@ try {
     async function drag(locator,dx,dy) {
       const box=await locator.boundingBox();const x=box.x+box.width/2,y=box.y+box.height/2;
       await frame.evaluate(e=>{window.originalBorder=e;window.originalBeam=e.querySelector('svg');});
+      const committed=await page.evaluate(()=>structuredClone(window.editorContext.rect));
+      const crops=await page.evaluate(()=>window.calls.filter(c=>c.command==='screen_resize_region').length);
       await page.mouse.move(x,y);await page.mouse.down();await page.mouse.move(x+dx,y+dy,{steps:4});
+      await page.waitForFunction(()=>JSON.stringify(window.previewRect)!==JSON.stringify(window.editorContext.rect));
+      assert.deepEqual(await page.evaluate(()=>window.editorContext.rect),committed,'drag previews do not recrop images or change the video region');
+      assert.equal(await page.evaluate(()=>window.calls.filter(c=>c.command==='screen_resize_region').length),crops);
       assert.equal(await frame.evaluate(e=>e===window.originalBorder&&e.querySelector('svg')===window.originalBeam),true,'same animated border remains during dragging');
       assert.equal(await frame.evaluate(e=>getComputedStyle(e).borderColor),'rgb(255, 255, 255)');
       assert.equal(await frame.evaluate(e=>getComputedStyle(e).outlineStyle),'none');
@@ -55,6 +60,33 @@ try {
     assert.deepEqual(await frame.boundingBox(),{x:220,y:240,width:550,height:340},'failed native crop restores border');
     assert.deepEqual(errors,[]);await page.close();
   }
+  const queued=await browser.newPage({viewport:{width:1100,height:800}});
+  await queued.addInitScript(installNativeMock,{kind:'image',adjustable:true});
+  await queued.addInitScript(()=>{
+    const original=window.__TAURI_INTERNALS__.invoke;
+    window.previewInFlight=0;window.previewMax=0;
+    window.__TAURI_INTERNALS__.invoke=async(command,args)=>{
+      if(command==='screen_frame_preview') {
+        window.previewMax=Math.max(window.previewMax,++window.previewInFlight);
+        await new Promise(resolve=>setTimeout(resolve,80));
+        try{return await original(command,args);}finally{window.previewInFlight--;}
+      }
+      return original(command,args);
+    };
+  });
+  await queued.goto((process.env.WHISPERA_TEST_URL||'http://127.0.0.1:5190')+'/?view=screen-select');
+  await queued.locator('.screen-selection').waitFor();
+  await queued.mouse.move(200,200);await queued.mouse.down();await queued.mouse.move(600,450);await queued.mouse.up();
+  await queued.locator('.capture-frame-handle-se').waitFor();
+  await queued.mouse.move(250,200);await queued.mouse.down();
+  await queued.mouse.move(270,220);await queued.waitForFunction(()=>window.previewInFlight===1);
+  await queued.mouse.move(290,240);await queued.mouse.move(320,270);await queued.mouse.up();
+  await queued.waitForFunction(()=>window.calls.at(-1)?.command==='screen_frame_drag'&&window.calls.at(-1).args.active===false);
+  assert.equal(await queued.evaluate(()=>window.previewMax),1,'slow native moves cannot accumulate concurrent preview calls');
+  assert.deepEqual(await queued.evaluate(()=>window.previewRect),{x:270,y:270,width:400,height:250});
+  const order=await queued.evaluate(()=>window.calls.filter(c=>['screen_frame_preview','screen_resize_region'].includes(c.command)).map(c=>c.command));
+  assert.equal(order.at(-1),'screen_resize_region','release waits for the final dock preview before committing');
+  await queued.close();
   const page=await browser.newPage();await page.goto(process.env.WHISPERA_TEST_URL||'http://127.0.0.1:5190');
   const cases=await page.evaluate(async()=>{
     const {adjustSelection}=await import('/src/selection-geometry.ts');

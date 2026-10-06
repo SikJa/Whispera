@@ -53,5 +53,16 @@ try {
   await ink.waitForFunction(()=>!window.feedback.busy&&!window.feedback.error);
   assert.equal(await ink.evaluate(()=>window.calls.filter(c=>c.command==='screen_editor_ready').length),1,'moving/resizing an already visible image must not focus it again');
   assert.equal(await ink.getByLabel('Editar captura').getAttribute('width'),'320');
+  const tools=await browser.newPage({viewport:{width:380,height:600}});
+  await tools.addInitScript(installNativeMock,{kind:'image'});
+  await tools.goto(base+'/overlay.html?view=screen-tools');
+  await tools.getByRole('button',{name:'Elegir color'}).click();
+  await tools.getByRole('dialog',{name:'Color del trazo',exact:true}).waitFor();
+  await tools.evaluate(()=>window.emitNative('screen-editor-drag',window.editorContext.id));
+  await tools.getByRole('dialog',{name:'Color del trazo',exact:true}).waitFor({state:'detached'});
+  assert.deepEqual(await tools.getByLabel('Herramientas de captura').evaluate(e=>({x:e.style.left,y:e.style.top})),{x:'4px',y:'4px'},'drag clears expanded-menu offsets');
+  await tools.getByRole('button',{name:'Contraer herramientas'}).click();
+  await tools.evaluate(()=>window.emitNative('screen-editor-drag',window.editorContext.id));
+  assert.equal(await tools.getByLabel('Herramientas de captura').getAttribute('data-compact'),'true','drag preserves the compact toolbar');
   console.log('PASS: late context/feedback, HUD action recovery, image resize recovery and no repeated focus. IPC mocked.');
 } finally {await browser.close();}

@@ -33,6 +33,8 @@ pub struct Context {
 #[derive(Default)]
 pub struct Editor {
     configured: AtomicBool,
+    dragging: AtomicBool,
+    compact: AtomicBool,
     context: Mutex<Option<Context>>,
     region: Mutex<Option<Region>>,
     monitor: Mutex<Option<Region>>,
@@ -42,6 +44,8 @@ pub struct Editor {
 impl Editor {
     fn clear(&self) {
         self.configured.store(false,Ordering::SeqCst);
+        self.dragging.store(false,Ordering::SeqCst);
+        self.compact.store(false,Ordering::SeqCst);
         if let Ok(mut value)=self.context.lock(){*value=None;}
         if let Ok(mut bytes)=self.image.lock(){bytes.clear();}
         if let Ok(mut region)=self.region.lock(){*region=None;}
@@ -248,6 +252,52 @@ fn place_controls(
     window
         .set_position(tauri::PhysicalPosition::new(dock.x, dock.y))
         .map_err(|e| e.to_string())
+}
+pub(crate) fn drag_controls(app:&tauri::AppHandle,source:&tauri::WebviewWindow,active:bool)->Result<(),String> {
+    let ctx=context_for(app,source.label()).ok_or("Captura no disponible")?;
+    let editor=session::editor(app,source.label());
+    editor.dragging.store(active,Ordering::SeqCst);
+    let region=editor.region.lock().map_err(|_|"Editor ocupado")?.ok_or("Captura no disponible")?;
+    let monitor=editor.monitor.lock().map_err(|_|"Editor ocupado")?.ok_or("Monitor no disponible")?;
+    if active {
+        if let Some(tools)=app.get_webview_window(&session::label(source.label(),"screen-tools")) {
+            session::emit_window(&tools,"screen-editor-drag",&ctx.id).map_err(|e|e.to_string())?;
+            place_controls(&tools,&ctx,region,monitor,editor.compact.load(Ordering::SeqCst))?;
+        }
+    }
+    // Restore the committed docks on cancellation/failure, or finish at the new region.
+    if !active { preview_controls(app,source,region)?; }
+    Ok(())
+}
+pub(crate) fn preview_controls(app:&tauri::AppHandle,source:&tauri::WebviewWindow,region:Region)->Result<(),String> {
+    let ctx=context_for(app,source.label()).ok_or("Captura no disponible")?;
+    let editor=session::editor(app,source.label());
+    let monitor=editor.monitor.lock().map_err(|_|"Editor ocupado")?.ok_or("Monitor no disponible")?;
+    let mut positions=Vec::new();
+    for base in ["screen-tools","screen-hud"] {
+        if let Some(window)=app.get_webview_window(&session::label(source.label(),base)) {
+            let dock=dock_bounds(&ctx,region,monitor,window.label(),editor.compact.load(Ordering::SeqCst))?;
+            positions.push((window,dock.x,dock.y));
+        }
+    }
+    let app_copy=app.clone();let scope=source.label().to_string();let id=ctx.id;
+    app.run_on_main_thread(move||{
+        if context_for(&app_copy,&scope).is_none_or(|c|c.id!=id){return;}
+        let native=positions.iter().map(|(window,x,y)|window.hwnd().map(|h|(windows::Win32::Foundation::HWND(h.0),*x,*y))).collect::<Result<Vec<_>,_>>();
+        let result=native.map_err(|e|e.to_string()).and_then(|windows|move_native_controls(&windows));
+        if let Err(error)=result {let _=app_copy.state::<crate::storage::Store>().event(&format!("No se pudieron mover las herramientas de captura: {error}"));}
+    }).map_err(|e|e.to_string())
+}
+fn move_native_controls(windows:&[(windows::Win32::Foundation::HWND,i32,i32)])->Result<(),String> {
+    use windows::Win32::UI::WindowsAndMessaging::{BeginDeferWindowPos,DeferWindowPos,EndDeferWindowPos,SWP_NOSIZE,SWP_NOZORDER,SWP_NOACTIVATE,SWP_NOOWNERZORDER};
+    if windows.is_empty(){return Ok(());}
+    unsafe {
+        let mut batch=BeginDeferWindowPos(windows.len() as i32).map_err(|e|e.to_string())?;
+        for (window,x,y) in windows {
+            batch=DeferWindowPos(batch,*window,None,*x,*y,0,0,SWP_NOSIZE|SWP_NOZORDER|SWP_NOACTIVATE|SWP_NOOWNERZORDER).map_err(|e|e.to_string())?;
+        }
+        EndDeferWindowPos(batch).map_err(|e|e.to_string())
+    }
 }
 fn screenshot(app: &tauri::AppHandle, region: Region, exclude_ink: bool) -> Result<Vec<u8>, String> {
     // A hidden ink window may still be in DWM's close animation. Exclude it
@@ -456,7 +506,7 @@ pub(crate) fn resize(app:&tauri::AppHandle,source:&tauri::WebviewWindow,id:&str,
     ink.set_position(tauri::PhysicalPosition::new(region.x,region.y)).map_err(|e|e.to_string())?;
     ink.set_size(tauri::PhysicalSize::new(region.width,region.height)).map_err(|e|e.to_string())?;
     for label in ["screen-tools","screen-hud"] {
-        if let Some(window)=app.get_webview_window(&session::label(source.label(),label)){place_controls(&window,&ctx,region,monitor,false)?;}
+        if let Some(window)=app.get_webview_window(&session::label(source.label(),label)){place_controls(&window,&ctx,region,monitor,editor.compact.load(Ordering::SeqCst))?;}
     }
     screen::set_frame_region(source,Some(rect))?;
     for window in [Some(ink),app.get_webview_window(&session::label(source.label(),"screen-tools")),app.get_webview_window(&session::label(source.label(),"screen-hud")),Some(source.clone())].into_iter().flatten(){
@@ -511,6 +561,10 @@ pub fn screen_overlay_layout(
 ) -> Result<(), String> {
     let ctx = context(&app, &id)?;
     let editor = session::editor(&app,&id);
+    if window.label()==session::label(&id,"screen-tools") {
+        if editor.dragging.load(Ordering::SeqCst){return Ok(());}
+        editor.compact.store(compact,Ordering::SeqCst);
+    }
     let region = editor
         .region
         .lock()
@@ -531,6 +585,8 @@ pub fn screen_tools_panel(app: tauri::AppHandle, window: tauri::WebviewWindow, i
     if window.label() != session::label(&id,"screen-tools") { return Err("Vista incorrecta".into()); }
     let ctx=context(&app,&id)?;
     let editor=session::editor(&app,&id);
+    if editor.dragging.load(Ordering::SeqCst){return Ok(serde_json::json!({"railX":4,"railY":4,"menuX":0,"menuY":0}));}
+    editor.compact.store(compact,Ordering::SeqCst);
     let region=editor.region.lock().map_err(|_|"Editor ocupado")?.ok_or("Captura no disponible")?;
     let monitor=editor.monitor.lock().map_err(|_|"Editor ocupado")?.ok_or("Monitor no disponible")?;
     let rail=tool_bounds(region,monitor,ctx.scale,compact);
@@ -776,6 +832,25 @@ pub async fn screen_editor_sample(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn live_controls_move_together_without_resizing_showing_or_taking_focus() {
+        use windows::{core::w,Win32::{Foundation::HWND,UI::WindowsAndMessaging::{CreateWindowExW,DestroyWindow,GetForegroundWindow,GetWindowRect,IsWindowVisible,WS_POPUP,WS_EX_TOOLWINDOW}}};
+        struct Owned(HWND);impl Drop for Owned{fn drop(&mut self){unsafe{let _=DestroyWindow(self.0);}}}
+        unsafe {
+            let tools=Owned(CreateWindowExW(WS_EX_TOOLWINDOW,w!("STATIC"),w!("Whispera tools movement test"),WS_POPUP,10,20,50,450,None,None,None,None).unwrap());
+            let hud=Owned(CreateWindowExW(WS_EX_TOOLWINDOW,w!("STATIC"),w!("Whispera HUD movement test"),WS_POPUP,100,300,260,56,None,None,None,None).unwrap());
+            let foreground=GetForegroundWindow();
+            for (tx,ty,hx,hy) in [(150,120,210,600),(-1800,-400,-1700,-200),(30,40,80,90)] {
+                move_native_controls(&[(tools.0,tx,ty),(hud.0,hx,hy)]).unwrap();
+                for (window,x,y,width,height) in [(tools.0,tx,ty,50,450),(hud.0,hx,hy,260,56)] {
+                    let mut rect=Default::default();GetWindowRect(window,&mut rect).unwrap();
+                    assert_eq!((rect.left,rect.top,rect.right-rect.left,rect.bottom-rect.top),(x,y,width,height));
+                    assert!(!IsWindowVisible(window).as_bool());
+                }
+                assert_eq!(GetForegroundWindow(),foreground);
+            }
+        }
+    }
     #[test]
     fn closing_or_resizing_still_image_preserves_the_video_editor() {
         let video=Editor::default();let image=Editor::default();

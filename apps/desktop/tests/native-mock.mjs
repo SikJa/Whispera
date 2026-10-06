@@ -34,6 +34,8 @@ export function installNativeMock({kind='video',width=640,height=480,scale=1,set
       if(command==='screen_stop')window.videoStatus.phase='idle';
       if(command==='screen_video_snapshot')return true;
       if(command==='screen_tools_panel')return {railX:4,railY:4,menuX:58,menuY:Math.max(4,Math.min(innerHeight-args.panelHeight+4,args.anchor-args.panelHeight/2))};
+      if(command==='screen_frame_drag'&&args.active)window.emitNative('screen-editor-drag',window.editorContext.id);
+      if(command==='screen_frame_preview')window.previewRect=args.rect;
       if(command==='screen_save_preferences')window.videoPreferences=args.preferences;
       if(command==='screen_start'){window.videoStatus.phase=kind==='image'?'editing':'recording';window.emitNative('screen-stage',{rect:args.rect,kind});if(adjustable){window.editorContext={...window.editorContext,rect:args.rect,width:args.rect.width,height:args.rect.height,monitor_width:innerWidth,monitor_height:innerHeight,source_label:'screen-select-0'};window.emitNative('screen-editor-reset',window.editorContext);}}
       if(command==='screen_resize_region'){

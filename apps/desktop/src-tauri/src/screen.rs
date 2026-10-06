@@ -15,7 +15,7 @@ use std::{
     },
     time::{Duration, Instant},
 };
-use tauri::{Emitter, Manager, State};
+use tauri::{Manager, State};
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Preferences {
@@ -187,7 +187,7 @@ fn hide_selectors(app: &tauri::AppHandle, screen: &Screen) {
     for (label, window) in app.webview_windows() {
         if label.starts_with(if screen.secondary {"image-select-"} else {"screen-select-"}) {
             let _ = window.hide();
-            let _ = window.emit("screen-hide", ());
+            let _ = session::emit_window(&window,"screen-hide", ());
         }
     }
 }
@@ -260,8 +260,7 @@ fn show_indicator(window: &tauri::WebviewWindow, rect: Rect, kind: &str) -> Resu
     window.set_focusable(false).map_err(|e| e.to_string())?;
     // Keep the existing transparent document and window on screen. Navigating
     // and hide/show here caused a full-screen flash between selection and capture.
-    window
-        .emit("screen-stage", serde_json::json!({"rect":rect,"kind":kind}))
+    session::emit_window(window,"screen-stage", serde_json::json!({"rect":rect,"kind":kind}))
         .map_err(|e| e.to_string())?;
     Ok(())
 }
@@ -440,8 +439,7 @@ fn select_locked(app: &tauri::AppHandle, screen: &Screen, kind: &str) -> Result<
             window
                 .set_size(*monitor.size())
                 .map_err(|e| e.to_string())?;
-            window
-                .emit("screen-reset", kind)
+            session::emit_window(&window,"screen-reset", kind)
                 .map_err(|e| e.to_string())?;
         }
         screen.selection_ready.store(true, Ordering::SeqCst);

@@ -68,7 +68,7 @@ pub fn hide_session(app: &tauri::AppHandle, secondary:bool) {
     let scope=if secondary {"image-session"}else{"screen"};
     for base in ["screen-ink","screen-tools","screen-hud"] {
         if let Some(w)=app.get_webview_window(&session::label(scope,base)) {
-            let _=w.hide();let _=w.emit("screen-editor-reset",Option::<Context>::None);
+            let _=w.hide();let _=session::emit_window(&w,"screen-editor-reset",Option::<Context>::None);
         }
     }
     let editor=session::editor(app,scope);
@@ -434,13 +434,13 @@ pub(crate) fn open_with_image(
     screen::protect(&hud)?;
     place_controls(&hud, &ctx, region, monitor, false)?;
     for w in [&ink, &tools, &hud] {
-        w.emit("screen-editor-reset", &ctx)
+        session::emit_window(&w,"screen-editor-reset", &ctx)
             .map_err(|e| e.to_string())?;
     }
     editor.configured.store(true, Ordering::SeqCst);
     source.set_ignore_cursor_events(false).map_err(|e|e.to_string())?;
     screen::set_frame_region(source,Some(rect))?;
-    source.emit("screen-editor-reset",&ctx).map_err(|e|e.to_string())?;
+    session::emit_window(source,"screen-editor-reset",&ctx).map_err(|e|e.to_string())?;
     Ok(())
 }
 pub(crate) fn resize(app:&tauri::AppHandle,source:&tauri::WebviewWindow,id:&str,rect:Rect,region:Region,bytes:Option<Vec<u8>>) -> Result<(),String> {
@@ -460,7 +460,7 @@ pub(crate) fn resize(app:&tauri::AppHandle,source:&tauri::WebviewWindow,id:&str,
     }
     screen::set_frame_region(source,Some(rect))?;
     for window in [Some(ink),app.get_webview_window(&session::label(source.label(),"screen-tools")),app.get_webview_window(&session::label(source.label(),"screen-hud")),Some(source.clone())].into_iter().flatten(){
-        window.emit("screen-editor-reset",&ctx).map_err(|e|e.to_string())?;
+        session::emit_window(&window,"screen-editor-reset",&ctx).map_err(|e|e.to_string())?;
     }
     raise_controls(app);
     Ok(())

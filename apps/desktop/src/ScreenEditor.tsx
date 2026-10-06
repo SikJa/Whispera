@@ -44,12 +44,13 @@ function shortcut(e: KeyboardEvent): Action | undefined {
 function useContext() {
   const [context, setContext] = useState<Context>();
   useEffect(() => {
-    let alive = true; let remove: UnlistenFn | undefined;
+    let alive = true, revision = 0; let remove: UnlistenFn | undefined;
     void (async () => {
-      const unlisten = await listen<Context|null>('screen-editor-reset', e => { if (alive) setContext(e.payload??undefined); });
+      const unlisten = await listen<Context|null>('screen-editor-reset', e => { revision++; if (alive) setContext(e.payload??undefined); });
       if (!alive) { unlisten(); return; } remove = unlisten;
+      const requested = revision;
       const current = await invoke<Context | null>('screen_editor_context');
-      if (alive && current) setContext(current);
+      if (alive && revision === requested) setContext(current??undefined);
     })().catch(() => {});
     return () => { alive = false; remove?.(); };
   }, []);
@@ -66,6 +67,7 @@ function Ink({ context }: { context: Context }) {
   const [tool, setTool] = useState<Tool>('pointer'), [error, setError] = useState(''), [busy, setBusy] = useState(false);
   const [text, setText] = useState<{ point: Point; value: string }>();
   const actions = useRef<(a: Action) => void>(() => {}), live = useRef(true), working = useRef(false);
+  const shown = useRef(false);
   const draw = () => {
     const ctx = canvas.current?.getContext('2d'); if (!ctx) return;
     ctx.setTransform(context.scale,0,0,context.scale,0,0); ctx.clearRect(0,0,context.width,context.height);
@@ -157,13 +159,14 @@ function Ink({ context }: { context: Context }) {
     }
     previousRect.current=next;draft.current=null;moving.current=null;setText(undefined);
     if(context.kind==='image')void(async()=>{
-      working.current=true;setBusy(true);
+      working.current=true;setBusy(true);setError('');
       const bytes=await invoke<number[]>('screen_editor_image',{id:context.id});
       if(!alive)return;
       url=URL.createObjectURL(new Blob([new Uint8Array(bytes)],{type:'image/png'}));
       const image=new Image();image.src=url;await image.decode();
       if(!alive)return;background.current=image;draw();
-      await showWhenReady('screen_editor_ready',{id:context.id},()=>alive);
+      // Re-cropping an already visible editor must not steal focus from its controls.
+      if(!shown.current){await showWhenReady('screen_editor_ready',{id:context.id},()=>alive);if(alive)shown.current=true;}
     })().catch(e=>{if(alive)setError(String(e));}).finally(()=>{if(alive){working.current=false;setBusy(false);}});
     else draw();
     return()=>{alive=false;if(url)URL.revokeObjectURL(url);};
@@ -229,13 +232,14 @@ function VideoHud({context}:{context:Context}) {
 function useEditorControls(context:Context) {
   const [feedback,setFeedback] = useState<Feedback>({...defaults,...preferences()});
   const [error,setError] = useState('');
-  const send = (action:Action) => invoke('screen_editor_action',{ id:context.id,action }).catch(e => setError(String(e)));
+  const send = (action:Action) => {setError('');return invoke('screen_editor_action',{ id:context.id,action }).catch(e => setError(String(e)));};
   useEffect(() => {
-    let alive = true; let remove:UnlistenFn|undefined;
+    let alive = true, revision = 0; let remove:UnlistenFn|undefined;
     void (async () => {
-      const off = await listen<{id:string;feedback:Partial<Feedback>}>('screen-editor-feedback',e => { if(alive && e.payload.id===context.id) setFeedback(f => ({...f,...e.payload.feedback})); });
+      const off = await listen<{id:string;feedback:Partial<Feedback>}>('screen-editor-feedback',e => { if(alive && e.payload.id===context.id) {revision++;setFeedback(f => ({...f,...e.payload.feedback}));} });
       if(!alive){off();return;} remove=off;
-      const current = await invoke<Partial<Feedback>>('screen_editor_feedback_get'); if(alive) setFeedback(f=>({...f,...current}));
+      const requested=revision;
+      const current = await invoke<Partial<Feedback>>('screen_editor_feedback_get'); if(alive&&revision===requested) setFeedback(f=>({...f,...current}));
       await showWhenReady('screen_editor_ready',{id:context.id},()=>alive);
     })().catch(e=>{if(alive)setError(String(e));});
     const key=(e:KeyboardEvent)=>{const a=shortcut(e);if(!a)return;if(context.kind==='video'&&['copy','save'].includes(a.action))return;e.preventDefault();if(a.action==='escape')void invoke('screen_escape').catch(e=>setError(String(e)));else void send(a);};

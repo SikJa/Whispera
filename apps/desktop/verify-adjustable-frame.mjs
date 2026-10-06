@@ -15,6 +15,19 @@ try {
     assert.equal(await page.locator('.capture-frame-handle').count(),8);
     assert.equal(await frame.evaluate(e=>getComputedStyle(e).borderRadius),'14px');
     assert.equal(await page.locator('.capture-border-beam').count(),1);
+    async function assertBeamAligned() {
+      const geometry=await frame.evaluate(e=>{
+        const border=e.getBoundingClientRect(),svg=e.querySelector('svg'),path=svg.querySelector('rect'),box=svg.getBoundingClientRect();
+        const thickness=parseFloat(getComputedStyle(e).borderTopWidth);
+        return {left:box.x+path.x.baseVal.value-border.x,top:box.y+path.y.baseVal.value-border.y,right:box.x+path.x.baseVal.value+path.width.baseVal.value-border.x,bottom:box.y+path.y.baseVal.value+path.height.baseVal.value-border.y,thickness,width:border.width,height:border.height,radius:path.rx.baseVal.value,borderRadius:parseFloat(getComputedStyle(e).borderRadius)};
+      });
+      assert.equal(geometry.left,geometry.thickness/2,'shine follows the border centerline');
+      assert.equal(geometry.top,geometry.thickness/2);
+      assert.equal(geometry.right,geometry.width-geometry.thickness/2);
+      assert.equal(geometry.bottom,geometry.height-geometry.thickness/2);
+      assert.equal(geometry.radius,geometry.borderRadius-geometry.thickness/2);
+    }
+    await assertBeamAligned();
     async function drag(locator,dx,dy) {
       const box=await locator.boundingBox();const x=box.x+box.width/2,y=box.y+box.height/2;
       await frame.evaluate(e=>{window.originalBorder=e;window.originalBeam=e.querySelector('svg');});
@@ -23,6 +36,7 @@ try {
       assert.equal(await frame.evaluate(e=>getComputedStyle(e).borderColor),'rgb(255, 255, 255)');
       assert.equal(await frame.evaluate(e=>getComputedStyle(e).outlineStyle),'none');
       assert.equal(await page.locator('.capture-border-beam rect').first().evaluate(e=>getComputedStyle(e).animationName),'capture-border-travel');
+      await assertBeamAligned();
       await page.mouse.up();
       await page.waitForFunction(()=>window.calls.at(-1)?.command==='screen_frame_drag'&&window.calls.at(-1).args.active===false);
     }

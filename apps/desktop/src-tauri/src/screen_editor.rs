@@ -123,16 +123,30 @@ fn window(
     Ok(window)
 }
 pub(crate) fn raise_controls(app: &tauri::AppHandle) {
+    let mut windows=Vec::new();
     if let Some(ctx)=app.state::<Editor>().context.lock().ok().and_then(|c|c.clone()) {
-        if let Some(source)=app.get_webview_window(&ctx.source_label){let _=source.set_always_on_top(true);}
+        if let Some(source)=app.get_webview_window(&ctx.source_label){windows.push(source);}
     }
     for label in ["screen-tools", "screen-hud"] {
         if let Some(window) = app.get_webview_window(label) {
             if window.is_visible().unwrap_or(false) {
-                let _ = window.set_always_on_top(true);
+                windows.push(window);
             }
         }
     }
+    let app_copy=app.clone();
+    let _=app.run_on_main_thread(move||{
+        for window in windows {
+            // Tao skips set_always_on_top(true) when the flag is already true.
+            // Reorder the actual HWND so the ink cannot cover the white border.
+            let result=window.hwnd().map_err(|e|e.to_string()).and_then(|hwnd|raise_native(windows::Win32::Foundation::HWND(hwnd.0)));
+            if let Err(error)=result {let _=app_copy.state::<crate::storage::Store>().event(&format!("No se pudo mostrar el borde de captura: {error}"));}
+        }
+    });
+}
+fn raise_native(hwnd:windows::Win32::Foundation::HWND)->Result<(),String> {
+    use windows::Win32::UI::WindowsAndMessaging::{SetWindowPos,HWND_TOPMOST,SWP_NOMOVE,SWP_NOSIZE,SWP_NOACTIVATE,SWP_NOOWNERZORDER};
+    unsafe {SetWindowPos(hwnd,Some(HWND_TOPMOST),0,0,0,0,SWP_NOMOVE|SWP_NOSIZE|SWP_NOACTIVATE|SWP_NOOWNERZORDER).map_err(|e|e.to_string())}
 }
 fn pixels(value: f64, scale: f64) -> u32 {
     (value * scale).round().max(1.) as u32
@@ -757,6 +771,29 @@ pub async fn screen_editor_sample(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn native_border_is_raised_even_when_both_windows_are_already_topmost() {
+        use windows::{core::w,Win32::{Foundation::HWND,UI::WindowsAndMessaging::{CreateWindowExW,DestroyWindow,GetForegroundWindow,GetWindow,GetWindowRect,GW_HWNDPREV,WS_POPUP,WS_EX_TOOLWINDOW}}};
+        struct Owned(HWND);impl Drop for Owned{fn drop(&mut self){unsafe{let _=DestroyWindow(self.0);}}}
+        unsafe {
+            // Hidden windows test the native ordering without drawing on the user's desktop.
+            let frame=Owned(CreateWindowExW(WS_EX_TOOLWINDOW,w!("STATIC"),w!("Whispera frame test"),WS_POPUP,10,20,100,80,None,None,None,None).unwrap());
+            let ink=Owned(CreateWindowExW(WS_EX_TOOLWINDOW,w!("STATIC"),w!("Whispera ink test"),WS_POPUP,10,20,100,80,None,None,None,None).unwrap());
+            fn above(first:HWND,second:HWND)->bool {
+                let mut cursor=second;
+                for _ in 0..4096 {match unsafe{GetWindow(cursor,GW_HWNDPREV)}{Ok(next) if !next.0.is_null()=>{if next==first{return true;}cursor=next;},_=>break}}
+                false
+            }
+            let foreground=GetForegroundWindow();let mut original=Default::default();GetWindowRect(frame.0,&mut original).unwrap();
+            raise_native(frame.0).unwrap();raise_native(ink.0).unwrap();assert!(above(ink.0,frame.0));
+            // Repeated focus/resize cycles must keep the same frame HWND above the ink.
+            for _ in 0..4 {raise_native(frame.0).unwrap();assert!(above(frame.0,ink.0));raise_native(ink.0).unwrap();}
+            raise_native(frame.0).unwrap();assert!(above(frame.0,ink.0));
+            let mut current=Default::default();GetWindowRect(frame.0,&mut current).unwrap();
+            assert_eq!((original.left,original.top,original.right,original.bottom),(current.left,current.top,current.right,current.bottom));
+            assert_eq!(GetForegroundWindow(),foreground);
+        }
+    }
     #[test]
     fn capture_docks_fit_edges_and_center_compact_toolbar() {
         for scale in [1., 1.25, 1.5, 2.] {

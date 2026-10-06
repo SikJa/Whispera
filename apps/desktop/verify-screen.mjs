@@ -13,7 +13,8 @@ try {
   await page.getByRole('button',{name:'Ambos Tu voz y la computadora'}).click();
   await page.getByText('Micrófono de prueba',{exact:true}).waitFor();
   await page.getByRole('switch',{name:'Copiar al soltar la selección'}).click();
-  assert.equal(await page.locator('.hotkey-field').count(),0);
+  assert.equal(await page.locator('.screen-recorder-panel .hotkey-field').count(),1);
+  assert.equal(await page.locator('.replay-settings .hotkey-field').count(),1,'Only the separate replay shortcut lives here');
   assert.equal(await page.locator('#screen-frame-color').inputValue(),'#ffffff');
 
   await page.getByText('Guardado automáticamente',{exact:true}).waitFor();

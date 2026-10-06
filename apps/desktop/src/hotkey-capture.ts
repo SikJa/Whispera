@@ -25,6 +25,15 @@ export function modifiers(e: Pick<KeyboardEvent,'ctrlKey'|'altKey'|'shiftKey'|'m
 export function eventHotkey(e: KeyboardEvent): string | undefined {
   if (e.isComposing || e.repeat || e.getModifierState('AltGraph')) return;
   // DOM physical codes match the native shortcut parser, including non-US keyboards.
-  if (!/^(Key[A-Z]|Digit[0-9]|F([1-9]|1[0-9]|2[0-4])|Numpad([0-9]|Add|Subtract|Multiply|Divide|Decimal|Enter|Equal)|Space|Enter|Tab|Backspace|Delete|Insert|Home|End|PageUp|PageDown|Arrow(Up|Down|Left|Right)|Backquote|Backslash|Bracket(Left|Right)|Comma|Equal|Minus|Period|Quote|Semicolon|Slash|CapsLock|NumLock|ScrollLock|PrintScreen|Pause)$/.test(e.code)) return;
-  return [...modifiers(e),e.code].join('+');
+  let code=e.code;
+  // Virtual/accessibility keyboards may omit the scan code. Keep physical codes
+  // authoritative and only recover keys with an unambiguous native equivalent.
+  if (!code || code === 'Unidentified') {
+    if (/^[a-z]$/i.test(e.key)) code=`Key${e.key.toUpperCase()}`;
+    else if (/^[0-9]$/.test(e.key)) code=`Digit${e.key}`;
+    else if (e.key === ' ') code='Space';
+    else if (/^(F([1-9]|1[0-9]|2[0-4])|Enter|Tab|Backspace|Delete|Insert|Home|End|PageUp|PageDown|Arrow(Up|Down|Left|Right)|CapsLock|NumLock|ScrollLock|PrintScreen|Pause)$/.test(e.key)) code=e.key;
+  }
+  if (!/^(Key[A-Z]|Digit[0-9]|F([1-9]|1[0-9]|2[0-4])|Numpad([0-9]|Add|Subtract|Multiply|Divide|Decimal|Enter|Equal)|Space|Enter|Tab|Backspace|Delete|Insert|Home|End|PageUp|PageDown|Arrow(Up|Down|Left|Right)|Backquote|Backslash|Bracket(Left|Right)|Comma|Equal|Minus|Period|Quote|Semicolon|Slash|CapsLock|NumLock|ScrollLock|PrintScreen|Pause)$/.test(code)) return;
+  return [...modifiers(e),code].join('+');
 }

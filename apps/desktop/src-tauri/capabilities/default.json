@@ -2,6 +2,6 @@
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "main-window",
   "description": "Local settings window and native file selection only.",
-  "windows": ["main", "recorder", "details", "import", "library", "media-*", "screen-select-*", "screen-freeze-*", "screen-ink", "screen-tools", "screen-hud", "image-select-*", "image-freeze-*", "image-ink", "image-tools", "image-hud"],
+  "windows": ["main", "recorder", "details", "import", "library", "media-*", "video-trim-*", "screen-select-*", "screen-freeze-*", "screen-ink", "screen-tools", "screen-hud", "image-select-*", "image-freeze-*", "image-ink", "image-tools", "image-hud"],
   "permissions": ["core:default", "core:window:allow-start-dragging", "core:window:allow-hide", "dialog:allow-open"]
 }

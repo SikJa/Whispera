@@ -33,3 +33,6 @@ La prueba nativa descarga una pequeña fixture firmada por HTTP local y rechaza 
 Referencia oficial: https://v2.tauri.app/plugin/updater/
 
 Desde 0.2.17, la disponibilidad aparece debajo de la marca en la barra lateral. Si Configuración está oculta o minimizada, la app la abre una vez por versión detectada, esperando a que finalicen dictados, transcripciones, capturas y videos activos. La consulta periódica no es una notificación instantánea ni instala automáticamente.
+# Mensaje breve para cada versión
+
+Antes de publicar, redactar con el dueño del proyecto el texto de `docs/update-message.txt`. Admite hasta 280 caracteres y cuatro líneas. La publicación usa ese mensaje en `latest.json`, separado del detalle completo del release en GitHub. La app muestra el mensaje sin scroll interno; los manifiestos antiguos con notas largas se resumen para que no ocupen toda la pantalla.

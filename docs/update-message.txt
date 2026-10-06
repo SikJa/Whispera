@@ -1,0 +1,1 @@
+Guardá los últimos segundos con Replay y recortá el tramo que necesitás. Mejoramos el rendimiento del diccionario y corregimos fallos de capturas, atajos, guardado de preferencias y actualización del portapapeles.

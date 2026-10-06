@@ -21,9 +21,19 @@ pub fn setup_info(app: tauri::AppHandle, store: State<Store>) -> Result<SetupInf
 }
 
 #[tauri::command]
-pub fn set_startup(app: tauri::AppHandle, enabled: bool) -> Result<(), String> {
+pub fn startup_enabled(window: tauri::WebviewWindow, app: tauri::AppHandle) -> Result<bool, String> {
+    if window.label() != "main" { return Err("Abrí Configuración para cambiar el inicio automático".into()); }
+    app.autolaunch().is_enabled().map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn set_startup(window: tauri::WebviewWindow, app: tauri::AppHandle, enabled: bool) -> Result<bool, String> {
+    if window.label() != "main" { return Err("Abrí Configuración para cambiar el inicio automático".into()); }
     if enabled { app.autolaunch().enable() } else { app.autolaunch().disable() }
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string())?;
+    let actual = app.autolaunch().is_enabled().map_err(|e| e.to_string())?;
+    if actual != enabled { return Err("Windows no confirmó el cambio del inicio automático".into()); }
+    Ok(actual)
 }
 
 #[tauri::command]

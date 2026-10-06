@@ -27,7 +27,8 @@ pub fn corrections(text: &str, rules: &[Rule]) -> String {
             .case_insensitive(true)
             .build()
         {
-            let word = regex::Regex::new(r"^\w$").unwrap();
+            static WORD: OnceLock<regex::Regex> = OnceLock::new();
+            let word = WORD.get_or_init(|| regex::Regex::new(r"^\w$").unwrap());
             let mut next = String::new();
             let mut previous = 0;
             for m in pattern.find_iter(&output) {
@@ -145,12 +146,15 @@ pub async fn request(
             "Selecciona un archivo de audio de hasta 24 MB. El original no se modifica.".into(),
         );
     }
-    let key = entry()?
-        .get_password()
-        .map_err(|_| "Configura la clave de Groq en Transcripcion")?;
     let bytes = tokio::fs::read(path)
         .await
         .map_err(|_| "No se pudo leer el audio")?;
+    if ext == "wav" && digital_silence(&bytes) {
+        return Ok(serde_json::json!({"text":"","words":[],"segments":[]}));
+    }
+    let key = entry()?
+        .get_password()
+        .map_err(|_| "Configura la clave de Groq en Transcripcion")?;
     let file = multipart::Part::bytes(bytes).file_name(format!("audio.{ext}"));
     let mut form = multipart::Form::new()
         .part("file", file)
@@ -188,9 +192,29 @@ pub async fn request(
         .map_err(|_| "Groq devolvio una respuesta no valida")?;
     Ok(json)
 }
+
+// Exact digital zero only: do not classify quiet speech or noise as silence.
+fn digital_silence(bytes:&[u8])->bool {
+    let Ok(mut reader)=hound::WavReader::new(std::io::Cursor::new(bytes)) else{return false;};
+    if reader.duration()==0{return false;}
+    match reader.spec().sample_format {
+        hound::SampleFormat::Int=>reader.samples::<i32>().all(|s|matches!(s,Ok(0))),
+        hound::SampleFormat::Float=>reader.samples::<f32>().all(|s|s.is_ok_and(|v|v==0.)),
+    }
+}
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn exact_silence_never_suppresses_even_one_quiet_sample() {
+        for value in [0i16,1,-1,100] {
+            let mut bytes=std::io::Cursor::new(Vec::new());
+            {let mut writer=hound::WavWriter::new(&mut bytes,hound::WavSpec{channels:1,sample_rate:16000,bits_per_sample:16,sample_format:hound::SampleFormat::Int}).unwrap();
+            for _ in 0..16000{writer.write_sample(0i16).unwrap();}writer.write_sample(value).unwrap();writer.finalize().unwrap();}
+            assert_eq!(digital_silence(bytes.get_ref()),value==0);
+        }
+        assert!(!digital_silence(b"bad wav"));
+    }
     #[test]
     fn transcription_transport_reuses_connection_without_reusing_credentials() {
         use std::{io::{BufRead, BufReader, Write}, net::TcpListener,

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { convertFileSrc, invoke } from '@tauri-apps/api/core';
-import { ClipboardList, Copy, File, FolderOpen, Image, Link, Pencil, Pin, PinOff, RefreshCw, Search, Trash2, Type, Video } from 'lucide-react';
+import { Scissors, ClipboardList, Copy, File, FolderOpen, Image, Link, Pencil, Pin, PinOff, RefreshCw, Search, Trash2, Type, Video } from 'lucide-react';
 import { native } from './client';
 
 type LibraryImage = { imageId: string; width?: number; height?: number };
@@ -139,6 +139,7 @@ export default function LibraryBrowser() {
             <button className="library-icon" title="Copiar" aria-label="Copiar" disabled={busy} onClick={() => action(item, 'copy')}><Copy size={16}/></button>
             <button className="library-icon" title={item.pinned ? 'Desfijar' : 'Fijar'} aria-label={item.pinned ? 'Desfijar' : 'Fijar'} aria-pressed={item.pinned} disabled={busy} onClick={() => action(item, 'pin')}>{item.pinned ? <PinOff size={16}/> : <Pin size={16}/>}</button>
             {(kind === 'image' || item.data.paths?.some(path => /\.(png|jpe?g|webp)$/i.test(path))) && <button className="library-icon" title="Editar imagen" aria-label="Editar imagen" disabled={busy} onClick={() => void run(() => invoke('library_media_open', { id: item.id, mode: 'canvas' }), 'Editor abierto.')}><Pencil size={16}/></button>}
+            {(kind === 'video' || item.data.paths?.some(path => /\.(mp4|mov|mkv|webm)$/i.test(path))) && <button className="library-icon" title="Recortar video" aria-label="Recortar video" disabled={busy} onClick={() => void run(() => invoke('video_trim_open', { id: item.id }), 'Editor abierto.')}><Scissors size={16}/></button>}
             {hasFile && <button className="library-icon" title="Abrir ubicación" aria-label="Abrir ubicación" disabled={busy} onClick={() => action(item, 'reveal')}><FolderOpen size={16}/></button>}
             <button className="library-icon" title="Eliminar del historial" aria-label="Eliminar del historial" disabled={busy} onClick={() => setDeleting(item.id)}><Trash2 size={16}/></button>
           </div>

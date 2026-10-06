@@ -9,6 +9,7 @@ import FolderControls from './FolderControls';
 import { native, readSettings, type Settings } from './client';
 import { contrastInk } from './palette';
 import './floating-recorder.css';
+import {shallowEqual} from './shallow-equal';
 
 type State = { phase: string; seconds: number; error: string; text: string; muted: boolean; progress: string };
 const labels: Record<string, string> = { idle: 'Listo', recording: 'Grabando', paused: 'En pausa', processing: 'Transcribiendo', ready: 'Audio guardado', done: 'Transcripción lista', error: 'Revisar audio' };
@@ -40,8 +41,8 @@ export default function FloatingRecorder() {
     let disposed = false; let timer: ReturnType<typeof setTimeout>; let refreshed = 0;
     async function poll() {
       try {
-        if (native) { const value = await invoke<State>('recording_state'); if (!disposed) setState(value); }
-        if (Date.now() - refreshed > 1500) { const value = await readSettings(); if (!disposed) setSettings(value); refreshed = Date.now(); }
+        if (native) { const value = await invoke<State>('recording_state'); if (!disposed) setState(previous=>shallowEqual(previous,value)?previous:value); }
+        if (Date.now() - refreshed > 1500) { const value = await readSettings(); if (!disposed) setSettings(previous=>shallowEqual(previous,value)?previous:value); refreshed = Date.now(); }
       } catch (e) { if (!disposed) setError(String(e)); }
       finally { if (!disposed) timer = setTimeout(poll, 250); }
     }

@@ -31,7 +31,7 @@ fn authorized(app: &tauri::AppHandle, path: &Path) -> Result<(), String> {
         Err("Archivo fuera de la biblioteca".into())
     }
 }
-fn duration(stderr: &str) -> Option<f64> {
+pub(crate) fn duration(stderr: &str) -> Option<f64> {
     let time = stderr.split("Duration: ").nth(1)?.split(',').next()?;
     let parts: Vec<f64> = time
         .split(':')

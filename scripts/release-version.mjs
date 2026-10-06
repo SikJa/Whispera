@@ -1,6 +1,7 @@
 import {readFileSync,writeFileSync,appendFileSync,mkdirSync} from 'node:fs';
 import {execFileSync} from 'node:child_process';
 import {pathToFileURL} from 'node:url';
+import {updateMessage} from './publish-release.mjs';
 
 export function nextVersion(base,tags){
   const parse=v=>{const m=/^v?(\d+)\.(\d+)\.(\d+)$/.exec(v);return m?m.slice(1).map(Number):null;};
@@ -37,6 +38,7 @@ export function prepare(){
   const changes=execFileSync('git',['log','-n','8','--pretty=format:- %s'],{encoding:'utf8'}).trim();
   const notes=`# Whispera (K) ${version}\n\nActualización publicada automáticamente después de compilar y pasar las pruebas.\n\n${changes}\n\n${marker}\n`;
   writeFileSync('.local/release-notes.md',notes);
+  writeFileSync('.local/update-message.txt',updateMessage(readFileSync('docs/update-message.txt','utf8'))+'\n');
   writeFileSync('.local/release.json',JSON.stringify({version,sha,repo}));
   if(process.env.GITHUB_OUTPUT)appendFileSync(process.env.GITHUB_OUTPUT,`skip=false\nversion=${version}\n`);
   console.log(`Preparada versión ${version}`);

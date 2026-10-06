@@ -29,6 +29,9 @@ try {
     }
     await assertBeamAligned();
     async function drag(locator,dx,dy) {
+      // A committed crop still has two paint frames to finish. Raw mouse input
+      // bypasses Playwright actionability and would otherwise hit a disabled handle.
+      await page.waitForFunction(element=>!element.disabled,await locator.elementHandle());
       const box=await locator.boundingBox();const x=box.x+box.width/2,y=box.y+box.height/2;
       await frame.evaluate(e=>{window.originalBorder=e;window.originalBeam=e.querySelector('svg');});
       const committed=await page.evaluate(()=>structuredClone(window.editorContext.rect));

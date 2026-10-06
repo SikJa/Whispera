@@ -68,7 +68,9 @@ try{
   await page.waitForFunction(()=>document.querySelectorAll('.item-main').length===1,null,{timeout:15000});
   assert.equal(await page.locator('.item-main').getAttribute('data-id'),'video');
   await page.locator('.wh-video-time').waitFor();
+  await page.waitForFunction(()=>document.querySelector('.wh-video-time')?.textContent==='0:12');
   assert.equal(await page.locator('.wh-video-time').innerText(),'0:12');
+  await page.waitForFunction(()=>document.querySelector('.wh-video-tile img')?.naturalWidth>0);
   assert.ok(await page.locator('.wh-video-tile img').evaluate(image=>image.naturalWidth>0));
   await page.getByText('Voz transcrita',{exact:true}).waitFor();
   await page.locator('.item-main').hover();
@@ -116,6 +118,10 @@ try{
   const settingsText=await page.locator('.blade').innerText();
   assert.ok(!/COMUNIDAD|COMMUNITY|Edge-Drop v/i.test(settingsText));
   assert.ok(!settingsText.includes('Acceso rapido de capturas'));
+  await page.getByRole('button',{name:/^(Buscar actualizaciones|Abrir actualizaciones)$/}).click();
+  await page.waitForTimeout(150);
+  assert.ok(await page.evaluate(()=>window.__qa.calls.some(c=>c.command==='open_updates')),'Shelf updates must open the real Whispera updater');
+  assert.equal(await page.getByRole('button',{name:'Notificarme',exact:true}).count(),0,'No disconnected duplicate update preferences');
   await page.getByRole('button',{name:'Posición',exact:true}).click();
   await page.locator('.wh-edge-tabs').waitFor();
   assert.ok(await page.locator('.wh-edge-tabs button span').evaluateAll(labels=>labels.every(el=>el.scrollWidth<=el.clientWidth+1)));

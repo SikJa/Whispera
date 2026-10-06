@@ -11,6 +11,7 @@
 .capture-hud.capture-line-hud .capture-hud-time{gap:5px;margin-right:2px;flex:0 0 auto;white-space:nowrap}
 .capture-hud-controls .indicator-artwork[data-kind=camera][data-compact=true]{width:32px;height:30px}
 :root .capture-image-actions button{width:30px}
-:root .capture-image-actions .capture-copy{padding:0 6px;gap:4px;font-size:11px}
+:root .capture-image-actions .capture-copy{width:auto;min-width:74px;display:flex;flex-shrink:0;padding:0 8px;gap:5px;font-size:11px;white-space:nowrap;color:inherit;background:transparent;border-color:#ffffff26}
+:root .capture-image-actions .capture-copy:hover{background:#ffffff18;border-color:#ffffff40}
 @keyframes indicator-breathe{0%,100%{transform:translateY(0)}50%{transform:translateY(-3px)}}
 @media(prefers-reduced-motion:reduce){.indicator-artwork[data-active=true] img,.indicator-artwork[data-active=true] .indicator-tint{animation:none}}

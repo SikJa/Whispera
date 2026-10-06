@@ -103,7 +103,7 @@ fn retry_delay(failures:u32)->Duration {
 }
 fn idle(app:&tauri::AppHandle)->Result<(),String> {
     let engine=app.state::<crate::engine::Engine>();
-    if crate::health::busy(&engine.recorder.snapshot().phase)||engine.processing.load(Ordering::SeqCst)||crate::screen::busy(app)||app.state::<Updates>().work.load(Ordering::SeqCst)>0 {
+    if app.state::<crate::replay::Replay>().exporting.load(Ordering::SeqCst) || app.state::<crate::video_trim::Editors>().busy.load(Ordering::SeqCst) || crate::health::busy(&engine.recorder.snapshot().phase)||engine.processing.load(Ordering::SeqCst)||crate::screen::busy(app)||app.state::<Updates>().work.load(Ordering::SeqCst)>0 {
         return Err("Terminá el dictado, la transcripción o la captura antes de actualizar. Tu trabajo sigue abierto.".into());
     }
     Ok(())
@@ -149,6 +149,7 @@ pub async fn updater_install(app:tauri::AppHandle,window:tauri::WebviewWindow)->
             let backup=backup_dir.join(format!("before-{}-{}.sqlite",update.version,chrono::Utc::now().format("%Y%m%d-%H%M%S")));
             handle.state::<crate::storage::Store>().0.lock().map_err(|_|"Configuración ocupada")?.backup(rusqlite::DatabaseName::Main,&backup,None).map_err(|e|format!("No se pudo respaldar la configuración: {e}"))?;
             change(&handle,|s|{s.phase="installing".into();s.downloaded=bytes.len() as u64;s.total=Some(bytes.len() as u64);});
+            crate::replay::stop(&handle);
             update.install(bytes).map_err(|e|format!("No se pudo iniciar la instalación: {e}"))
         }).await.map_err(|e|e.to_string())?
     }.await;

@@ -40,7 +40,7 @@ pub fn capture(app: &tauri::AppHandle, active: bool) -> Result<(), String> {
     let store = app.state::<crate::storage::Store>();
     let settings: crate::storage::Settings = store.get("settings")?;
     let screen: crate::screen::Preferences = store.get("screen_preferences").unwrap_or_default();
-    let values = [settings.hotkey, screen.hotkey, screen.image_hotkey, crate::library::hotkey(app)];
+    let values:Vec<_> = [settings.hotkey, screen.hotkey, screen.image_hotkey, crate::library::hotkey(app),crate::replay::hotkey(app)].into_iter().filter(|key|!key.is_empty()).collect();
     state.active.store(true, Ordering::SeqCst);
     if active {
         // Windows consumes registered shortcuts before a focused input sees them.
@@ -177,7 +177,8 @@ pub async fn save_all_shortcuts(
             return Err("Termina la grabacion antes de cambiar los atajos".into());
         }
         let next = [parse(&voice)?, parse(&video)?, parse(&image)?, parse(&library)?];
-        if next.contains(&parse("Escape")?)
+        let replay_key=crate::replay::hotkey(&app);
+        if (!replay_key.is_empty() && next.contains(&parse(&replay_key)?)) || next.contains(&parse("Escape")?)
             || next.iter().enumerate().any(|(i, key)| next[..i].contains(key))
         {
             return Err("Elegi cuatro atajos distintos. Escape se reserva para salir.".into());

@@ -1,3 +1,5 @@
+import ReplaySettings from './ReplaySettings';
+import {shallowEqual} from './shallow-equal';
 import { useEffect, useRef, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import type { UnlistenFn } from '@tauri-apps/api/event';
@@ -51,7 +53,7 @@ export function ScreenOverlay() {
     })().catch(()=>{});
     return()=>{alive=false;if(imageUrl)URL.revokeObjectURL(imageUrl);off.forEach(remove=>remove());};
   },[]);
-  return !initialized ? null : editor?.rect ? <EditableCaptureFrame context={editor}/> : stage ? <ScreenIndicator rect={stage.rect} kind={stage.kind}/> : <ScreenSelection key={epoch} kind={kind} frameColor={frameColor} snapshot={snapshot} onPreparing={rect=>setStage({rect,kind})}/>;
+  return !initialized ? null : editor?.rect ? <EditableCaptureFrame context={editor}/> : stage ? <ScreenIndicator rect={stage.rect} kind={stage.kind}/> : <ScreenSelection key={epoch} kind={kind} frameColor={frameColor} snapshot={snapshot}/>;
 }
 export function ScreenSelection({kind='video',frameColor='#ffffff',snapshot,onPreparing}:{kind?:'video'|'image';frameColor?:string;snapshot?:string;onPreparing?:(rect:Rect)=>void}={}) {
   const [origin, setOrigin] = useState<Point>();
@@ -103,7 +105,9 @@ export function ScreenIndicator({rect:area,kind='video'}:{rect?:Rect;kind?:'vide
 
 export default function ScreenRecorder() {
   const [windowsShortcuts, setWindowsShortcuts] = useState(false);
-  useEffect(()=>{if(native)void invoke<boolean>('windows_capture_shortcuts').then(setWindowsShortcuts).catch(()=>{});},[]);
+  const [preferencesReady,setPreferencesReady]=useState(!native);
+  const [preferencesError,setPreferencesError]=useState('');
+  const [preferencesAttempt,setPreferencesAttempt]=useState(0);
   const [preferences, setPreferences] = useState<Preferences>(defaultCapturePreferences);
   const autosave=useAutoSave<Preferences>(async p=>{
     if(!native)return;
@@ -117,22 +121,26 @@ export default function ScreenRecorder() {
   useEffect(() => {
     if (!native) return;
     let alive = true;
-    invoke<Preferences>('screen_preferences').then(p => { if (alive) setPreferences({...defaultCapturePreferences,...p}); }).catch(e => { if (alive) setMessage(String(e)); });
+    setPreferencesReady(false);setPreferencesError('');
+    Promise.all([invoke<Preferences>('screen_preferences'),invoke<boolean>('windows_capture_shortcuts')]).then(([p,keys]) => {
+      if(alive){setPreferences({...defaultCapturePreferences,...p});setWindowsShortcuts(keys);setPreferencesReady(true);}
+    }).catch(e => { if (alive) setPreferencesError(String(e)); });
     let timer:ReturnType<typeof setTimeout>;
     const refresh = async () => {
-      try { if(document.visibilityState==='visible'){const s=await invoke<Status>('screen_status');if(alive)setStatus(s);} }
+      try { if(document.visibilityState==='visible'){const s=await invoke<Status>('screen_status');if(alive)setStatus(previous=>shallowEqual(previous,s)?previous:s);} }
       catch(e){if(alive)setMessage(String(e));}
       finally{if(alive)timer=setTimeout(refresh,500);}
     };
     void refresh();
     return () => { alive = false; clearInterval(timer); };
-  }, []);
+  }, [preferencesAttempt]);
   const run = async (action: () => Promise<unknown>, success = '') => {
     setBusy(true); setMessage('');
     try { await action(); setMessage(success); } catch (e) { setMessage(String(e)); } finally { setBusy(false); }
   };
-  const occupied = ['recording', 'paused', 'pausing', 'resuming', 'reframing', 'saving', 'cancelling', 'selecting', 'starting', 'editing'].includes(status.phase);
+  const occupied = !preferencesReady || ['recording', 'paused', 'pausing', 'resuming', 'reframing', 'saving', 'cancelling', 'selecting', 'starting', 'editing'].includes(status.phase);
   return <section className="screen-recorder-panel">
+    {preferencesError&&<p className="notice" role="alert">No se pudieron cargar las preferencias: {preferencesError} <button onClick={()=>setPreferencesAttempt(value=>value+1)}>Volver a cargar preferencias</button></p>}
     <>
       <h3>Audio predeterminado</h3>
       <VideoAudioSettings value={preferences.audio} disabled={occupied||busy} onChange={audio=>changePreferences({...preferences,audio})}/>
@@ -154,6 +162,7 @@ export default function ScreenRecorder() {
 
     {status.path && !occupied && <div className="screen-result"><p>{status.copied ? 'Video copiado. Pegalo con Ctrl+V.' : 'Video disponible. Podés volver a copiarlo.'}</p><button onClick={() => void run(() => invoke('screen_copy'), 'Video copiado para pegar.')}>Copiar video</button><button onClick={() => void run(() => invoke('screen_reveal'))}>Ver archivo temporal</button></div>}
     {(message || status.error) && <p role="status" className="notice">{message || status.error}</p>}
+    <ReplaySettings/>
     {!native && <p>La captura de pantalla requiere la aplicación de Windows.</p>}
   </section>;
 }

@@ -7,6 +7,11 @@ import './updates.css';
 
 export type UpdateStatus={currentVersion:string;version:string|null;notes:string;phase:string;downloaded:number;total:number|null;error:string};
 const initial:UpdateStatus={currentVersion:'',version:null,notes:'',phase:'idle',downloaded:0,total:null,error:''};
+export function briefUpdateNotes(notes:string){
+  const text=notes.replace(/^#{1,6}\s+.*$/gm,'').replace(/^\s*[-*]\s+/gm,'').replace(/\s+/g,' ').trim();
+  if(text.length<=280)return text;
+  const cut=text.slice(0,277);return cut.slice(0,cut.lastIndexOf(' ')>200?cut.lastIndexOf(' '):cut.length)+'…';
+}
 export function useUpdates(){
   const [status,setStatus]=useState(initial),[error,setError]=useState('');
   useEffect(()=>{
@@ -30,9 +35,9 @@ export default function UpdatesPanel({updater}:{updater:ReturnType<typeof useUpd
   const stages=['downloading','verifying','installing'];
   const stage=stages.indexOf(status.phase);
   const megabytes=(bytes:number)=>`${(bytes/1048576).toLocaleString('es-AR',{maximumFractionDigits:1})} MB`;
-  return <div className="updates-panel">
+  return <div className="updates-panel" data-updating={stage>=0}>
     <div className="form-row"><div><h2>Whispera (K)</h2><p>Versión instalada: {status.currentVersion||'Vista previa'}</p></div><button disabled={!native||busy} onClick={()=>void check()}><RefreshCw size={16}/>{status.phase==='checking'?'Buscando…':'Buscar actualizaciones'}</button></div>
-    {status.version&&<div className="update-card"><h3>Disponible: {status.version}</h3><p>Actualizá desde acá. Tus atajos, configuración e historial se conservan.</p>{status.notes&&<details><summary>Qué cambió</summary><div className="update-notes">{status.notes}</div></details>}<button className="update-install" disabled={busy} onClick={()=>void install()}><Download size={17}/>{status.phase==='installing'?'Instalando…':status.phase==='verifying'?'Verificando…':status.phase==='downloading'?'Descargando…':'Actualizar y reiniciar'}</button></div>}
+    {status.version&&<div className="update-card"><h3>Disponible: {status.version}</h3><p>Conservamos tus atajos, configuración e historial.</p>{status.notes&&<div className="update-notes">{briefUpdateNotes(status.notes)}</div>}<button className="update-install" disabled={busy} onClick={()=>void install()}><Download size={17}/>{status.phase==='installing'?'Instalando…':status.phase==='verifying'?'Verificando…':status.phase==='downloading'?'Descargando…':'Actualizar y reiniciar'}</button></div>}
     {status.phase==='current'&&<p role="status">Ya tenés la última versión.</p>}
     {status.phase==='idle'&&<p>Whispera comprueba si hay una versión nueva al iniciar y cada cinco minutos. Vos elegís cuándo instalarla.</p>}
     {stage>=0&&<div className="update-progress-card" role="status" aria-live="polite">

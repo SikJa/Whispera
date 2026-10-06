@@ -18,6 +18,8 @@ export function installNativeMock({kind='video',width=640,height=480,scale=1,set
       window.calls.push({command,args});
       if(command==='plugin:event|listen'){const id=next++;listeners.set(id,args);return id;}
       if(command==='plugin:event|unlisten')return;
+      if(command==='replay_preferences')return{enabled:false,seconds:60,audio:'none',folder:'',hotkey:''};
+      if(command==='replay_status')return{phase:'off',availableSeconds:0,encoder:'',error:''};
       if(command==='updater_status')return window.updateStatus;
       if(command==='updater_check'){
         if(window.failUpdateCheck)throw Error('No se pudo consultar la actualización');

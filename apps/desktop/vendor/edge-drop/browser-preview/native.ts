@@ -47,6 +47,7 @@ api.removeSubitem=(req:any)=>act('remove-part',req.id,req).then(()=>true);
 api.focusWindow=(focus:boolean)=>focus?invoke('library_window',{operation:'focus'}):Promise.resolve();
 api.minimizeWindow=()=>invoke('library_window',{operation:'hide'});
 api.quitApp=api.minimizeWindow;
+api.openWhisperaUpdates=()=>invoke('open_updates');
 api.revealFile=(path:string)=>{const item=state.items.find((i:any)=>i.data.paths?.includes(path)||i.data.imageId===path);return item?act('reveal',item.id,item.data.kind==='files'?{paths:[path]}:null):Promise.reject('Archivo inexistente');};
 const staged=new Set<string>();
 api.prestageDrag=(req:any)=>{const item=state.items.find((item:any)=>item.id===req.id);const path=req.imageId||req.paths?.[0]||item?.data.imageId||item?.data.images?.[0]?.imageId||item?.data.paths?.[0];if(path&&!staged.has(path)&&/\.(png|mp4|webm|mov|mkv|avi)$/i.test(path)){staged.add(path);void invoke('library_media_info',{path}).catch(()=>staged.delete(path));}};

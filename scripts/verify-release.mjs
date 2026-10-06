@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import {nextVersion} from './release-version.mjs';
-import {manifest} from './publish-release.mjs';
+import {manifest,updateMessage} from './publish-release.mjs';
 assert.equal(nextVersion('0.2.15',[]),'0.2.15');
 assert.equal(nextVersion('0.2.15',['v0.2.14']),'0.2.15');
 assert.equal(nextVersion('0.2.15',['v0.2.15','v0.2.16','v0.2.100-beta','invalid']),'0.2.17');
@@ -11,4 +11,8 @@ const m=manifest('0.2.15','kazu00001/Whispera-K','signature','Cambios');
 assert.equal(m.platforms['windows-x86_64'].url,'https://github.com/kazu00001/Whispera-K/releases/download/v0.2.15/Whispera_0.2.15_x64-setup.exe');
 assert.equal(m.platforms['windows-x86_64'].signature,'signature');
 assert.throws(()=>manifest('0.2.15','kazu00001/Whispera-K','',''));
+assert.equal(updateMessage(' Un mensaje breve. '),'Un mensaje breve.');
+assert.throws(()=>updateMessage(''));
+assert.throws(()=>updateMessage('x'.repeat(281)));
+assert.throws(()=>updateMessage('uno\ndos\ntres\ncuatro\ncinco'));
 console.log('PASS: release version increments and complete updater manifests. No publication performed.');

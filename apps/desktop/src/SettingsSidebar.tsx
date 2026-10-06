@@ -3,6 +3,7 @@
 import {useEffect,useId,useRef,useState} from 'react';
 import {createPortal} from 'react-dom';
 import {LayoutGroup,motion,useReducedMotion} from 'motion/react';
+import {ChevronDown} from 'lucide-react';
 import './settings-sidebar.css';
 
 type Item={id:string;name:string;icon:React.ComponentType<{size?:number}>;group?:string};
@@ -11,6 +12,11 @@ export default function SettingsSidebar({items,value,onChange,expanded,brand,upd
   brand:React.ReactNode;update:React.ReactNode;footer:React.ReactNode;count:number;
 }){
   const reduce=useReducedMotion(),group=useId();
+  const [spaceCollapsed,setSpaceCollapsed]=useState(()=>{try{return localStorage.getItem('whispera.sidebar.space-collapsed')==='true';}catch{return false;}});
+  useEffect(()=>{try{localStorage.setItem('whispera.sidebar.space-collapsed',String(spaceCollapsed));}catch{}},[spaceCollapsed]);
+  const sections:{name:string;items:Item[]}[]=[];
+  for(const item of items){if(item.group||!sections.length)sections.push({name:item.group??'',items:[]});sections[sections.length-1].items.push(item);}
+  const spaceId=useId();
   const [tip,setTip]=useState<{text:string;left:number;top:number}|null>(null);
   const timer=useRef<ReturnType<typeof setTimeout>|undefined>(undefined);
   const hide=()=>{clearTimeout(timer.current);setTip(null);};
@@ -27,8 +33,10 @@ export default function SettingsSidebar({items,value,onChange,expanded,brand,upd
       animate={{width:expanded?224:64}} transition={reduce?{duration:0}:{type:'spring',visualDuration:.3,bounce:0}} onPointerLeave={hide}>
       {brand}{update}
       <nav aria-label="Configuración" onScroll={hide}>
-        {items.map(item=><div className="sidebar-item-group" key={item.id}>
-          {item.group&&<p className="nav-group">{item.group}</p>}
+        {sections.map(section=><div className="sidebar-section" key={section.name}>
+          {section.name==='Tu espacio'?<button className="nav-group-toggle" aria-label="Tu espacio" aria-expanded={!spaceCollapsed} aria-controls={spaceId} onClick={()=>{hide();setSpaceCollapsed(value=>!value);}}><span>Tu espacio</span><ChevronDown size={13}/></button>:section.name&&<p className="nav-group">{section.name}</p>}
+          <div id={section.name==='Tu espacio'?spaceId:undefined} hidden={section.name==='Tu espacio'&&expanded&&spaceCollapsed}>
+          {section.items.map(item=><div className="sidebar-item-group" key={item.id}>
           <button aria-label={item.name} aria-current={value===item.id?'page':undefined}
             className={value===item.id?'active':''} onClick={()=>{hide();onChange(item.id);}}
             onPointerEnter={e=>{if(e.pointerType!=='touch')show(e.currentTarget,item.name);}}
@@ -38,6 +46,8 @@ export default function SettingsSidebar({items,value,onChange,expanded,brand,upd
             <item.icon size={17}/><span className="sidebar-label">{item.name}</span>
             {item.id==='dictionary'&&<small className="sidebar-count">{count}</small>}
           </button>
+        </div>)}
+          </div>
         </div>)}
       </nav>{footer}
     </motion.aside>

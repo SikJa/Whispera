@@ -1,10 +1,11 @@
+import VideoTrim from './VideoTrim';
 import UpdatesPanel, {useUpdates} from "./UpdatesPanel";
 import {listen as listenUpdate} from "@tauri-apps/api/event";
 import React, { useEffect, useState, useRef } from "react";
 import {useAutoSave,AutoSaveStatus} from './useAutoSave';
 import { createRoot } from "react-dom/client";
 import { Dialog, Modal, ModalOverlay } from "react-aria-components";
-import { AudioLines, BookOpen, Palette, Keyboard, History, Activity, ArrowUpRight, Search, Plus, Trash2, Check, Upload, X, Paintbrush, Download } from "lucide-react";
+import { AudioLines, BookOpen, Palette, Keyboard, History, Activity, ArrowUpRight, Search, Plus, Trash2, Check, Upload, X, Paintbrush, Download, Settings2 } from "lucide-react";
 import { CopyButton, SaveButton, SettingsSwitch } from "./ResourceControls";
 import { Button } from "../vendor/components/ui/button";
 import "@fontsource-variable/instrument-sans";
@@ -32,16 +33,18 @@ import { SetupGate } from './Onboarding';
 import GroqKeyGuide from './GroqKeyGuide';
 import { ShortcutSettings, CaptureHistory } from './CaptureSettings';
 import LibrarySettings from './LibrarySettings';
+import ApplicationSettings from './ApplicationSettings';
 
 const routes = [
   { id: "transcription", name: "Transcripción", icon: AudioLines, group: "Preferencias" },
-  { id: "dictionary", name: "Diccionario personal", icon: BookOpen },
   { id: "appearance", name: "Apariencia", icon: Palette },
   { id: "hotkey", name: "Atajos", icon: Keyboard },
   { id: "screen", name: "Capturas y video", icon: Play },
   { id: "sounds", name: "Sonidos", icon: Volume2 },
-  { id: "history", name: "Historial", icon: History, group: "Tu espacio" },
+  { id: "dictionary", name: "Diccionario personal", icon: BookOpen, group: "Tu espacio" },
+  { id: "history", name: "Historial", icon: History },
   { id: "library", name: "Portapapeles", icon: CopyButtonIcon },
+  { id: "application", name: "Aplicación", icon: Settings2, group: "Aplicación" },
   { id: "updates", name: "Actualizaciones", icon: Download },
   { id: "diagnostics", name: "Diagnóstico", icon: Activity },
 ] as const;
@@ -55,6 +58,7 @@ const descriptions: Record<Route, string> = {
   sounds: "Inicio y fin del dictado.",
   screen: "Seleccioná, marcá y pegá. Imagen o video, con tus atajos.",
   library: "Tu historial local de textos, imágenes, videos y archivos.",
+  application: "Cómo se inicia Whispera en tu computadora.",
 };
 
 function SettingsApp({sidebarExpanded}:{sidebarExpanded:boolean}) {
@@ -95,18 +99,19 @@ function SettingsApp({sidebarExpanded}:{sidebarExpanded:boolean}) {
   const history = data.history.filter(r => r.text.toLowerCase().includes(search.toLowerCase()));
   const title = routes.find(r => r.id === route)!.name;
 
-  return <div className="desktop-app" style={{ "--accent": data.settings.color } as React.CSSProperties}>
+  return <div className="desktop-app" style={{ "--accent": "#f4b59c" } as React.CSSProperties}>
     <SettingsSidebar items={routes} value={route} expanded={sidebarExpanded} count={data.rules.length}
       onChange={id=>{setRoute(id as Route);setSearch('');setMessage('');}}
       brand={<a className="desktop-brand" href="?view=settings"><span className="brand-mark"><img src="/brand/whispera-wave.svg" alt="" /></span><span className="brand-copy"><strong>Whispera</strong><small>Voz, capturas y video</small></span></a>}
       update={updater.status.version&&<button className="sidebar-update" aria-label="Actualización disponible" onClick={()=>setRoute('updates')}><Download size={16}/><span><strong>Actualización disponible</strong><small>Whispera {updater.status.version}</small></span><ArrowUpRight size={14}/></button>}
-      footer={<div className="sidebar-bottom"><a className="recorder-link" href="?view=record" onClick={e=>{if(api.native){e.preventDefault();void run(()=>invoke('open_recorder'),'Grabadora abierta');}}}><AudioLines size={18} /><span>Abrir grabadora</span><ArrowUpRight size={15} /></a></div>} />
+      footer={<div className="sidebar-bottom"><a className="recorder-link" href="?view=record" aria-label="Abrir o cerrar grabadora" aria-disabled={busy} onClick={e=>{if(api.native){e.preventDefault();if(!busy)void run(()=>invoke('toggle_recorder'),'');}}}><AudioLines size={18} /><span>Abrir grabadora</span><ArrowUpRight size={15} /></a></div>} />
     <div className="desktop-main" role="region" aria-label="Contenido de configuración" tabIndex={0}>
       <section className="desktop-content">
         <div className="page-heading"><div><h1>{title}</h1><p>{descriptions[route]}</p></div><AutoSaveStatus save={autosave}/></div>
         {message && <div className="notice" role="status">{message}<button aria-label="Cerrar aviso" onClick={() => setMessage("")}><X size={14} /></button></div>}
         <div className="settings-section">
         {route==='updates'&&<UpdatesPanel updater={updater}/>}
+        {route==='application'&&<ApplicationSettings/>}
         {route === 'screen' && <ScreenRecorder />}
         {route === 'library' && <LibrarySettings />}
         {route==='sounds'&&<SoundSettings settings={data.settings} patch={patch} onError={setMessage}/>}
@@ -171,4 +176,6 @@ if(!view||view==='settings')document.documentElement.dataset.settingsShell='true
 if (view?.startsWith('screen-')) document.documentElement.dataset.screenSelect = 'true';
 if (view === "record") document.documentElement.dataset.floating = "true";
 if(api.native&&view!=='screen-freeze'){ const heartbeat=()=>void invoke('ui_heartbeat').catch(()=>{}); heartbeat();setInterval(heartbeat,2000); }
-createRoot(document.getElementById("root")!).render(view === 'screen-freeze' ? <ScreenFrozen/> : view === 'screen-select' ? <ScreenOverlay /> : view === 'screen-ink' ? <ScreenInk/> : view === 'screen-hud' ? <ScreenHud/> : view === 'screen-tools' ? <ScreenTools/> : view === 'screen-indicator' ? <ScreenIndicator /> : view === "import" ? <FileImport/> : view === "sounds" ? <SoundLab /> : view === "recorder" ? <RecorderPreview /> : view === "record" ? <FloatingRecorder /> : view === "details" ? <Recorder /> : <SettingsRoot/>);
+createRoot(document.getElementById("root")!).render(view === 'video-trim' ? <VideoTrim/> : view === 'screen-freeze' ? <ScreenFrozen/> : view === 'screen-select' ? <ScreenOverlay /> : view === 'screen-ink' ? <ScreenInk/> : view === 'screen-hud' ? <ScreenHud/> : view === 'screen-tools' ? <ScreenTools/> : view === 'screen-indicator' ? <ScreenIndicator /> : view === "import" ? <FileImport/> : view === "sounds" ? <SoundLab /> : view === "recorder" ? <RecorderPreview /> : view === "record" ? <FloatingRecorder /> : view === "details" ? <Recorder /> : <SettingsRoot/>);
+
+import './plum-theme.css';

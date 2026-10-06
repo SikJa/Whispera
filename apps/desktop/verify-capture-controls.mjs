@@ -37,6 +37,19 @@ try{
   await page.waitForFunction(()=>window.videoStatus.phase==='paused');
   await camera.click();assert.equal(await page.evaluate(()=>window.videoStatus.phase),'paused');
   await page.screenshot({path:'../../.local/capture-controls-headless.png'});
+  const image=await browser.newPage({viewport:{width:260,height:56}});
+  await image.addInitScript(installNativeMock,{kind:'image',windowLabel:'image-hud'});
+  await image.goto(base+'/overlay.html?view=screen-hud');
+  const copy=image.getByRole('button',{name:'Copiar',exact:true});await copy.waitFor();
+  const styles=await copy.evaluate(button=>({width:button.clientWidth,scroll:button.scrollWidth,background:getComputedStyle(button).backgroundImage,color:getComputedStyle(button).color}));
+  assert.ok(styles.width>=72&&styles.scroll<=styles.width,'Copy text fits entirely');
+  assert.equal(styles.background,'none','No white gradient behind Copy');
+  const actions=await image.locator('.capture-image-actions').boundingBox();
+  for(const button of await image.locator('.capture-image-actions button').all()){
+    const box=await button.boundingBox();assert.ok(box.x>=actions.x&&box.x+box.width<=actions.x+actions.width,'Image actions fit native host');
+  }
+  await copy.click();await image.waitForFunction(()=>window.calls.some(call=>call.command==='screen_editor_action'&&call.args.action.action==='copy'));
+  await image.close();
   assert.deepEqual(errors,[]);
   console.log('PASS headless: no pixel dimensions; centered video controls; camera command preserves recording/paused state; all controls fit. IPC mocked.');
 }finally{await browser.close();await server?.close();}

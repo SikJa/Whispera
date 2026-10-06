@@ -28,7 +28,7 @@
 
 ## ¿Qué es?
 
-**Whispera 0.2.0** reúne dictado, portapapeles, captura de imágenes y video por región.
+**Whispera** reúne dictado, portapapeles, captura de imágenes y video por región.
 Esta actualización integra también el trabajo del fork
 [Whispera-K](https://github.com/kazu00001/Whispera-K), conservando su historial y créditos.
 El código de Whispera mantiene su licencia MIT; los componentes de terceros
@@ -43,6 +43,14 @@ Aparece como una **carpeta flotante transparente** sobre cualquier ventana. Grab
 - 🌐 **Español e inglés** — interfaz, instalador y guía inicial bilingüe
 
 ## Características
+
+### Novedades de 0.2.22
+
+- **Replay opcional:** guardar los últimos segundos de la pantalla principal, con duración y carpeta elegidas por vos y audio opcional. Después elegís el tramo que querés conservar y podés guardarlo con Ctrl+C. Con audio habilitado, se genera la transcripción del tramo seleccionado.
+- **Configuración más cómoda:** inicio con Windows desde la app, Tu espacio desplegable e importación de archivos en una ventana compacta.
+- **Correcciones y rendimiento:** recortes de Replay sin perder cuadros al inicio, atajos accesibles, preferencias protegidas durante la carga, recuperación ante errores de captura y menos trabajo repetido en la grabadora y el diccionario.
+
+Replay viene apagado y consume recursos mientras está habilitado. Los detalles de cambios, validación y límites están en [las notas de 0.2.22](docs/releases/0.2.22.md).
 
 La [versión 0.2.6](docs/releases/0.2.6.md) permite mover y redimensionar el
 recuadro de capturas y videos desde sus bordes, manteniendo el diseño redondeado

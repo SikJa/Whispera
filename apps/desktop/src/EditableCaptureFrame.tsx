@@ -61,7 +61,14 @@ export default function EditableCaptureFrame({context}:{context:CaptureContext})
         }
       }
     }catch(e){if(alive.current){current.current=d.rect;setRect(d.rect);setError(String(e));}}
-    finally{await invoke('screen_frame_drag',{active:false}).catch(()=>{});if(alive.current)setBusy(false);}
+    finally{
+      // Let the new border render before clipping the native window to its ring.
+      if(alive.current&&context.kind==='image')await Promise.race([
+        new Promise<void>(resolve=>requestAnimationFrame(()=>requestAnimationFrame(()=>resolve()))),
+        new Promise<void>(resolve=>setTimeout(resolve,80)),
+      ]);
+      await invoke('screen_frame_drag',{active:false}).catch(()=>{});if(alive.current)setBusy(false);
+    }
   };
   const props=(handle:SelectionHandle)=>({disabled:busy,onPointerDown:(e:PointerEvent<HTMLButtonElement>)=>start(e,handle),onPointerMove:move,onPointerUp:()=>void finish(),onPointerCancel:()=>void finish(true)});
   return <div className="screen-indicator" aria-label="Área de captura editable">

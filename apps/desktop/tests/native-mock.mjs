@@ -51,7 +51,8 @@ export function installNativeMock({kind='video',width=640,height=480,scale=1,set
         const canvas=document.createElement('canvas');canvas.width=(args.rect?.width??width)*scale;canvas.height=(args.rect?.height??height)*scale;
         const ctx=canvas.getContext('2d');ctx.fillStyle='#eeeeee';ctx.fillRect(0,0,canvas.width,canvas.height);
         if(command==='screen_editor_sample'){ctx.fillStyle='#3355aa';ctx.fillRect(0,0,canvas.width/2,canvas.height);}
-        return Array.from(Uint8Array.from(atob(canvas.toDataURL('image/png').split(',')[1]),v=>v.charCodeAt(0)));
+        const bytes=Uint8Array.from(atob(canvas.toDataURL('image/png').split(',')[1]),v=>v.charCodeAt(0));
+        return command==='screen_editor_image'?bytes.buffer:Array.from(bytes);
       }
       if(command==='screen_image_export'){if(window.failExport)throw Error('Portapapeles ocupado');window.exports.push(args);return true;}
     }

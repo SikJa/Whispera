@@ -496,7 +496,9 @@ pub(crate) fn set_frame_region(window: &tauri::WebviewWindow, rect: Option<Rect>
         use windows::Win32::Graphics::Gdi::{CreateRectRgn,CreateRoundRectRgn,CombineRgn,SetWindowRgn,DeleteObject,RGN_DIFF};
         let Ok(hwnd)=clone.hwnd() else {return;};
         let hwnd=windows::Win32::Foundation::HWND(hwnd.0);
-        let Some(rect)=rect else {SetWindowRgn(hwnd,None,true);return;};
+        // DWM/WebView presents the transparent document itself. Forcing an
+        // immediate background erase here flashes the monitor-sized surface.
+        let Some(rect)=rect else {SetWindowRgn(hwnd,None,false);return;};
         let dpi=clone.scale_factor().unwrap_or(1.);
         let edge=8.;
         let outer=CreateRoundRectRgn(((rect.x-edge)*dpi).floor() as i32,((rect.y-edge)*dpi).floor() as i32,
@@ -509,7 +511,7 @@ pub(crate) fn set_frame_region(window: &tauri::WebviewWindow, rect: Option<Rect>
         }
         let _=CombineRgn(Some(outer),Some(outer),Some(inner),RGN_DIFF);
         let _=DeleteObject(inner.into());
-        if SetWindowRgn(hwnd,Some(outer),true)==0 {let _=DeleteObject(outer.into());}
+        if SetWindowRgn(hwnd,Some(outer),false)==0 {let _=DeleteObject(outer.into());}
     }).map_err(|e|e.to_string())
 }
 #[tauri::command]

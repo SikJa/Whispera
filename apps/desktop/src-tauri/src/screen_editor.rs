@@ -508,7 +508,9 @@ pub(crate) fn resize(app:&tauri::AppHandle,source:&tauri::WebviewWindow,id:&str,
     for label in ["screen-tools","screen-hud"] {
         if let Some(window)=app.get_webview_window(&session::label(source.label(),label)){place_controls(&window,&ctx,region,monitor,editor.compact.load(Ordering::SeqCst))?;}
     }
-    screen::set_frame_region(source,Some(rect))?;
+    // The image border restores its hit-test region after the updated DOM frame.
+    // Video reframing may wait for an encoder, so restore its region immediately.
+    if ctx.kind=="video" {screen::set_frame_region(source,Some(rect))?;}
     for window in [Some(ink),app.get_webview_window(&session::label(source.label(),"screen-tools")),app.get_webview_window(&session::label(source.label(),"screen-hud")),Some(source.clone())].into_iter().flatten(){
         session::emit_window(&window,"screen-editor-reset",&ctx).map_err(|e|e.to_string())?;
     }
@@ -520,15 +522,15 @@ pub fn screen_editor_context(app:tauri::AppHandle,window:tauri::WebviewWindow) -
     context_for(&app,window.label())
 }
 #[tauri::command]
-pub fn screen_editor_image(app: tauri::AppHandle, id: String) -> Result<Vec<u8>, String> {
+pub fn screen_editor_image(app: tauri::AppHandle, id: String) -> Result<tauri::ipc::Response, String> {
     if context(&app, &id)?.kind != "image" {
         return Err("No hay una imagen activa".into());
     }
-    Ok(session::editor(&app,&id)
+    Ok(tauri::ipc::Response::new(session::editor(&app,&id)
         .image
         .lock()
         .map_err(|_| "Editor ocupado")?
-        .clone())
+        .clone()))
 }
 #[tauri::command]
 pub fn screen_editor_ready(

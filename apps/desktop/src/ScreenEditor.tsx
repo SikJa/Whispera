@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { PaletteContents } from './PalettePanel';
 import { selectionHex } from './palette';
@@ -150,25 +150,28 @@ function Ink({ context }: { context: Context }) {
     window.addEventListener('keydown',key);
     return () => { live.current = false; unlisten?.(); cancelAnimationFrame(frame.current); window.removeEventListener('keydown',key); };
   }, [context.id]);
-  useEffect(()=>{
+  useLayoutEffect(()=>{
     let alive=true,url='';
+    cancelAnimationFrame(frame.current);frame.current=0;
     const previous=previousRect.current,next=context.rect;
     if(previous&&next&&(previous.x!==next.x||previous.y!==next.y)){
       const shift=(marks:Mark[])=>marks.map(mark=>({...mark,points:mark.points.map(p=>({x:p.x+previous.x-next.x,y:p.y+previous.y-next.y}))}));
       history.current={past:history.current.past.map(shift),present:shift(history.current.present),future:history.current.future.map(shift)};
     }
     previousRect.current=next;draft.current=null;moving.current=null;setText(undefined);
+    // Changing canvas dimensions clears its bitmap. Repaint before the browser
+    // presents that frame, keeping the previous image until the new crop decodes.
+    draw();
     if(context.kind==='image')void(async()=>{
       working.current=true;setBusy(true);setError('');
-      const bytes=await invoke<number[]>('screen_editor_image',{id:context.id});
+      const bytes=await invoke<ArrayBuffer|number[]>('screen_editor_image',{id:context.id});
       if(!alive)return;
-      url=URL.createObjectURL(new Blob([new Uint8Array(bytes)],{type:'image/png'}));
+      url=URL.createObjectURL(new Blob([bytes instanceof ArrayBuffer?bytes:new Uint8Array(bytes)],{type:'image/png'}));
       const image=new Image();image.src=url;await image.decode();
       if(!alive)return;background.current=image;draw();
       // Re-cropping an already visible editor must not steal focus from its controls.
       if(!shown.current){await showWhenReady('screen_editor_ready',{id:context.id},()=>alive);if(alive)shown.current=true;}
     })().catch(e=>{if(alive)setError(String(e));}).finally(()=>{if(alive){working.current=false;setBusy(false);}});
-    else draw();
     return()=>{alive=false;if(url)URL.revokeObjectURL(url);};
   },[context.id,context.rect?.x,context.rect?.y,context.width,context.height]);
   useEffect(() => {

@@ -10,11 +10,13 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/kazu00001/Whispera-K/releases"><kbd>⬇ Descargar</kbd></a>&ensp;·&ensp;
+  <a href="https://github.com/kazu00001/Whispera-K/releases/latest"><kbd>⬇ Descargar última versión · Windows</kbd></a>&ensp;·&ensp;
   <a href="README.en.md">English</a>&ensp;·&ensp;
   <a href="https://console.groq.com/keys">Obtener clave Groq</a>&ensp;·&ensp;
   <a href="docs/PRIVACY.md">Privacidad</a>
 </p>
+
+<p align="center">En la última versión, abrí <strong>Assets</strong> y descargá <strong>Whispera_…_x64-setup.exe</strong>.<br/>Si ya tenés Whispera, buscá la actualización desde <strong>Configuración → Actualizaciones</strong>.</p>
 
 ---
 

@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/kazu00001/Whispera-K/releases"><kbd>⬇ Download</kbd></a>&ensp;·&ensp;
+  <a href="https://github.com/kazu00001/Whispera-K/releases/latest"><kbd>⬇ Download latest version · Windows</kbd></a>&ensp;·&ensp;
   <a href="README.md">Español</a>&ensp;·&ensp;
   <a href="https://console.groq.com/keys">Get a Groq key</a>&ensp;·&ensp;
   <a href="docs/PRIVACY.md">Privacy</a>

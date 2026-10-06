@@ -1,4 +1,6 @@
-export function installNativeMock({kind='video',width=640,height=480,scale=1,setupComplete=true,selectionPhase,frozenImage,adjustable=false}={}) {
+export function installNativeMock({kind='video',width=640,height=480,scale=1,setupComplete=true,selectionPhase,frozenImage,adjustable=false,windowLabel}={}) {
+  const view=new URLSearchParams(location.search).get('view');
+  const label=windowLabel??(view==='screen-select'?'screen-select-0':view==='screen-freeze'?'screen-freeze-0':view?.startsWith('screen-')?view:'main');
   window.calls=[]; const callbacks=new Map(), listeners=new Map();let next=1;
   window.videoPreferences={audio:'none',hotkey:'Control+Shift+F9',image_hotkey:'Control+Shift+F10',frame_color:'#ffffff',image_auto_copy:false};
   window.voiceShortcut='Alt+KeyZ';
@@ -6,10 +8,10 @@ export function installNativeMock({kind='video',width=640,height=480,scale=1,set
   window.videoStatus={phase:selectionPhase??(new URLSearchParams(location.search).get('view')==='screen-select'?'selecting':'idle'),seconds:0,path:'',error:'',copied:false};
   window.editorContext={id:'test-session',kind,width,height,scale};
   window.feedback={};window.exports=[];window.failExport=false;
-  window.emitNative=(event,payload)=>{for(const [id,v] of listeners)if(v.event===event)callbacks.get(v.handler)?.({event,id,payload});};
+  window.emitNative=(event,payload,target=label)=>{for(const [id,v] of listeners)if(v.event===event&&(v.target?.kind==='Any'||!v.target||v.target.label===target))callbacks.get(v.handler)?.({event,id,payload});};
   window.__TAURI_EVENT_PLUGIN_INTERNALS__={unregisterListener:(_,id)=>listeners.delete(id)};
   window.__TAURI_INTERNALS__={
-    metadata:{currentWindow:{label:'main'},currentWebview:{label:'main'}},
+    metadata:{currentWindow:{label},currentWebview:{label}},
     transformCallback:callback=>{const id=next++;callbacks.set(id,callback);return id;},
     invoke:async(command,args={})=>{
       window.calls.push({command,args});

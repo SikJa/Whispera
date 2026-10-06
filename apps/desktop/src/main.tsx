@@ -16,7 +16,8 @@ import FileImport from './FileImport';
 import ScreenRecorder, { ScreenOverlay, ScreenIndicator } from './ScreenRecorder';
 import { ScreenInk, ScreenTools, ScreenHud } from './ScreenEditor';
 import ScreenFrozen from './ScreenFrozen';
-import SoundLab, { soundPairs } from "./SoundLab";
+import SoundLab from "./SoundLab";
+import SoundSettings from "./SoundSettings";
 import { Pencil, Volume2, RotateCcw, Play, ClipboardList as CopyButtonIcon } from 'lucide-react';
 import { invoke } from "@tauri-apps/api/core";
 import { selectionHex } from "./palette";
@@ -99,7 +100,7 @@ function SettingsApp() {
         {route==='updates'&&<UpdatesPanel updater={updater}/>}
         {route === 'screen' && <ScreenRecorder />}
         {route === 'library' && <LibrarySettings />}
-        {route==='sounds'&&<><div className="form-row"><label htmlFor="sounds-on">Sonidos de grabación</label><SettingsSwitch id="sounds-on" label="Activar sonidos" checked={data.settings.sounds} onChange={v=>patch({sounds:v})}/></div><div className="form-row"><label htmlFor="sound-theme">Inicio y fin</label><select id="sound-theme" value={data.settings.soundTheme} onChange={e=>patch({soundTheme:e.target.value})}>{soundPairs.map(p=><option value={p.id} key={p.id}>{p.name}</option>)}</select></div><div className="page-actions">{(['start','stop'] as const).map(cue=><button key={cue} onClick={()=>{const audio=new Audio(`/sound-lab/${data.settings.soundTheme}-${cue}.wav`);audio.volume=.35;void audio.play().catch(e=>setMessage(String(e)));}}><Play size={15}/>{cue==='start'?'Escuchar inicio':'Escuchar fin'}</button>)}</div></>}
+        {route==='sounds'&&<SoundSettings settings={data.settings} patch={patch} onError={setMessage}/>}
         {route==='diagnostics'&&<><div className="form-row"><label htmlFor="watchdog">Recuperar interfaz sin respuesta</label><SettingsSwitch id="watchdog" label="Vigilancia de interfaz" checked={data.settings.watchdog} onChange={v=>patch({watchdog:v})}/></div><button disabled={!api.native||busy} onClick={()=>run(()=>invoke('restart_app'),'Reiniciando')}><RotateCcw size={16}/>Reiniciar Whispera</button></>}
         {route === "transcription" && <>
           <div className="provider-line"><div className="provider-logo"><AudioLines size={22} /></div><div><h2>Groq</h2><p>Proveedor de transcripción</p></div><span className="state-tag"><i />{data.keyConfigured ? "Clave guardada" : "Sin conectar"}</span></div>

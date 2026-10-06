@@ -199,6 +199,7 @@ fn process_with(
     Ok(transcript)
 }
 fn run(app: &tauri::AppHandle, video: &Path) -> Result<(), String> {
+    let _updating=crate::updates::work(app)?;
     let store = app.state::<Store>();
     let transcript = process(&store, video)?;
     // Never overwrite a clipboard which the user changed while Groq was working.

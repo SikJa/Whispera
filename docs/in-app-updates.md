@@ -1,30 +1,33 @@
 # Actualizaciones desde Whispera (K)
 
-Estado: diseño propuesto; todavía no implementado en 0.2.14.
+Implementado desde 0.2.15 para Windows x64.
 
-## Experiencia
+Configuración → Actualizaciones muestra la versión instalada, los cambios disponibles y «Actualizar y reiniciar». También se accede desde el menú de bandeja, que muestra la versión nueva cuando hay una actualización. La app consulta al iniciar y cada seis horas; la instalación siempre requiere pulsar el botón.
 
-- Configuración muestra la versión instalada y «Buscar actualizaciones».
-- Al abrir la app, una consulta discreta comprueba si hay una versión nueva. Sin consultas constantes ni avisos repetidos.
-- Cuando existe una actualización, muestra la versión y una lista corta de cambios con «Actualizar» y «Más tarde».
-- «Actualizar» descarga con progreso, verifica la firma, instala y vuelve a abrir Whispera.
-- Si hay dictado, transcripción, captura abierta o grabación de video, permite consultar la actualización pero espera a que termine el trabajo antes de instalar.
-- Conserva configuración, claves, atajos e historial. Si falla la descarga o la firma, mantiene la versión actual y permite reintentar.
+El instalador se descarga desde las releases de este repositorio mediante HTTPS y se verifica con la firma oficial de Tauri. Antes de instalar, se respalda SQLite y se conserva la carpeta de instalación. Whispera vuelve a abrirse al terminar. La clave Groq permanece en el almacén de credenciales de Windows.
 
-## Distribución
+No instala durante dictado, transcripción, captura abierta o video. Comprueba de nuevo después de descargar, por si comenzó otro trabajo mientras tanto. Durante la instalación se bloquea el inicio de trabajo nuevo. Los respaldos quedan en `update-backups`, junto a la base de datos del perfil.
 
-GitHub Releases sigue almacenando cada versión para descargarla y recuperar versiones anteriores. La aplicación consulta un manifiesto estable en `releases/latest/download/latest.json` del repositorio `kazu00001/Whispera-K`.
+## Publicar cambios
 
-Usar el plugin oficial de actualizaciones de Tauri 2. Cada instalador se firma con la clave privada del proyecto. La clave pública queda incluida en la app; la privada queda fuera del repositorio, con respaldo seguro, y se utiliza solamente al generar releases. El manifiesto incluye versión, cambios, URL del instalador y firma para Windows x64.
+1. Hacer commit y push a `main` en `kazu00001/Whispera-K`.
+2. «Publicar actualización» calcula una versión estable mayor que las publicadas, sincroniza Cargo y la configuración del build, y ejecuta pruebas.
+3. Compila y firma con el secreto cifrado `TAURI_SIGNING_PRIVATE_KEY`.
+4. Sube instalador, firma, checksum y `latest.json` a una release provisional. Verifica tamaños y hashes confirmados por GitHub antes de anunciarla como última versión.
+5. Las apps la detectan en la siguiente comprobación o al pulsar «Buscar actualizaciones».
 
-Publicar todos los archivos y comprobarlos antes de marcar la release como última versión. Mantener separadas las versiones preliminares. Un instalador sin firma o un manifiesto incompleto no se anuncian como actualización.
+Un fallo de compilación o pruebas no se anuncia como actualización. La publicación se ejecuta en serie para conservar el orden. Un workflow repetido para un commit ya publicado no crea otra versión. La versión calculada se aplica al build de ese commit; no genera commits automáticos en `main`.
 
-## Primera incorporación
+El workflow habitual de pruebas puede compilar instaladores sin firma; esos archivos no se anuncian como actualizaciones. No reemplazar una release ya publicada: publicar una versión nueva. Para una publicación manual, `scripts/publish-release.mjs` utiliza el instalador firmado y los metadatos `.local/release.json` y `.local/release-notes.md`.
 
-Las versiones actuales no consultan actualizaciones. Sus usuarios necesitan instalar una vez la primera versión que incluya el actualizador. Desde esa versión podrán actualizar desde Configuración.
+## Claves y primera instalación
 
-## Verificación antes de publicarlo
+La clave pública está incluida en la configuración. La privada está fuera del repo y como secreto cifrado de GitHub. Conservarla: perderla impediría firmar actualizaciones reconocidas por las versiones instaladas. Los archivos `.key` están excluidos del repositorio.
 
-Probar sin actualización, versión nueva, fallo de red, firma inválida, descarga interrumpida, grabación activa y conservación de datos. Probar una actualización real de un instalador firmado a otro en Windows, incluida instalación personalizada y reapertura. El flujo no se considera terminado con una prueba de interfaz simulada.
+Usuarios con 0.2.14 o anteriores deben instalar una vez la versión con el actualizador. Desde 0.2.15 las siguientes actualizaciones se ofrecen dentro de Whispera.
 
-Referencia: https://v2.tauri.app/es/plugin/updater/
+## Validación
+
+La prueba nativa descarga una pequeña fixture firmada por HTTP local y rechaza bytes alterados; el transporte de producción utiliza HTTPS. Las pruebas de interfaz simulan IPC para cubrir consulta, novedades, errores, progreso y bloqueo durante trabajo activo. La publicación comprueba también los archivos subidos a GitHub antes de habilitar la release.
+
+Referencia oficial: https://v2.tauri.app/plugin/updater/

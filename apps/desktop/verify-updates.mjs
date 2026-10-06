@@ -1,0 +1,37 @@
+import assert from 'node:assert/strict';
+import {launchSilentBrowser} from './tests/silent-browser.mjs';
+import {installNativeMock} from './tests/native-mock.mjs';
+const browser=await launchSilentBrowser();
+try{
+  const page=await browser.newPage();await page.addInitScript(installNativeMock,{});
+  await page.goto(process.env.WHISPERA_TEST_URL||'http://127.0.0.1:5190');
+  await page.getByRole('button',{name:'Actualizaciones',exact:true}).click();
+  await page.getByText('Versión instalada: 0.2.15').waitFor();
+  await page.getByRole('button',{name:'Buscar actualizaciones',exact:true}).click();
+  await page.getByText('Ya tenés la última versión.').waitFor();
+  await page.evaluate(()=>{window.failUpdateCheck=true;});
+  await page.getByRole('button',{name:'Buscar actualizaciones',exact:true}).click();
+  await page.getByRole('alert').waitFor();
+  await page.evaluate(()=>{window.failUpdateCheck=false;window.nextUpdate=true;});
+  await page.getByRole('button',{name:'Buscar actualizaciones',exact:true}).click();
+  await page.getByText('Disponible: 0.2.16').waitFor();
+  assert.equal(await page.getByRole('alert').count(),0);
+  await page.getByText('Qué cambió', {exact:true}).click();await page.getByText('Herramientas corregidas',{exact:true}).waitFor();
+  await page.evaluate(()=>{window.updateWorkActive=true;});
+  await page.getByRole('button',{name:'Actualizar y reiniciar',exact:true}).click();
+  await page.getByRole('alert').waitFor();
+  assert.equal(await page.evaluate(()=>window.updateStatus.phase),'available','active work must not start installation');
+  await page.evaluate(()=>{window.updateWorkActive=false;});
+  await page.getByRole('button',{name:'Actualizar y reiniciar',exact:true}).click();
+  await page.getByRole('progressbar',{name:'Descarga de actualización'}).waitFor();
+  assert.equal(await page.getByRole('progressbar').getAttribute('value'),'50');
+  assert.equal(await page.getByRole('button',{name:'Descargando…'}).isDisabled(),true);
+  await page.evaluate(()=>{window.updateStatus={...window.updateStatus,phase:'available'};window.emitNative('updater-status',window.updateStatus,'main');});
+  await page.getByRole('button',{name:'Capturas y video',exact:true}).click();
+  await page.getByRole('button',{name:'Ver actualización',exact:true}).waitFor();
+  await page.getByRole('button',{name:'Más tarde',exact:true}).click();
+  assert.equal(await page.getByRole('button',{name:'Ver actualización',exact:true}).count(),0);
+  await page.evaluate(()=>window.emitNative('updater-open',null,'main'));
+  await page.getByText('Disponible: 0.2.16').waitFor();
+  console.log('PASS: current/new updates, network retry, active-work guard, progress, deferred notice and tray navigation. IPC mocked.');
+}finally{await browser.close();}

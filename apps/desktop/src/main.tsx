@@ -1,3 +1,5 @@
+import UpdatesPanel, {useUpdates} from "./UpdatesPanel";
+import {listen as listenUpdate} from "@tauri-apps/api/event";
 import React, { useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { Dialog, Modal, ModalOverlay } from "react-aria-components";
@@ -36,6 +38,7 @@ const routes = [
   { id: "sounds", name: "Sonidos", icon: Volume2 },
   { id: "history", name: "Historial", icon: History, group: "Tu espacio" },
   { id: "library", name: "Portapapeles", icon: CopyButtonIcon },
+  { id: "updates", name: "Actualizaciones", icon: Download },
   { id: "diagnostics", name: "Diagnóstico", icon: Activity },
 ] as const;
 type Route = typeof routes[number]["id"];
@@ -43,13 +46,15 @@ const descriptions: Record<Route, string> = {
   transcription: "Tu voz, con tus preferencias.", dictionary: "Las palabras que tienen que salir bien.",
   appearance: "Una carpeta a tu manera.", color: "Encontrá tu color.",
   hotkey: "Dictado, video y capturas, cada uno con su combinación.", history: "Transcripciones, capturas y videos, en un lugar.",
-  diagnostics: "El estado de Whispera.",
+  diagnostics: "El estado de Whispera.", updates: "Siempre al día, sin salir de la aplicación.",
   sounds: "Inicio y fin del dictado.",
   screen: "Seleccioná, marcá y pegá. Imagen o video, con tus atajos.",
   library: "Tu historial local de textos, imágenes, videos y archivos.",
 };
 
 function SettingsApp() {
+  const updater=useUpdates();
+  const [dismissedUpdate,setDismissedUpdate]=useState<string>();
   const [historyKind,setHistoryKind] = useState<'text'|'captures'>('text');
   const [data, setData] = useState<api.Snapshot>();
   const [route, setRoute] = useState<Route>("transcription");
@@ -70,6 +75,7 @@ function SettingsApp() {
     void invoke<api.Transcript[]>('read_history').then(history=>{if(alive)setData(d=>d?{...d,history}:d);}).catch(e=>{if(alive)setMessage(String(e));});
     return()=>{alive=false;};
   },[route]);
+  useEffect(()=>{if(!api.native)return;let alive=true;let off:(()=>void)|undefined;void listenUpdate('updater-open',()=>{if(alive)setRoute('updates');},{target:'main'}).then(remove=>{if(alive)off=remove;else remove();});return()=>{alive=false;off?.();};},[]);
   const run = async (work: () => Promise<unknown>, success: string) => { setBusy(true); try { await work(); await refresh(); setMessage(success); return true; } catch (error) { setMessage(String(error)); return false; } finally { setBusy(false); } };
   if (!data) return <div className="desktop-loading" role="status">{message || "Cargando configuración…"}</div>;
   const patch = (change: Partial<api.Settings>) => setData({ ...data, settings: { ...data.settings, ...change } });
@@ -88,7 +94,9 @@ function SettingsApp() {
       <section className="desktop-content">
         <div className="page-heading"><div><h1>{title}</h1><p>{descriptions[route]}</p></div>{["transcription", "appearance", "color", "sounds", "diagnostics"].includes(route) && <SaveButton key={route} busy={busy} onSave={save} />}</div>
         {message && <div className="notice" role="status">{message}<button aria-label="Cerrar aviso" onClick={() => setMessage("")}><X size={14} /></button></div>}
+        {updater.status.version&&route!=='updates'&&dismissedUpdate!==updater.status.version&&<div className="update-banner" role="status"><span>Whispera {updater.status.version} disponible</span><button onClick={()=>setRoute('updates')}>Ver actualización</button><button onClick={()=>setDismissedUpdate(updater.status.version!)}>Más tarde</button></div>}
         <SectionReveal key={route}>
+        {route==='updates'&&<UpdatesPanel updater={updater}/>}
         {route === 'screen' && <ScreenRecorder />}
         {route === 'library' && <LibrarySettings />}
         {route==='sounds'&&<><div className="form-row"><label htmlFor="sounds-on">Sonidos de grabación</label><SettingsSwitch id="sounds-on" label="Activar sonidos" checked={data.settings.sounds} onChange={v=>patch({sounds:v})}/></div><div className="form-row"><label htmlFor="sound-theme">Inicio y fin</label><select id="sound-theme" value={data.settings.soundTheme} onChange={e=>patch({soundTheme:e.target.value})}>{soundPairs.map(p=><option value={p.id} key={p.id}>{p.name}</option>)}</select></div><div className="page-actions">{(['start','stop'] as const).map(cue=><button key={cue} onClick={()=>{const audio=new Audio(`/sound-lab/${data.settings.soundTheme}-${cue}.wav`);audio.volume=.35;void audio.play().catch(e=>setMessage(String(e)));}}><Play size={15}/>{cue==='start'?'Escuchar inicio':'Escuchar fin'}</button>)}</div></>}

@@ -1,0 +1,8 @@
+.updates-panel button,.update-banner button{display:inline-flex;align-items:center;gap:8px}
+.updates-panel h2{margin:0;font-size:20px}.updates-panel p{color:#b8b8be;line-height:1.5}
+.update-card{margin-top:20px;padding:20px;border:1px solid #ffffff20;border-radius:16px;background:#ffffff04}
+.update-card h3{margin-top:0}.update-card details{margin:16px 0}.update-card summary{cursor:pointer}
+.update-notes{white-space:pre-wrap;overflow-wrap:anywhere;max-height:260px;overflow:auto;color:#babac0;margin-top:12px;font-size:13px;line-height:1.6}
+.update-install{margin-top:12px}.updates-panel progress{width:100%;margin:16px 0 8px;accent-color:var(--accent)}
+.updates-panel .update-error{color:#ffb7b7}.update-banner{display:flex;align-items:center;flex-wrap:wrap;gap:12px;padding:12px 16px;margin-bottom:16px;border:1px solid #ffffff26;border-radius:12px;background:#ffffff06}
+.update-banner span{flex:1}.update-banner button{font-size:12px}

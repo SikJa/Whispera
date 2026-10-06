@@ -31,7 +31,10 @@ jobs:
         run: cargo test --locked
       - name: Build installer
         working-directory: apps/desktop
-        run: npm run tauri build -- --bundles nsis
+        shell: pwsh
+        run: |
+          '{"bundle":{"createUpdaterArtifacts":false}}' | Set-Content unsigned-build.json
+          npm run tauri build -- --bundles nsis --config unsigned-build.json
       - name: Install headless browser
         working-directory: apps/desktop
         run: npx playwright install chromium

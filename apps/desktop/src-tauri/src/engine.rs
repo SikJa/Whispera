@@ -91,6 +91,7 @@ pub async fn recording_action(action: String, app: tauri::AppHandle) -> Result<(
         .map_err(|e| e.to_string())?
 }
 pub fn control(app: &tauri::AppHandle, action: &str) -> Result<(), String> {
+    let _updating = crate::updates::work(app)?;
     // Capture before microphone/keyring initialization can yield or change focus.
     let original_target = if action == "start" { crate::paste::capture() } else { None };
     let engine = app.state::<Engine>();
@@ -353,6 +354,7 @@ async fn process(app: &tauri::AppHandle, id: &str) -> Result<String, String> {
 }
 #[tauri::command]
 pub fn retry_recording(id: String, app: tauri::AppHandle) -> Result<(), String> {
+    let _updating=crate::updates::work(&app)?;
     let engine = app.state::<Engine>();
     let _guard = engine.gate.lock().map_err(|_| "Motor ocupado")?;
     if ["recording", "paused", "processing"].contains(&engine.recorder.snapshot().phase.as_str()) {

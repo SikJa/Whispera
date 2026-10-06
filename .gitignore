@@ -19,3 +19,6 @@ Thumbs.db
 .codex/
 .agents/
 __pycache__/
+
+# Private signing keys never belong in the public repository.
+*.key

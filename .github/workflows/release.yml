@@ -1,0 +1,66 @@
+name: Publicar actualización
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: write
+concurrency:
+  group: whispera-stable-release
+  cancel-in-progress: false
+jobs:
+  release:
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: apps/desktop/package-lock.json
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Preparar versión nueva
+        id: version
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: node scripts/release-version.mjs
+      - name: Revisar fuente
+        if: steps.version.outputs.skip != 'true'
+        run: node scripts/check-source.mjs
+      - name: Instalar dependencias
+        if: steps.version.outputs.skip != 'true'
+        working-directory: apps/desktop
+        run: npm ci
+      - name: Instalar dependencias de biblioteca
+        if: steps.version.outputs.skip != 'true'
+        working-directory: apps/desktop/vendor/edge-drop
+        run: npm ci --ignore-scripts
+      - name: Pruebas nativas
+        if: steps.version.outputs.skip != 'true'
+        working-directory: apps/desktop/src-tauri
+        run: cargo test --locked
+      - name: Compilar y firmar
+        if: steps.version.outputs.skip != 'true'
+        working-directory: apps/desktop
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ''
+        run: npm run tauri build -- --bundles nsis --ci
+      - name: Instalar navegador de pruebas
+        if: steps.version.outputs.skip != 'true'
+        working-directory: apps/desktop
+        run: npx playwright install chromium
+      - name: Probar interfaz y publicación
+        if: steps.version.outputs.skip != 'true'
+        run: |
+          node scripts/verify-release.mjs
+          cd apps/desktop
+          npm run test:release
+      - name: Publicar archivos completos
+        if: steps.version.outputs.skip != 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: node scripts/publish-release.mjs

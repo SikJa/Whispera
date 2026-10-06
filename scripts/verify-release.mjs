@@ -1,0 +1,14 @@
+import assert from 'node:assert/strict';
+import {nextVersion} from './release-version.mjs';
+import {manifest} from './publish-release.mjs';
+assert.equal(nextVersion('0.2.15',[]),'0.2.15');
+assert.equal(nextVersion('0.2.15',['v0.2.14']),'0.2.15');
+assert.equal(nextVersion('0.2.15',['v0.2.15','v0.2.16','v0.2.100-beta','invalid']),'0.2.17');
+assert.equal(nextVersion('0.2.15',['v1.0.0']),'1.0.1');
+assert.equal(nextVersion('1.0.0',['v0.99.99']),'1.0.0');
+assert.throws(()=>nextVersion('bad',[]));
+const m=manifest('0.2.15','kazu00001/Whispera-K','signature','Cambios');
+assert.equal(m.platforms['windows-x86_64'].url,'https://github.com/kazu00001/Whispera-K/releases/download/v0.2.15/Whispera_0.2.15_x64-setup.exe');
+assert.equal(m.platforms['windows-x86_64'].signature,'signature');
+assert.throws(()=>manifest('0.2.15','kazu00001/Whispera-K','',''));
+console.log('PASS: release version increments and complete updater manifests. No publication performed.');

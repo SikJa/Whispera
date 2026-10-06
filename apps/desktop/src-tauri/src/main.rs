@@ -1,4 +1,5 @@
 #![cfg_attr(target_os = "windows", windows_subsystem = "windows")]
+mod updates;
 mod audio;
 mod capture_history;
 mod capture_session;
@@ -128,6 +129,7 @@ async fn transcribe_file(
     app: tauri::AppHandle,
     store: State<'_, Store>,
 ) -> Result<String, String> {
+    let _updating = updates::work(&app)?;
     let engine = app.state::<engine::Engine>();
     {
         let _lock = engine.gate.lock().map_err(|_| "Motor ocupado")?;
@@ -315,6 +317,7 @@ fn main() {
         .plugin(tauri_plugin_autostart::Builder::new().app_name("Whispera").args(["--autostart"]).build())
         // Launching again must not turn the background dictation tool into a visible window.
         .plugin(tauri_plugin_single_instance::init(|_, _, _| {}))
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(
@@ -429,6 +432,8 @@ fn main() {
             app.manage(capture_session::ImageCapture::default());
             app.manage(screen_editor::Editor::default());
             app.manage(engine::Engine::new(dir.clone()).map_err(std::io::Error::other)?);
+            app.manage(updates::Updates::default());
+            updates::start(app.handle());
             health::start(app.handle());
             retention::start(app.handle());
             let settings: Settings = app
@@ -463,11 +468,13 @@ fn main() {
             let video = MenuItem::with_id(app, "screen", "Iniciar video", true, None::<&str>)?;
             let image =
                 MenuItem::with_id(app, "screenshot", "Capturar imagen", true, None::<&str>)?;
+            let update_menu=MenuItem::with_id(app,"updates","Buscar actualizaciones",true,None::<&str>)?;
+            app.manage(updates::UpdateMenu(update_menu.clone()));
             let quit = MenuItem::with_id(app, "quit", "Salir / Quit Whispera", true, None::<&str>)?;
             let library_menu = MenuItem::with_id(app, "library", "Biblioteca / Portapapeles", true, None::<&str>)?;
             let sep = PredefinedMenuItem::separator(app)?;
             let menu =
-                Menu::with_items(app, &[&record, &video, &image, &import, &library_menu, &show, &sep, &quit])?;
+                Menu::with_items(app, &[&record, &video, &image, &import, &library_menu, &show, &update_menu, &sep, &quit])?;
             tauri::tray::TrayIconBuilder::new()
                 .icon(app.default_window_icon().unwrap().clone())
                 .tooltip("Whispera")
@@ -476,6 +483,10 @@ fn main() {
                     "library" => { let app=app.clone(); tauri::async_runtime::spawn(async move { let _ = library::library_toggle(app).await; }); }
                     "settings" => {
                         if let Err(error) = open_settings(app.clone()) { let _ = app.state::<Store>().event(&error); }
+                    }
+                    "updates" => {
+                        let _=open_settings(app.clone());
+                        let _=tauri::Emitter::emit_to(app,"main","updater-open",());
                     }
                     "recorder" => {
                         let app = app.clone();
@@ -532,6 +543,7 @@ fn main() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            updates::updater_status, updates::updater_check, updates::updater_install,
             library::library_state,
             library::library_collect,
             library::library_action,

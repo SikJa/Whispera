@@ -1,0 +1,35 @@
+import {readFileSync,writeFileSync,existsSync} from 'node:fs';
+import {createHash} from 'node:crypto';
+import {execFileSync} from 'node:child_process';
+import {pathToFileURL} from 'node:url';
+export function manifest(version,repo,signature,notes){
+  if(!/^\d+\.\d+\.\d+$/.test(version)||!/^[-\w]+\/[-\w]+$/.test(repo)||!signature.trim())throw Error('Datos de actualización incompletos');
+  return {version,notes,pub_date:new Date().toISOString(),platforms:{'windows-x86_64':{signature:signature.trim(),url:`https://github.com/${repo}/releases/download/v${version}/Whispera_${version}_x64-setup.exe`}}};
+}
+export function publish(){
+  const gh=process.env.WHISPERA_GH||'gh';
+  const info=JSON.parse(readFileSync('.local/release.json','utf8'));
+  const {version,sha,repo}=info,tag=`v${version}`;
+  const dir='apps/desktop/src-tauri/target/release/bundle/nsis';
+  const name=`Whispera_${version}_x64-setup.exe`,exe=`${dir}/${name}`,sig=exe+'.sig';
+  if(!existsSync(exe)||!existsSync(sig))throw Error('Falta el instalador firmado');
+  const notes=readFileSync('.local/release-notes.md','utf8');
+  const latest=`${dir}/latest.json`,checksum=exe+'.sha256';
+  writeFileSync(latest,JSON.stringify(manifest(version,repo,readFileSync(sig,'utf8'),notes),null,2)+'\n');
+  const hash=createHash('sha256').update(readFileSync(exe)).digest('hex');
+  writeFileSync(checksum,`${hash}  ${name}\n`);
+  let release;
+  try{release=JSON.parse(execFileSync(gh,['api',`repos/${repo}/releases/tags/${tag}`],{encoding:'utf8',stdio:['ignore','pipe','ignore']}));}catch{}
+  if(release&&!release.draft)throw Error('Esta versión ya está publicada; no se reemplaza un instalador anunciado');
+  if(!release)execFileSync(gh,['release','create',tag,'--repo',repo,'--target',sha,'--draft','--title',`Whispera (K) ${version}`,'--notes-file','.local/release-notes.md'],{stdio:'inherit'});
+  execFileSync(gh,['release','upload',tag,exe,sig,checksum,latest,'--repo',repo,'--clobber'],{stdio:'inherit'});
+  release=JSON.parse(execFileSync(gh,['api',`repos/${repo}/releases/tags/${tag}`],{encoding:'utf8'}));
+  for(const file of [exe,sig,checksum,latest]){
+    const asset=release.assets.find(a=>a.name===file.split('/').at(-1));
+    const data=readFileSync(file),digest='sha256:'+createHash('sha256').update(data).digest('hex');
+    if(!asset||asset.state!=='uploaded'||asset.size!==data.length||asset.digest!==digest)throw Error('GitHub no confirmó el archivo completo: '+file);
+  }
+  execFileSync(gh,['release','edit',tag,'--repo',repo,'--draft=false','--latest'],{stdio:'inherit'});
+  console.log(`Publicada y verificable desde Whispera: https://github.com/${repo}/releases/tag/${tag}`);
+}
+if(process.argv[1]&&import.meta.url===pathToFileURL(process.argv[1]).href)publish();

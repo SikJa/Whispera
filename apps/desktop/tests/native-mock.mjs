@@ -1,6 +1,7 @@
 export function installNativeMock({kind='video',width=640,height=480,scale=1,setupComplete=true,selectionPhase,frozenImage,adjustable=false,windowLabel}={}) {
   const view=new URLSearchParams(location.search).get('view');
   const label=windowLabel??(view==='screen-select'?'screen-select-0':view==='screen-freeze'?'screen-freeze-0':view?.startsWith('screen-')?view:'main');
+  window.updateStatus={currentVersion:'0.2.15',version:null,notes:'',phase:'idle',downloaded:0,total:null,error:''};
   window.calls=[]; const callbacks=new Map(), listeners=new Map();let next=1;
   window.videoPreferences={audio:'none',hotkey:'Control+Shift+F9',image_hotkey:'Control+Shift+F10',frame_color:'#ffffff',image_auto_copy:false};
   window.voiceShortcut='Alt+KeyZ';
@@ -17,6 +18,16 @@ export function installNativeMock({kind='video',width=640,height=480,scale=1,set
       window.calls.push({command,args});
       if(command==='plugin:event|listen'){const id=next++;listeners.set(id,args);return id;}
       if(command==='plugin:event|unlisten')return;
+      if(command==='updater_status')return window.updateStatus;
+      if(command==='updater_check'){
+        if(window.failUpdateCheck)throw Error('No se pudo consultar la actualización');
+        window.updateStatus={...window.updateStatus,version:window.nextUpdate?'0.2.16':null,notes:'Herramientas corregidas',phase:window.nextUpdate?'available':'current'};
+        window.emitNative('updater-status',window.updateStatus,'main');return window.updateStatus;
+      }
+      if(command==='updater_install'){
+        if(window.updateWorkActive)throw Error('Terminá el dictado, la transcripción o la captura antes de actualizar. Tu trabajo sigue abierto.');
+        window.updateStatus={...window.updateStatus,phase:'downloading',downloaded:50,total:100};window.emitNative('updater-status',window.updateStatus,'main');
+      }
       if(command==='setup_info')return{complete:setupComplete||localStorage.getItem('test.setup.complete')==='true',startup:false,microphone:'Micrófono de prueba'};
       if(command==='complete_setup')localStorage.setItem('test.setup.complete','true');
       if(command==='snapshot')return{settings:{color:'#9024DC',hotkey:window.voiceShortcut,language:'es',autoPaste:true},rules:[],history:[],logs:[],keyConfigured:false,native:true};

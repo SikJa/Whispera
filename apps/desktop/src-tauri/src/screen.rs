@@ -400,6 +400,7 @@ pub fn select_image(app: &tauri::AppHandle) -> Result<(), String> {
     select_locked(app,&screen,"image")
 }
 fn select_locked(app: &tauri::AppHandle, screen: &Screen, kind: &str) -> Result<(), String> {
+    let _updating=crate::updates::work(app)?;
     if screen.busy() {
         return Err("Ya hay una grabacion o seleccion de pantalla".into());
     }

@@ -1,0 +1,25 @@
+.settings-window .desktop-app{grid-template-columns:max-content minmax(0,1fr)}
+.settings-window .settings-sidebar{padding-inline:8px}
+.settings-sidebar .brand-copy,.settings-sidebar .sidebar-label,.settings-sidebar .sidebar-count{white-space:nowrap;transition:opacity .1s ease}
+.settings-sidebar nav button{position:relative;isolation:isolate;overflow:hidden}
+.settings-window .settings-sidebar nav button.active{background:transparent}
+.settings-sidebar .sidebar-active-surface{position:absolute;inset:0;border-radius:8px;background:linear-gradient(180deg,#efede6,#e3dfd5);z-index:-1}
+.settings-sidebar nav button>svg{position:relative}.settings-sidebar nav button:active>svg{transform:scale(.96)}
+.settings-window .settings-sidebar[data-expanded=false] .brand-copy,.settings-window .settings-sidebar[data-expanded=false] .sidebar-label,.settings-window .settings-sidebar[data-expanded=false] .sidebar-count{opacity:0;pointer-events:none}
+.settings-window .settings-sidebar[data-expanded=false] .desktop-brand{padding-inline:5px;overflow:hidden}
+.settings-window .settings-sidebar[data-expanded=false] nav button{justify-content:flex-start;padding-inline:15px;gap:12px}
+.settings-window .settings-sidebar[data-expanded=false] .nav-group{font-size:0;height:18px;margin:0;padding:0}
+.settings-window .settings-sidebar[data-expanded=false] .sidebar-update{padding:10px;justify-content:center;margin:0 0 8px}
+.settings-sidebar[data-expanded=false] .sidebar-update>span,.settings-sidebar[data-expanded=false] .sidebar-update>svg:last-child{display:none}
+.settings-window .settings-sidebar[data-expanded=false] .sidebar-bottom{display:flex;align-items:center;padding-inline:0}
+.settings-sidebar[data-expanded=false] .recorder-link{justify-content:center;width:100%;padding:10px}.settings-sidebar[data-expanded=false] .recorder-link>span,.settings-sidebar[data-expanded=false] .recorder-link>svg:last-child,.settings-sidebar[data-expanded=false] .engine-status{display:none}
+.settings-sidebar .recorder-link{white-space:nowrap}
+.settings-window .settings-sidebar .nav-group{margin:0;padding:7px 10px 5px;line-height:14px}
+.settings-window .settings-sidebar nav{gap:2px}
+.settings-window .settings-sidebar nav button:not([data-slot]){min-height:32px;height:32px;padding:6px 10px}
+.settings-window .settings-sidebar .desktop-brand{padding-bottom:16px}
+.settings-window .settings-sidebar .sidebar-bottom{display:flex;flex-direction:column;align-items:stretch;gap:6px}
+.settings-sidebar .engine-status{white-space:nowrap}
+.sidebar-tooltip{position:fixed;z-index:1000;display:flex;align-items:center;min-height:32px;padding:0 11px;border-radius:8px;pointer-events:none;white-space:nowrap;font:500 12px "Instrument Sans Variable","Segoe UI",sans-serif;color:#171916;background:#eeeae2;box-shadow:0 5px 16px #0004}
+@media(max-width:640px){.settings-window .settings-sidebar[data-expanded=true] .brand-copy,.settings-window .settings-sidebar[data-expanded=true] .nav-group,.settings-window .settings-sidebar[data-expanded=true] .sidebar-bottom,.settings-window .settings-sidebar[data-expanded=true] nav button span{display:flex}.settings-window .settings-sidebar[data-expanded=true] .nav-group{display:block}.settings-window .settings-sidebar[data-expanded=true] nav button{justify-content:flex-start;padding:9px 10px}.settings-window .settings-sidebar[data-expanded=true] .sidebar-update>span{display:block}.settings-window .settings-sidebar[data-expanded=true] .sidebar-update>svg:last-child{display:block}}
+@media(prefers-reduced-motion:reduce){.settings-sidebar .brand-copy,.settings-sidebar .sidebar-label,.settings-sidebar .sidebar-count{transition:none}}

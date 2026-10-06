@@ -246,6 +246,18 @@ fn prepare_recorder(app: tauri::AppHandle, visible: bool) -> Result<(), String> 
 }
 
 #[tauri::command]
+fn settings_window_action(window:tauri::WebviewWindow,action:String)->Result<bool,String>{
+    if window.label()!="main"{return Err("Control disponible únicamente en Configuración".into());}
+    match action.as_str(){
+        "state"=>{},
+        "minimize"=>window.minimize().map_err(|e|e.to_string())?,
+        "maximize"=>{if window.is_maximized().map_err(|e|e.to_string())?{window.unmaximize().map_err(|e|e.to_string())?;}else{window.maximize().map_err(|e|e.to_string())?;}},
+        "close"=>window.close().map_err(|e|e.to_string())?,
+        _=>return Err("Acción de ventana no válida".into()),
+    }
+    window.is_maximized().map_err(|e|e.to_string())
+}
+#[tauri::command]
 fn open_settings(app: tauri::AppHandle) -> Result<(), String> {
     let w = app
         .get_webview_window("main")
@@ -410,6 +422,11 @@ fn main() {
                 .build(),
         )
         .setup(|app| {
+            // Set the live window and tray icons explicitly as well as the EXE resource.
+            // Windows can otherwise keep the previous icon when the app is upgraded in place.
+            if let Some(window) = app.get_webview_window("main") {
+                window.set_icon(tauri::image::Image::from_bytes(include_bytes!("../icons/wave/64x64.png"))?)?;
+            }
             paste_focus::start();
             let dir = app.path().app_data_dir()?;
             std::fs::create_dir_all(&dir)?;
@@ -476,7 +493,7 @@ fn main() {
             let menu =
                 Menu::with_items(app, &[&record, &video, &image, &import, &library_menu, &show, &update_menu, &sep, &quit])?;
             tauri::tray::TrayIconBuilder::new()
-                .icon(app.default_window_icon().unwrap().clone())
+                .icon(tauri::image::Image::from_bytes(include_bytes!("../icons/wave/32x32.png"))?)
                 .tooltip("Whispera")
                 .menu(&menu)
                 .on_menu_event(|app, event| match event.id.as_ref() {
@@ -619,6 +636,7 @@ fn main() {
             import_groq_key,
             open_recorder,
             open_settings,
+            settings_window_action,
             open_recording_details,
             open_import,
             copy_text,

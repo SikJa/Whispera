@@ -488,7 +488,7 @@ pub async fn library_drag(
         return Err("El archivo ya no existe".into());
     }
     let preview = crate::library_media::drag_image(&app, &files[0])
-        .unwrap_or_else(|_| include_bytes!("../icons/cristal/32x32.png").to_vec());
+        .unwrap_or_else(|_| include_bytes!("../icons/wave/32x32.png").to_vec());
     let (files, _) = crate::video_transcript::package(&app.state::<Store>(), &files)?;
     let files: Vec<PathBuf> = files.into_iter().map(PathBuf::from).collect();
     let w = window.clone();

@@ -31,7 +31,7 @@ export default function Recorder(){
   const action=(action:string)=>run('recording_action',{action});
   const time=`${Math.floor(state.seconds/60).toString().padStart(2,'0')}:${Math.floor(state.seconds%60).toString().padStart(2,'0')}`;
   return <main className="live-recorder" data-phase={state.phase}>
-    <header className="recording-header"><a href="?view=settings"><img src="/cristal/64x64.png" alt=""/>Whispera</a><span>Audios y transcripción</span></header>
+    <header className="recording-header"><a href="?view=settings"><img src="/brand/whispera-wave.svg" alt=""/>Whispera</a><span>Audios y transcripción</span></header>
     <div className="live-transport"><div><span className="live-state" role="status"><i data-recording={state.phase==='recording'}/>{labels[state.phase]??state.phase}</span><output aria-label="Tiempo grabado">{time}</output></div>
       <div className="live-actions">
         {!recording&&state.phase!=='processing'&&<button className="primary" disabled={busy||!native} onClick={()=>action('start')}><Mic size={18}/>{state.phase==='idle'?'Grabar':'Nueva grabación'}</button>}

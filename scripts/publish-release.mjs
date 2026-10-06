@@ -18,12 +18,20 @@ export function publish(){
   writeFileSync(latest,JSON.stringify(manifest(version,repo,readFileSync(sig,'utf8'),notes),null,2)+'\n');
   const hash=createHash('sha256').update(readFileSync(exe)).digest('hex');
   writeFileSync(checksum,`${hash}  ${name}\n`);
-  let release;
-  try{release=JSON.parse(execFileSync(gh,['api',`repos/${repo}/releases/tags/${tag}`],{encoding:'utf8',stdio:['ignore','pipe','ignore']}));}catch{}
+  const findRelease=()=>{
+    // The by-tag API returns 404 for a draft whose Git tag is not created yet.
+    const value=execFileSync(gh,['api',`repos/${repo}/releases`,'--paginate','--jq',`.[] | select(.tag_name == "${tag}") | @json`],{encoding:'utf8'}).trim();
+    return value?JSON.parse(value.split('\n')[0]):undefined;
+  };
+  let release=findRelease();
   if(release&&!release.draft)throw Error('Esta versión ya está publicada; no se reemplaza un instalador anunciado');
   if(!release)execFileSync(gh,['release','create',tag,'--repo',repo,'--target',sha,'--draft','--title',`Whispera (K) ${version}`,'--notes-file','.local/release-notes.md'],{stdio:'inherit'});
-  execFileSync(gh,['release','upload',tag,exe,sig,checksum,latest,'--repo',repo,'--clobber'],{stdio:'inherit'});
-  release=JSON.parse(execFileSync(gh,['api',`repos/${repo}/releases/tags/${tag}`],{encoding:'utf8'}));
+  const pending=[exe,sig,checksum,latest].filter(file=>{
+    const asset=release?.assets.find(a=>a.name===file.split('/').at(-1));
+    return !asset||asset.digest!=='sha256:'+createHash('sha256').update(readFileSync(file)).digest('hex');
+  });
+  if(pending.length)execFileSync(gh,['release','upload',tag,...pending,'--repo',repo,'--clobber'],{stdio:'inherit'});
+  release=findRelease();
   for(const file of [exe,sig,checksum,latest]){
     const asset=release.assets.find(a=>a.name===file.split('/').at(-1));
     const data=readFileSync(file),digest='sha256:'+createHash('sha256').update(data).digest('hex');

@@ -17,7 +17,13 @@ try {
     assert.equal(await page.locator('.capture-border-beam').count(),1);
     async function drag(locator,dx,dy) {
       const box=await locator.boundingBox();const x=box.x+box.width/2,y=box.y+box.height/2;
-      await page.mouse.move(x,y);await page.mouse.down();await page.mouse.move(x+dx,y+dy,{steps:4});await page.mouse.up();
+      await frame.evaluate(e=>{window.originalBorder=e;window.originalBeam=e.querySelector('svg');});
+      await page.mouse.move(x,y);await page.mouse.down();await page.mouse.move(x+dx,y+dy,{steps:4});
+      assert.equal(await frame.evaluate(e=>e===window.originalBorder&&e.querySelector('svg')===window.originalBeam),true,'same animated border remains during dragging');
+      assert.equal(await frame.evaluate(e=>getComputedStyle(e).borderColor),'rgb(255, 255, 255)');
+      assert.equal(await frame.evaluate(e=>getComputedStyle(e).outlineStyle),'none');
+      assert.equal(await page.locator('.capture-border-beam rect').first().evaluate(e=>getComputedStyle(e).animationName),'capture-border-travel');
+      await page.mouse.up();
       await page.waitForFunction(()=>window.calls.at(-1)?.command==='screen_frame_drag'&&window.calls.at(-1).args.active===false);
     }
     await drag(page.locator('.capture-frame-handle-se'),100,50);

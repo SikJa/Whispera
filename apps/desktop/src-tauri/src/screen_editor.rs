@@ -122,7 +122,7 @@ fn window(
     }
     Ok(window)
 }
-fn raise_controls(app: &tauri::AppHandle) {
+pub(crate) fn raise_controls(app: &tauri::AppHandle) {
     if let Some(ctx)=app.state::<Editor>().context.lock().ok().and_then(|c|c.clone()) {
         if let Some(source)=app.get_webview_window(&ctx.source_label){let _=source.set_always_on_top(true);}
     }
@@ -471,10 +471,12 @@ pub fn screen_editor_ready(
         return Err("Vista incorrecta".into());
     }
     window.show().map_err(|e| e.to_string())?;
-    raise_controls(&app);
     if window.label() == "screen-ink" && ctx.kind == "image" {
         window.set_focus().map_err(|e| e.to_string())?;
     }
+    // Focusing the ink window can raise it above other topmost windows.
+    // Restore the editable border afterwards so it never disappears behind the image.
+    raise_controls(&app);
     Ok(true)
 }
 #[tauri::command]

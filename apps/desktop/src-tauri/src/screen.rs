@@ -497,7 +497,9 @@ pub fn screen_frame_drag(app: tauri::AppHandle, window: tauri::WebviewWindow, ac
     if !window.label().starts_with("screen-select-") {return Err("Vista incorrecta".into());}
     let ctx=crate::screen_editor::screen_editor_context(app.state::<crate::screen_editor::Editor>()).ok_or("Captura no disponible")?;
     if ctx.source_label!=window.label(){return Err("Vista incorrecta".into());}
-    set_frame_region(&window,if active {None}else{Some(ctx.rect)})
+    set_frame_region(&window,if active {None}else{Some(ctx.rect)})?;
+    crate::screen_editor::raise_controls(&app);
+    Ok(())
 }
 #[tauri::command]
 pub async fn screen_resize_region(app: tauri::AppHandle, window: tauri::WebviewWindow, id:String, rect:Rect) -> Result<(),String> {

@@ -13,6 +13,7 @@ import FloatingRecorder from "./FloatingRecorder";
 import FileImport from './FileImport';
 import ScreenRecorder, { ScreenOverlay, ScreenIndicator } from './ScreenRecorder';
 import { ScreenInk, ScreenTools, ScreenHud } from './ScreenEditor';
+import ScreenFrozen from './ScreenFrozen';
 import SoundLab, { soundPairs } from "./SoundLab";
 import { Pencil, Volume2, RotateCcw, Play, ClipboardList as CopyButtonIcon } from 'lucide-react';
 import { invoke } from "@tauri-apps/api/core";
@@ -143,5 +144,5 @@ function SettingsApp() {
 const view=new URLSearchParams(location.search).get("view");
 if (view?.startsWith('screen-')) document.documentElement.dataset.screenSelect = 'true';
 if (view === "record") document.documentElement.dataset.floating = "true";
-if(api.native){ const heartbeat=()=>void invoke('ui_heartbeat').catch(()=>{}); heartbeat();setInterval(heartbeat,2000); }
-createRoot(document.getElementById("root")!).render(view === 'screen-select' ? <ScreenOverlay /> : view === 'screen-ink' ? <ScreenInk/> : view === 'screen-hud' ? <ScreenHud/> : view === 'screen-tools' ? <ScreenTools/> : view === 'screen-indicator' ? <ScreenIndicator /> : view === "import" ? <FileImport/> : view === "sounds" ? <SoundLab /> : view === "recorder" ? <RecorderPreview /> : view === "record" ? <FloatingRecorder /> : view === "details" ? <Recorder /> : <SetupGate><SettingsApp /></SetupGate>);
+if(api.native&&view!=='screen-freeze'){ const heartbeat=()=>void invoke('ui_heartbeat').catch(()=>{}); heartbeat();setInterval(heartbeat,2000); }
+createRoot(document.getElementById("root")!).render(view === 'screen-freeze' ? <ScreenFrozen/> : view === 'screen-select' ? <ScreenOverlay /> : view === 'screen-ink' ? <ScreenInk/> : view === 'screen-hud' ? <ScreenHud/> : view === 'screen-tools' ? <ScreenTools/> : view === 'screen-indicator' ? <ScreenIndicator /> : view === "import" ? <FileImport/> : view === "sounds" ? <SoundLab /> : view === "recorder" ? <RecorderPreview /> : view === "record" ? <FloatingRecorder /> : view === "details" ? <Recorder /> : <SetupGate><SettingsApp /></SetupGate>);

@@ -135,15 +135,18 @@ fn window(
 }
 pub(crate) fn raise_controls(app: &tauri::AppHandle) {
     let mut windows=Vec::new();
+    let image_freeze_visible=app.webview_windows().iter().any(|(label,window)|label.starts_with("image-freeze-")&&window.is_visible().unwrap_or(false));
     for scope in ["screen","image-session"] {
+        // Keep the ongoing video's input surfaces below the still-image freeze.
+        if !session::secondary(scope)&&image_freeze_visible {continue;}
         // The still editor must also stay above the primary video's controls.
-        if session::secondary(scope) {
-            if let Some(ink)=app.get_webview_window("image-ink") {
+        {
+            if let Some(ink)=app.get_webview_window(&session::label(scope,"screen-ink")) {
                 if ink.is_visible().unwrap_or(false){windows.push(ink);}
             }
         }
-        if let Some(ctx)=context_for(app,scope) {
-            if let Some(source)=app.get_webview_window(&ctx.source_label){if source.is_visible().unwrap_or(false){windows.push(source);}}
+        for (label,source) in app.webview_windows() {
+            if label.starts_with(if session::secondary(scope){"image-select-"}else{"screen-select-"})&&source.is_visible().unwrap_or(false){windows.push(source);}
         }
         for base in ["screen-tools","screen-hud"] {
             if let Some(window)=app.get_webview_window(&session::label(scope,base)) {
@@ -161,7 +164,7 @@ pub(crate) fn raise_controls(app: &tauri::AppHandle) {
         }
     });
 }
-fn raise_native(hwnd:windows::Win32::Foundation::HWND)->Result<(),String> {
+pub(crate) fn raise_native(hwnd:windows::Win32::Foundation::HWND)->Result<(),String> {
     use windows::Win32::UI::WindowsAndMessaging::{SetWindowPos,HWND_TOPMOST,SWP_NOMOVE,SWP_NOSIZE,SWP_NOACTIVATE,SWP_NOOWNERZORDER};
     unsafe {SetWindowPos(hwnd,Some(HWND_TOPMOST),0,0,0,0,SWP_NOMOVE|SWP_NOSIZE|SWP_NOACTIVATE|SWP_NOOWNERZORDER).map_err(|e|e.to_string())}
 }

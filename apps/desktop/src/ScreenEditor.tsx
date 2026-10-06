@@ -59,6 +59,7 @@ function useContext() {
 export function ScreenInk() { const context = useContext(); return context ? <Ink key={context.id} context={context} /> : null; }
 function Ink({ context }: { context: Context }) {
   const canvas = useRef<HTMLCanvasElement>(null), background = useRef<HTMLImageElement | null>(null);
+  const fullBackground=useRef(false);
   const history = useRef<History>(emptyHistory());
   const previousRect=useRef(context.rect);
   const draft = useRef<Mark | null>(null), moving = useRef<{ start: Point; mark: Mark } | null>(null);
@@ -68,10 +69,16 @@ function Ink({ context }: { context: Context }) {
   const [text, setText] = useState<{ point: Point; value: string }>();
   const actions = useRef<(a: Action) => void>(() => {}), live = useRef(true), working = useRef(false);
   const shown = useRef(false);
+  const paintBackground=(ctx:CanvasRenderingContext2D)=>{
+    if(!background.current)return;
+    if(fullBackground.current&&context.rect) {
+      ctx.drawImage(background.current,context.rect.x*context.scale,context.rect.y*context.scale,context.width*context.scale,context.height*context.scale,0,0,context.width,context.height);
+    } else ctx.drawImage(background.current,0,0,context.width,context.height);
+  };
   const draw = () => {
     const ctx = canvas.current?.getContext('2d'); if (!ctx) return;
     ctx.setTransform(context.scale,0,0,context.scale,0,0); ctx.clearRect(0,0,context.width,context.height);
-    if (background.current) ctx.drawImage(background.current,0,0,context.width,context.height);
+    paintBackground(ctx);
     for (const mark of history.current.present) if (mark.id !== moving.current?.mark.id) paint(ctx,mark);
     if (draft.current) paint(ctx,draft.current);
     if (selected.current && context.kind === 'image' && tool === 'pointer') {
@@ -92,7 +99,7 @@ function Ink({ context }: { context: Context }) {
     const b=bounds(mark);if(b.width<2||b.height<2){draft.current=null;schedule();return;}
     working.current=true;setBusy(true);
     try{
-      if(context.kind==='image'&&background.current)mark.bitmap=blurredTile(background.current,b.width,b.height,context.scale,b);
+      if(context.kind==='image'&&background.current)mark.bitmap=blurredTile(background.current,b.width,b.height,context.scale,fullBackground.current&&context.rect?{...b,x:b.x+context.rect.x,y:b.y+context.rect.y}:b);
       else{
         const bytes=await invoke<number[]>('screen_editor_sample',{id:context.id,rect:b});
         const url=URL.createObjectURL(new Blob([new Uint8Array(bytes)],{type:'image/png'}));
@@ -108,7 +115,7 @@ function Ink({ context }: { context: Context }) {
     try {
       const result = document.createElement('canvas'); result.width = Math.round(context.width*context.scale); result.height = Math.round(context.height*context.scale);
       const ctx = result.getContext('2d')!; ctx.setTransform(context.scale,0,0,context.scale,0,0);
-      ctx.drawImage(background.current,0,0,context.width,context.height);
+      paintBackground(ctx);
       for (const mark of history.current.present) paint(ctx,mark);
       const blob = await new Promise<Blob>((resolve,reject) => result.toBlob(b => b ? resolve(b) : reject(new Error('No se pudo preparar la imagen')), 'image/png'));
       await invoke('screen_image_export', { id: context.id, action, bytes: Array.from(new Uint8Array(await blob.arrayBuffer())) });
@@ -162,13 +169,26 @@ function Ink({ context }: { context: Context }) {
     // Changing canvas dimensions clears its bitmap. Repaint before the browser
     // presents that frame, keeping the previous image until the new crop decodes.
     draw();
+    if(context.kind==='image'&&fullBackground.current&&background.current) {
+      setError('');
+      if(shown.current){working.current=false;setBusy(false);}
+      else {
+        working.current=true;setBusy(true);
+        void showWhenReady('screen_editor_ready',{id:context.id},()=>alive)
+          .then(()=>{if(alive)shown.current=true;})
+          .catch(e=>{if(alive)setError(String(e));})
+          .finally(()=>{if(alive){working.current=false;setBusy(false);}});
+      }
+      return()=>{alive=false;};
+    }
     if(context.kind==='image')void(async()=>{
       working.current=true;setBusy(true);setError('');
-      const bytes=await invoke<ArrayBuffer|number[]>('screen_editor_image',{id:context.id});
+      const full=!!context.rect;
+      const bytes=await invoke<ArrayBuffer|number[]>(full?'screen_editor_background':'screen_editor_image',{id:context.id});
       if(!alive)return;
-      url=URL.createObjectURL(new Blob([bytes instanceof ArrayBuffer?bytes:new Uint8Array(bytes)],{type:'image/png'}));
+      url=URL.createObjectURL(new Blob([bytes instanceof ArrayBuffer?bytes:new Uint8Array(bytes)],{type:full?'image/bmp':'image/png'}));
       const image=new Image();image.src=url;await image.decode();
-      if(!alive)return;background.current=image;draw();
+      if(!alive)return;background.current=image;fullBackground.current=full;draw();
       // Re-cropping an already visible editor must not steal focus from its controls.
       if(!shown.current){await showWhenReady('screen_editor_ready',{id:context.id},()=>alive);if(alive)shown.current=true;}
     })().catch(e=>{if(alive)setError(String(e));}).finally(()=>{if(alive){working.current=false;setBusy(false);}});

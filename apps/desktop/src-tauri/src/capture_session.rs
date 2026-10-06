@@ -21,6 +21,11 @@ impl<T:Send+Sync+'static> Deref for Session<'_,T> {
 }
 pub fn secondary(scope:&str)->bool { scope.starts_with("image-") }
 pub fn selector(label:&str)->bool { label.starts_with("screen-select-")||label.starts_with("image-select-") }
+pub fn frozen_source(label:&str)->Option<String> {
+    let (prefix,index)=label.split_once("-freeze-")?;
+    if !["screen","image"].contains(&prefix)||index.is_empty()||!index.bytes().all(|b|b.is_ascii_digit()){return None;}
+    Some(format!("{prefix}-select-{index}"))
+}
 pub fn label(scope:&str,base:&str)->String {
     if secondary(scope) {base.replacen("screen-","image-",1)} else {base.into()}
 }
@@ -41,6 +46,12 @@ pub fn editor<'a>(app:&'a tauri::AppHandle,scope:&str)->Session<'a,Editor> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn frozen_monitor_labels_keep_their_session_and_monitor() {
+        assert_eq!(frozen_source("screen-freeze-0"),Some("screen-select-0".into()));
+        assert_eq!(frozen_source("image-freeze-12"),Some("image-select-12".into()));
+        for label in ["screen-select-0","other-freeze-0","image-freeze-","screen-freeze-../0"]{assert_eq!(frozen_source(label),None);}
+    }
     #[test]
     fn resize_and_hide_events_never_reach_another_capture_window() {
         use std::sync::{Arc,Mutex};

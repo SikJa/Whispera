@@ -10,6 +10,7 @@ html[data-screen-select="true"], html[data-screen-select="true"] body, html[data
 .screen-record-actions, .screen-result { margin-top: 20px; display: flex; gap: 12px; flex-wrap: wrap; align-items: center; }
 .screen-result p { width: 100%; }
 .screen-indicator { position: fixed; inset: 0; pointer-events: none; background: transparent; }
+.screen-frozen-desktop { position:fixed; inset:0; background-size:100% 100%; background-repeat:no-repeat; pointer-events:auto; touch-action:none; user-select:none; }
 /* Only three short strokes animate; no canvas loop or React frame updates. */
 .capture-frame { position:absolute; border:2px solid #fff; box-sizing:border-box; pointer-events:none; background:transparent; outline:1px solid #0006; }
 .capture-border-beam { position:absolute; left:-2px; top:-2px; width:calc(100% + 4px); height:calc(100% + 4px); overflow:visible; color:var(--capture-frame-color,#fff); }

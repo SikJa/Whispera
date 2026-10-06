@@ -9,10 +9,10 @@ try {
     window.pendingCrops=[];
     const original=window.__TAURI_INTERNALS__.invoke;
     window.__TAURI_INTERNALS__.invoke=async(command,args)=>{
-      if(command==='screen_editor_image'&&window.holdCrop) {
+      if(['screen_editor_image','screen_editor_background'].includes(command)&&window.holdCrop) {
         const canvas=document.createElement('canvas');
-        canvas.width=window.editorContext.width;canvas.height=window.editorContext.height;
-        const ctx=canvas.getContext('2d');ctx.fillStyle=canvas.width===320?'#2244aa':'#44aa22';ctx.fillRect(0,0,canvas.width,canvas.height);
+        canvas.width=640;canvas.height=480;
+        const ctx=canvas.getContext('2d');ctx.fillStyle=window.editorContext.width===320?'#2244aa':'#44aa22';ctx.fillRect(0,0,canvas.width,canvas.height);
         const bytes=Uint8Array.from(atob(canvas.toDataURL('image/png').split(',')[1]),v=>v.charCodeAt(0)).buffer;
         return new Promise(resolve=>window.pendingCrops.push(()=>resolve(bytes)));
       }
@@ -47,6 +47,13 @@ try {
   await page.evaluate(()=>window.pendingCrops[0]());
   await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))));
   assert.deepEqual(await page.locator('canvas').evaluate(e=>[...e.getContext('2d').getImageData(10,10,1,1).data]),[34,68,170,255],'a late older crop cannot replace the latest image');
+  await page.evaluate(()=>{
+    window.editorContext={...window.editorContext,width:350,height:260,rect:{x:60,y:70,width:350,height:260}};
+    window.emitNative('screen-editor-reset',window.editorContext);
+  });
+  await page.waitForFunction(()=>document.querySelector('canvas').width===350);
+  assert.equal(await page.evaluate(()=>window.pendingCrops.length),2,'subsequent crops use the same frozen bitmap without fetching new pixels');
+  assert.deepEqual(await page.locator('canvas').evaluate(e=>[...e.getContext('2d').getImageData(340,250,1,1).data]),[34,68,170,255]);
   await page.keyboard.press('Control+c');
   await page.waitForFunction(()=>window.exports.length===1);
   console.log('PASS: opaque crop preview throughout successive resize frames, binary PNG loading, stale crop rejection and export recovery. IPC mocked.');

@@ -10,7 +10,7 @@ use std::{
     path::{Path, PathBuf},
     process::{Child, Command, Stdio},
     sync::{
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
         mpsc, Arc, Mutex, MutexGuard,
     },
     time::{Duration, Instant},
@@ -60,6 +60,8 @@ pub struct Screen {
     pub gate: Mutex<()>,
     pub kind: Mutex<String>,
     selection_ready: AtomicBool,
+    frozen_generation: AtomicU64,
+    frozen_ready: Mutex<std::collections::HashSet<String>>,
     selection_started: Mutex<Option<Instant>>,
     snapshots: Mutex<std::collections::HashMap<String, crate::screen_capture::FrozenFrame>>,
 }
@@ -87,6 +89,8 @@ impl Screen {
             gate: Mutex::new(()),
             kind: Mutex::new("video".into()),
             selection_ready: AtomicBool::new(false),
+            frozen_generation: AtomicU64::new(0),
+            frozen_ready: Mutex::new(std::collections::HashSet::new()),
             selection_started: Mutex::new(None),
             snapshots: Mutex::new(std::collections::HashMap::new()),
         }
@@ -181,11 +185,14 @@ pub(crate) fn command(binary: &Path) -> Command {
     cmd
 }
 fn hide_selectors(app: &tauri::AppHandle, screen: &Screen) {
+    screen.frozen_generation.fetch_add(1,Ordering::SeqCst);
+    if let Ok(mut ready)=screen.frozen_ready.lock(){ready.clear();}
     if let Ok(mut snapshots) = screen.snapshots.lock() { snapshots.clear(); }
     release_escape(app, screen.secondary);
     crate::screen_editor::hide_session(app, screen.secondary);
     for (label, window) in app.webview_windows() {
-        if label.starts_with(if screen.secondary {"image-select-"} else {"screen-select-"}) {
+        if label.starts_with(if screen.secondary {"image-select-"} else {"screen-select-"}) ||
+            label.starts_with(if screen.secondary {"image-freeze-"} else {"screen-freeze-"}) {
             let _ = window.hide();
             let _ = session::emit_window(&window,"screen-hide", ());
         }
@@ -441,6 +448,15 @@ fn select_locked(app: &tauri::AppHandle, screen: &Screen, kind: &str) -> Result<
                 .map_err(|e| e.to_string())?;
             session::emit_window(&window,"screen-reset", kind)
                 .map_err(|e| e.to_string())?;
+            if kind=="image" {
+                let frozen=selector_window(app,&label.replace("-select-","-freeze-"))?;
+                frozen.set_focusable(false).map_err(|e|e.to_string())?;
+                frozen.set_ignore_cursor_events(false).map_err(|e|e.to_string())?;
+                frozen.set_position(*monitor.position()).map_err(|e|e.to_string())?;
+                frozen.set_size(*monitor.size()).map_err(|e|e.to_string())?;
+                protect(&frozen)?;
+                session::emit_window(&frozen,"screen-frozen-reset",screen.frozen_generation.load(Ordering::SeqCst)).map_err(|e|e.to_string())?;
+            }
         }
         screen.selection_ready.store(true, Ordering::SeqCst);
         Ok(())
@@ -457,7 +473,7 @@ fn selector_window(app: &tauri::AppHandle, label: &str) -> Result<tauri::Webview
                 None => tauri::WebviewWindowBuilder::new(
                     app,
                     label,
-                    tauri::WebviewUrl::App("overlay.html?view=screen-select".into()),
+                    tauri::WebviewUrl::App(if session::frozen_source(label).is_some(){"overlay.html?view=screen-freeze"}else{"overlay.html?view=screen-select"}.into()),
                 )
                 .title("Seleccionar area · Whispera")
                 .transparent(true)
@@ -481,6 +497,8 @@ pub fn warm_selectors(app: &tauri::AppHandle) -> Result<(), String> {
     for (index, _) in app.available_monitors().map_err(|e| e.to_string())?.iter().enumerate() {
         selector_window(app, &format!("{}select-{index}",if screen.secondary {"image-"}else{"screen-"}))?;
         selector_window(app, &format!("image-select-{index}"))?;
+        selector_window(app, &format!("screen-freeze-{index}"))?;
+        selector_window(app, &format!("image-freeze-{index}"))?;
     }
     Ok(())
 }
@@ -573,8 +591,44 @@ pub fn screen_selection_kind(app:tauri::AppHandle,window:tauri::WebviewWindow) -
 pub fn screen_selection_image(app:tauri::AppHandle, window: tauri::WebviewWindow) -> Result<tauri::ipc::Response, String> {
     let screen=session::screen(&app,window.label());
     let snapshots = screen.snapshots.lock().map_err(|_| "Captura ocupada")?;
-    let bytes = snapshots.get(window.label()).map(|frame| frame.preview_bmp()).unwrap_or_default();
+    let source=session::frozen_source(window.label()).unwrap_or_else(||window.label().into());
+    let bytes = snapshots.get(&source).map(|frame| frame.preview_bmp()).unwrap_or_default();
     Ok(tauri::ipc::Response::new(bytes))
+}
+#[tauri::command]
+pub fn screen_editor_background(app:tauri::AppHandle,id:String)->Result<tauri::ipc::Response,String> {
+    let ctx=crate::screen_editor::context_for(&app,&id).filter(|c|c.id==id&&c.kind=="image").ok_or("Captura no disponible")?;
+    let screen=session::screen(&app,&id);
+    let snapshots=screen.snapshots.lock().map_err(|_|"Captura ocupada")?;
+    let frame=snapshots.get(&ctx.source_label).ok_or("Pantalla congelada no disponible")?;
+    Ok(tauri::ipc::Response::new(frame.preview_bmp()))
+}
+fn frozen_generation(screen:&Screen)->Option<u64> {
+    let kind=screen.kind.lock().ok()?.clone();
+    let phase=screen.state.lock().ok()?.phase.clone();
+    (kind=="image"&&["selecting","editing"].contains(&phase.as_str())).then(||screen.frozen_generation.load(Ordering::SeqCst))
+}
+#[tauri::command]
+pub fn screen_frozen_state(app:tauri::AppHandle,window:tauri::WebviewWindow)->Option<u64> {
+    session::frozen_source(window.label())?;
+    frozen_generation(&session::screen(&app,window.label()))
+}
+#[tauri::command]
+pub fn screen_frozen_ready(app:tauri::AppHandle,window:tauri::WebviewWindow,generation:u64)->Result<bool,String> {
+    session::frozen_source(window.label()).ok_or("Vista incorrecta")?;
+    let screen=session::screen(&app,window.label());
+    // A late response from a closed capture must never cover the live desktop.
+    if frozen_generation(&screen)!=Some(generation){return Ok(true);}
+    if !screen.selection_ready.load(Ordering::SeqCst){return Ok(false);}
+    window.show().map_err(|e|e.to_string())?;
+    screen.frozen_ready.lock().map_err(|_|"Captura ocupada")?.insert(window.label().into());
+    let frozen=window.clone();let app_copy=app.clone();
+    app.run_on_main_thread(move||{
+        if frozen_generation(&session::screen(&app_copy,frozen.label()))!=Some(generation){return;}
+        if let Ok(hwnd)=frozen.hwnd(){let _=crate::screen_editor::raise_native(windows::Win32::Foundation::HWND(hwnd.0));}
+    }).map_err(|e|e.to_string())?;
+    crate::screen_editor::raise_controls(&app);
+    Ok(true)
 }
 #[tauri::command]
 pub fn screen_overlay_ready(
@@ -583,6 +637,10 @@ pub fn screen_overlay_ready(
 ) -> Result<bool, String> {
     let screen=session::screen(&app,window.label());
     if !screen.selection_ready.load(Ordering::SeqCst) {
+        return Ok(false);
+    }
+    if *screen.kind.lock().map_err(|_|"Captura ocupada")?=="image" &&
+        screen.frozen_ready.lock().map_err(|_|"Captura ocupada")?.len()<screen.snapshots.lock().map_err(|_|"Captura ocupada")?.len() {
         return Ok(false);
     }
     if session::selector(window.label())
@@ -673,11 +731,10 @@ pub async fn screen_start(
         show_indicator(&window, rect, &kind)?;
         if kind == "image" {
             let bytes = {
-                let mut snapshots = screen.snapshots.lock().map_err(|_| "Captura ocupada")?;
+                let snapshots = screen.snapshots.lock().map_err(|_| "Captura ocupada")?;
                 let frame = snapshots.get(window.label()).ok_or("La imagen de seleccion ya no esta disponible")?;
                 let cropped = frame.crop_png(region)?;
-                // Keep this monitor's original pixels so its crop remains adjustable.
-                snapshots.retain(|label, _| label == window.label());
+                // Keep every monitor frozen until this image editor is closed.
                 cropped
             };
             screen.state.lock().map_err(|_| "Estado ocupado")?.phase = "editing".into();
@@ -1542,6 +1599,23 @@ fn record(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn frozen_desktop_only_lives_through_image_selection_and_editing() {
+        let screen=super::Screen::new();
+        screen.frozen_generation.store(7,super::Ordering::SeqCst);
+        *screen.kind.lock().unwrap()="image".into();
+        for phase in ["selecting","editing"] {
+            screen.state.lock().unwrap().phase=phase.into();
+            assert_eq!(super::frozen_generation(&screen),Some(7));
+        }
+        for phase in ["idle","saving","recording","paused"] {
+            screen.state.lock().unwrap().phase=phase.into();
+            assert_eq!(super::frozen_generation(&screen),None);
+        }
+        *screen.kind.lock().unwrap()="video".into();
+        screen.state.lock().unwrap().phase="selecting".into();
+        assert_eq!(super::frozen_generation(&screen),None);
+    }
     #[test]
     fn cancelled_cleanup_preserves_unexpected_files_and_rejects_foreign_parts() {
         let root=PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target/cancel-check/screen-recordings");

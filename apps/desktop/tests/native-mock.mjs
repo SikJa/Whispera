@@ -23,6 +23,7 @@ export function installNativeMock({kind='video',width=640,height=480,scale=1,set
       if(command==='screen_recent')return[{id:'recent-1',kind:'image',created_at:'2026-10-02T00:00:00Z',path:'test.png'}];
       if(command==='screen_selection_kind')return kind;
       if(command==='screen_selection_image')return frozenImage?new Uint8Array(frozenImage).buffer:new ArrayBuffer(0);
+      if(command==='screen_frozen_state')return kind==='image'&&['selecting','editing'].includes(window.videoStatus.phase)?1:null;
       if(command==='screen_preferences')return window.videoPreferences;
       if(command==='library_preferences')return window.libraryPreferences;
       if(command==='library_action'&&args.action==='settings'){window.libraryPreferences={...window.libraryPreferences,...args.value};return window.libraryPreferences;}
@@ -47,12 +48,12 @@ export function installNativeMock({kind='video',width=640,height=480,scale=1,set
       if(command==='screen_editor_action')window.emitNative('screen-editor-action',args);
       if(command==='screen_editor_feedback'){window.feedback=args.feedback;window.emitNative('screen-editor-feedback',args);}
       if(command==='screen_editor_feedback_get')return window.feedback;
-      if(command==='screen_editor_image'||command==='screen_editor_sample'){
-        const canvas=document.createElement('canvas');canvas.width=(args.rect?.width??width)*scale;canvas.height=(args.rect?.height??height)*scale;
+      if(command==='screen_editor_image'||command==='screen_editor_background'||command==='screen_editor_sample'){
+        const canvas=document.createElement('canvas');canvas.width=(command==='screen_editor_background'?(window.editorContext.monitor_width??innerWidth):(args.rect?.width??width))*scale;canvas.height=(command==='screen_editor_background'?(window.editorContext.monitor_height??innerHeight):(args.rect?.height??height))*scale;
         const ctx=canvas.getContext('2d');ctx.fillStyle='#eeeeee';ctx.fillRect(0,0,canvas.width,canvas.height);
         if(command==='screen_editor_sample'){ctx.fillStyle='#3355aa';ctx.fillRect(0,0,canvas.width/2,canvas.height);}
         const bytes=Uint8Array.from(atob(canvas.toDataURL('image/png').split(',')[1]),v=>v.charCodeAt(0));
-        return command==='screen_editor_image'?bytes.buffer:Array.from(bytes);
+        return command==='screen_editor_image'||command==='screen_editor_background'?bytes.buffer:Array.from(bytes);
       }
       if(command==='screen_image_export'){if(window.failExport)throw Error('Portapapeles ocupado');window.exports.push(args);return true;}
     }

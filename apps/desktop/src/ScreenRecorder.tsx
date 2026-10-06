@@ -40,7 +40,7 @@ export function ScreenOverlay() {
       await showWhenReady('screen_overlay_ready',undefined,()=>alive&&id===resetId);
     };
     void(async()=>{
-      for(const promise of [listen('screen-hide',()=>{++resetId;if(imageUrl)URL.revokeObjectURL(imageUrl);imageUrl=undefined;if(alive){setSnapshot(undefined);setStage(undefined);setEditor(undefined);setInitialized(false);}}),listen<'video'|'image'>('screen-reset',e=>void reset(e.payload)),listen<Stage>('screen-stage',e=>{if(alive)setStage(e.payload);}),listen<CaptureContext|null>('screen-editor-reset',e=>{if(alive)setEditor(e.payload??undefined);})]){
+      for(const promise of [listen('screen-hide',()=>{++resetId;if(imageUrl)URL.revokeObjectURL(imageUrl);imageUrl=undefined;if(alive){setSnapshot(undefined);setStage(undefined);setEditor(undefined);setInitialized(false);}}),listen<'video'|'image'>('screen-reset',e=>void reset(e.payload)),listen<Stage>('screen-stage',e=>{if(alive)setStage(e.payload);}),listen<CaptureContext|null>('screen-editor-reset',e=>{if(alive){setEditor(e.payload??undefined);if(e.payload&&imageUrl){URL.revokeObjectURL(imageUrl);imageUrl=undefined;setSnapshot(undefined);}}})]){
         const remove=await promise;if(!alive)remove();else off.push(remove);
       }
       // Preloaded windows only register listeners; no hidden rendering/polling loop.

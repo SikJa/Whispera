@@ -64,5 +64,25 @@ try {
   await tools.getByRole('button',{name:'Contraer herramientas'}).click();
   await tools.evaluate(()=>window.emitNative('screen-editor-drag',window.editorContext.id));
   assert.equal(await tools.getByLabel('Herramientas de captura').getAttribute('data-compact'),'true','drag preserves the compact toolbar');
+  const waiting=await browser.newPage({viewport:{width:640,height:480}});
+  await waiting.addInitScript(installNativeMock,{kind:'image'});
+  await waiting.addInitScript(()=>{
+    window.editorContext.rect={x:20,y:30,width:300,height:200};window.editorContext.width=300;window.editorContext.height=200;
+    const original=window.__TAURI_INTERNALS__.invoke;
+    window.__TAURI_INTERNALS__.invoke=async(command,args)=>{
+      const result=await original(command,args);
+      if(command==='screen_editor_ready')return !!window.allowReady;
+      return result;
+    };
+  });
+  await waiting.goto(base+'/overlay.html?view=screen-ink');
+  await waiting.waitForFunction(()=>window.calls.some(c=>c.command==='screen_editor_ready'));
+  await waiting.evaluate(()=>{
+    window.editorContext={...window.editorContext,width:320,height:240,rect:{x:40,y:50,width:320,height:240}};
+    window.emitNative('screen-editor-reset',window.editorContext);window.allowReady=true;
+  });
+  await waiting.waitForFunction(()=>!window.feedback.busy);
+  assert.ok(await waiting.evaluate(()=>window.calls.filter(c=>c.command==='screen_editor_ready').length>=2),'an early resize continues the initial readiness handshake');
+  assert.equal(await waiting.evaluate(()=>window.calls.filter(c=>c.command==='screen_editor_background').length),1,'early resize reuses the already decoded frozen bitmap');
   console.log('PASS: late context/feedback, HUD action recovery, image resize recovery and no repeated focus. IPC mocked.');
 } finally {await browser.close();}

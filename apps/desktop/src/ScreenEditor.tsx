@@ -9,8 +9,9 @@ import './screen-recorder.css';
 import './capture-line.css';
 import { showWhenReady } from './screen-ready';
 import CaptureFrame from './CaptureFrame';
+import type {CaptureContext} from './EditableCaptureFrame';
 
-type Context = { id: string; kind: 'image' | 'video'; width: number; height: number; scale: number; hud_scale?:number; hud_above?:boolean; frame_color?:string };
+type Context = CaptureContext;
 type Action = { action: string; value?: string };
 type Feedback = { tool: Tool; color: string; width: number; canUndo: boolean; canRedo: boolean; count: number; busy: boolean; error: string };
 const defaults: Feedback = { tool: 'pointer', color: '#ff4545', width: 3, canUndo: false, canRedo: false, count: 0, busy: false, error: '' };
@@ -58,6 +59,7 @@ export function ScreenInk() { const context = useContext(); return context ? <In
 function Ink({ context }: { context: Context }) {
   const canvas = useRef<HTMLCanvasElement>(null), background = useRef<HTMLImageElement | null>(null);
   const history = useRef<History>(emptyHistory());
+  const previousRect=useRef(context.rect);
   const draft = useRef<Mark | null>(null), moving = useRef<{ start: Point; mark: Mark } | null>(null);
   const frame = useRef(0), selected = useRef<string | undefined>(undefined);
   const [version, setVersion] = useState(0), [options, setOptions] = useState(preferences);
@@ -112,7 +114,7 @@ function Ink({ context }: { context: Context }) {
     finally { working.current = false; if (live.current) setBusy(false); }
   };
   actions.current = a => {
-    if (working.current) return;
+    if (working.current && !['tool','color','width','close','escape'].includes(a.action)) return;
     setError('');
     if (a.action === 'tool') { selected.current = undefined; setTool(a.value as Tool); }
     else if (a.action === 'color' && /^#[0-9a-f]{6}$/i.test(a.value ?? '')) setOptions(o => ({ ...o, color: a.value! }));
@@ -130,18 +132,11 @@ function Ink({ context }: { context: Context }) {
     }
   };
   useEffect(() => {
-    live.current = true; let unlisten: UnlistenFn | undefined; let imageUrl = '';
+    live.current = true; let unlisten: UnlistenFn | undefined;
     void (async () => {
       const remove = await listen<{ id:string; action:Action }>('screen-editor-action', e => { if (e.payload.id === context.id) actions.current(e.payload.action); });
       if (!live.current) { remove(); return; } unlisten = remove;
-      if (context.kind === 'image') {
-        const bytes = await invoke<number[]>('screen_editor_image',{ id:context.id });
-        if (!live.current) return;
-        imageUrl = URL.createObjectURL(new Blob([new Uint8Array(bytes)],{ type:'image/png' }));
-        const image = new Image(); image.src = imageUrl; await image.decode();
-        if (!live.current) return; background.current = image;
-      }
-      draw();await showWhenReady('screen_editor_ready',{id:context.id},()=>live.current);
+      if(context.kind==='video'){draw();await showWhenReady('screen_editor_ready',{id:context.id},()=>live.current);}
     })().catch(e => { if (live.current) setError(String(e)); });
     const key = (e:KeyboardEvent) => {
       const action = shortcut(e); if (!action) return;
@@ -151,8 +146,28 @@ function Ink({ context }: { context: Context }) {
       else actions.current(action);
     };
     window.addEventListener('keydown',key);
-    return () => { live.current = false; unlisten?.(); cancelAnimationFrame(frame.current); window.removeEventListener('keydown',key); if(imageUrl) URL.revokeObjectURL(imageUrl); };
+    return () => { live.current = false; unlisten?.(); cancelAnimationFrame(frame.current); window.removeEventListener('keydown',key); };
   }, [context.id]);
+  useEffect(()=>{
+    let alive=true,url='';
+    const previous=previousRect.current,next=context.rect;
+    if(previous&&next&&(previous.x!==next.x||previous.y!==next.y)){
+      const shift=(marks:Mark[])=>marks.map(mark=>({...mark,points:mark.points.map(p=>({x:p.x+previous.x-next.x,y:p.y+previous.y-next.y}))}));
+      history.current={past:history.current.past.map(shift),present:shift(history.current.present),future:history.current.future.map(shift)};
+    }
+    previousRect.current=next;draft.current=null;moving.current=null;setText(undefined);
+    if(context.kind==='image')void(async()=>{
+      working.current=true;setBusy(true);
+      const bytes=await invoke<number[]>('screen_editor_image',{id:context.id});
+      if(!alive)return;
+      url=URL.createObjectURL(new Blob([new Uint8Array(bytes)],{type:'image/png'}));
+      const image=new Image();image.src=url;await image.decode();
+      if(!alive)return;background.current=image;draw();
+      await showWhenReady('screen_editor_ready',{id:context.id},()=>alive);
+    })().catch(e=>{if(alive)setError(String(e));}).finally(()=>{if(alive){working.current=false;setBusy(false);}});
+    else draw();
+    return()=>{alive=false;if(url)URL.revokeObjectURL(url);};
+  },[context.id,context.rect?.x,context.rect?.y,context.width,context.height]);
   useEffect(() => {
     draw();
     try { localStorage.setItem('whispera.ink.v1',JSON.stringify(options)); } catch { /* Storage is optional. */ }
@@ -160,7 +175,7 @@ function Ink({ context }: { context: Context }) {
   }, [version,tool,options,busy,error,context.id]);
   const point = (e: React.PointerEvent) => ({ x:Math.max(0,Math.min(context.width,e.clientX)),y:Math.max(0,Math.min(context.height,e.clientY)) });
   return <div className="screen-ink" data-tool={tool} data-session={context.id} data-kind={context.kind}>
-    {context.kind==='image'&&<CaptureFrame className="screen-image-frame" width={context.width} height={context.height} color={context.frame_color}/>}
+    {context.kind==='image'&&!context.rect&&<CaptureFrame className="screen-image-frame" width={context.width} height={context.height} color={context.frame_color}/>}
     <canvas ref={canvas} style={context.kind === 'image' ? {borderRadius:Math.min(14,context.width/2,context.height/2)} : undefined} aria-label={context.kind === 'image' ? 'Editar captura' : 'Dibujar sobre video'} width={Math.round(context.width*context.scale)} height={Math.round(context.height*context.scale)}
       onPointerDown={e => {
         if (e.button !== 0 || busy) return; e.preventDefault(); commitText(); const p = point(e); e.currentTarget.setPointerCapture(e.pointerId);

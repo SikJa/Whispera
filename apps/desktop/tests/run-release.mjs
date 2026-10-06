@@ -6,7 +6,7 @@ mkdirSync('../../.local', {recursive:true});
 const server = await createServer({server:{host:'127.0.0.1',port:0,strictPort:false}});
 await server.listen();
 const base = `http://127.0.0.1:${server.httpServer.address().port}`;
-const suites = ['screen','selection-ready','editor','line-toolbar','capture-controls','history','hotkeys','setup','native-library','library-settings','library-media'];
+const suites = ['screen','selection-ready','adjustable-frame','editor','line-toolbar','capture-controls','history','hotkeys','setup','native-library','library-settings','library-media'];
 const failures=[];
 try {
   for (const name of suites) {

@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/SikJa/Whispera/releases"><kbd>⬇ Descargar</kbd></a>&ensp;·&ensp;
+  <a href="https://github.com/kazu00001/Whispera-K/releases"><kbd>⬇ Descargar</kbd></a>&ensp;·&ensp;
   <a href="README.en.md">English</a>&ensp;·&ensp;
   <a href="https://console.groq.com/keys">Obtener clave Groq</a>&ensp;·&ensp;
   <a href="docs/PRIVACY.md">Privacidad</a>
@@ -41,6 +41,10 @@ Aparece como una **carpeta flotante transparente** sobre cualquier ventana. Grab
 - 🌐 **Español e inglés** — interfaz, instalador y guía inicial bilingüe
 
 ## Características
+
+La [versión 0.2.6](docs/releases/0.2.6.md) permite mover y redimensionar el
+recuadro de capturas y videos desde sus bordes, manteniendo el diseño redondeado
+y las anotaciones existentes. En video, el cambio de encuadre tiene una breve transición.
 
 ### Novedades de 0.2.0
 
@@ -88,7 +92,7 @@ el portapapeles. [Guía de capturas y video](docs/SCREEN_RECORDING.md).
 
 ## Instalar
 
-1. Descargá `Whispera_*_x64-setup.exe` desde [Releases](https://github.com/SikJa/Whispera/releases)
+1. Descargá `Whispera_*_x64-setup.exe` desde [Releases](https://github.com/kazu00001/Whispera-K/releases)
 2. Instalá para tu usuario — no necesita permisos de administrador
 3. La primera vez se abre una **guía de configuración** de 4 pasos:
 

@@ -556,6 +556,8 @@ fn main() {
             screen::screen_selection_kind,
             screen::screen_selection_image,
             screen::screen_overlay_ready,
+            screen::screen_frame_drag,
+            screen::screen_resize_region,
             screen_editor::screen_editor_context,
             screen_editor::screen_editor_image,
             screen_editor::screen_editor_sample,

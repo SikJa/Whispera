@@ -6,6 +6,7 @@ import { type Settings } from './client';
 import './screen-recorder.css';
 import { showWhenReady } from './screen-ready';
 import CaptureFrame from './CaptureFrame';
+import EditableCaptureFrame,{type CaptureContext} from './EditableCaptureFrame';
 import { SettingsSwitch } from './ResourceControls';
 import { type CapturePreferences as Preferences, defaultCapturePreferences, VideoAudioSettings } from './CaptureSettings';
 
@@ -17,6 +18,7 @@ type Stage = { rect:Rect; kind:'video'|'image' };
 export function ScreenOverlay() {
   const [kind,setKind] = useState<'video'|'image'>('video');
   const [stage,setStage] = useState<Stage>();
+  const [editor,setEditor]=useState<CaptureContext>();
   const [epoch,setEpoch] = useState(0);
   const [initialized,setInitialized] = useState(false);
   const [frameColor,setFrameColor] = useState('#ffffff');
@@ -34,11 +36,11 @@ export function ScreenOverlay() {
       imageUrl=bytes&&bytes.byteLength?URL.createObjectURL(new Blob([bytes],{type:'image/bmp'})):undefined;
       if(imageUrl){const image=new Image();image.src=imageUrl;await image.decode();}
       if(!alive||id!==resetId)return;
-      setSnapshot(imageUrl);setFrameColor(appearance.frameColor??'#ffffff');setStage(undefined);setKind(mode);setEpoch(v=>v+1);setInitialized(true);
+      setSnapshot(imageUrl);setFrameColor(appearance.frameColor??'#ffffff');setStage(undefined);setEditor(undefined);setKind(mode);setEpoch(v=>v+1);setInitialized(true);
       await showWhenReady('screen_overlay_ready',undefined,()=>alive&&id===resetId);
     };
     void(async()=>{
-      for(const promise of [listen('screen-hide',()=>{++resetId;if(imageUrl)URL.revokeObjectURL(imageUrl);imageUrl=undefined;if(alive){setSnapshot(undefined);setStage(undefined);setInitialized(false);}}),listen<'video'|'image'>('screen-reset',e=>void reset(e.payload)),listen<Stage>('screen-stage',e=>{if(alive)setStage(e.payload);})]){
+      for(const promise of [listen('screen-hide',()=>{++resetId;if(imageUrl)URL.revokeObjectURL(imageUrl);imageUrl=undefined;if(alive){setSnapshot(undefined);setStage(undefined);setEditor(undefined);setInitialized(false);}}),listen<'video'|'image'>('screen-reset',e=>void reset(e.payload)),listen<Stage>('screen-stage',e=>{if(alive)setStage(e.payload);}),listen<CaptureContext|null>('screen-editor-reset',e=>{if(alive)setEditor(e.payload??undefined);})]){
         const remove=await promise;if(!alive)remove();else off.push(remove);
       }
       // Preloaded windows only register listeners; no hidden rendering/polling loop.
@@ -47,7 +49,7 @@ export function ScreenOverlay() {
     })().catch(()=>{});
     return()=>{alive=false;if(imageUrl)URL.revokeObjectURL(imageUrl);off.forEach(remove=>remove());};
   },[]);
-  return !initialized ? null : stage ? <ScreenIndicator rect={stage.rect} kind={stage.kind}/> : <ScreenSelection key={epoch} kind={kind} frameColor={frameColor} snapshot={snapshot} onPreparing={rect=>setStage({rect,kind})}/>;
+  return !initialized ? null : editor?.rect ? <EditableCaptureFrame context={editor}/> : stage ? <ScreenIndicator rect={stage.rect} kind={stage.kind}/> : <ScreenSelection key={epoch} kind={kind} frameColor={frameColor} snapshot={snapshot} onPreparing={rect=>setStage({rect,kind})}/>;
 }
 export function ScreenSelection({kind='video',frameColor='#ffffff',snapshot,onPreparing}:{kind?:'video'|'image';frameColor?:string;snapshot?:string;onPreparing?:(rect:Rect)=>void}={}) {
   const [origin, setOrigin] = useState<Point>();
@@ -121,7 +123,7 @@ export default function ScreenRecorder() {
     setBusy(true); setMessage('');
     try { await action(); setMessage(success); } catch (e) { setMessage(String(e)); } finally { setBusy(false); }
   };
-  const occupied = ['recording', 'paused', 'pausing', 'resuming', 'saving', 'cancelling', 'selecting', 'starting', 'editing'].includes(status.phase);
+  const occupied = ['recording', 'paused', 'pausing', 'resuming', 'reframing', 'saving', 'cancelling', 'selecting', 'starting', 'editing'].includes(status.phase);
   return <section className="screen-recorder-panel">
     <>
       <h3>Audio predeterminado</h3>

@@ -9,6 +9,7 @@ try {
   await page.addInitScript(installNativeMock,{kind:'image'});
   await page.goto((process.env.WHISPERA_TEST_URL || 'http://127.0.0.1:5190') + '/overlay.html?view=screen-ink');
   await page.getByLabel('Editar captura').waitFor();
+  await page.waitForFunction(()=>window.calls.some(c=>c.command==='screen_editor_ready')&&!window.feedback.busy);
   for(const [i,tool] of ['rectangle','ellipse','triangle','diamond','hexagon','star'].entries()){
     await page.evaluate(tool=>window.emitNative('screen-editor-action',{id:'test-session',action:{action:'tool',value:tool}}),tool);
     await page.waitForFunction(tool=>window.feedback.tool===tool,tool);

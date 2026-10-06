@@ -1,4 +1,4 @@
-export function installNativeMock({kind='video',width=640,height=480,scale=1,setupComplete=true,selectionPhase,frozenImage}={}) {
+export function installNativeMock({kind='video',width=640,height=480,scale=1,setupComplete=true,selectionPhase,frozenImage,adjustable=false}={}) {
   window.calls=[]; const callbacks=new Map(), listeners=new Map();let next=1;
   window.videoPreferences={audio:'none',hotkey:'Control+Shift+F9',image_hotkey:'Control+Shift+F10',frame_color:'#ffffff',image_auto_copy:false};
   window.voiceShortcut='Alt+KeyZ';
@@ -35,7 +35,12 @@ export function installNativeMock({kind='video',width=640,height=480,scale=1,set
       if(command==='screen_video_snapshot')return true;
       if(command==='screen_tools_panel')return {railX:4,railY:4,menuX:58,menuY:Math.max(4,Math.min(innerHeight-args.panelHeight+4,args.anchor-args.panelHeight/2))};
       if(command==='screen_save_preferences')window.videoPreferences=args.preferences;
-      if(command==='screen_start'){window.videoStatus.phase=kind==='image'?'editing':'recording';window.emitNative('screen-stage',{rect:args.rect,kind});}
+      if(command==='screen_start'){window.videoStatus.phase=kind==='image'?'editing':'recording';window.emitNative('screen-stage',{rect:args.rect,kind});if(adjustable){window.editorContext={...window.editorContext,rect:args.rect,width:args.rect.width,height:args.rect.height,monitor_width:innerWidth,monitor_height:innerHeight,source_label:'screen-select-0'};window.emitNative('screen-editor-reset',window.editorContext);}}
+      if(command==='screen_resize_region'){
+        if(window.failResize)throw Error('No se pudo ajustar el área');
+        window.editorContext={...window.editorContext,rect:args.rect,width:args.rect.width,height:args.rect.height};
+        window.emitNative('screen-editor-reset',window.editorContext);
+      }
       if(command==='screen_editor_context')return window.editorContext;
       if(command==='screen_editor_action')window.emitNative('screen-editor-action',args);
       if(command==='screen_editor_feedback'){window.feedback=args.feedback;window.emitNative('screen-editor-feedback',args);}

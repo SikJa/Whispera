@@ -71,6 +71,7 @@ enum CaptureControl {
     Pause,
     Resume,
     Cancel,
+    Reframe(Region),
 }
 impl Screen {
     pub fn new() -> Self {
@@ -99,6 +100,7 @@ impl Screen {
                     "paused",
                     "pausing",
                     "resuming",
+                    "reframing",
                     "cancelling",
                     "saving",
                 ]
@@ -405,6 +407,7 @@ fn select_locked(app: &tauri::AppHandle, screen: &Screen, kind: &str) -> Result<
         for (index, monitor) in monitors.iter().enumerate() {
             let label = format!("screen-select-{index}");
             let window = selector_window(app, &label)?;
+            set_frame_region(&window, None)?;
             window.set_focusable(true).map_err(|e| e.to_string())?;
             window
                 .set_ignore_cursor_events(false)
@@ -466,6 +469,56 @@ pub async fn screen_select(app: tauri::AppHandle) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || select(&app))
         .await
         .map_err(|e| e.to_string())?
+}
+pub(crate) fn set_frame_region(window: &tauri::WebviewWindow, rect: Option<Rect>) -> Result<(), String> {
+    let clone=window.clone();
+    window.run_on_main_thread(move || unsafe {
+        use windows::Win32::Graphics::Gdi::{CreateRectRgn,CreateRoundRectRgn,CombineRgn,SetWindowRgn,DeleteObject,RGN_DIFF};
+        let Ok(hwnd)=clone.hwnd() else {return;};
+        let hwnd=windows::Win32::Foundation::HWND(hwnd.0);
+        let Some(rect)=rect else {SetWindowRgn(hwnd,None,true);return;};
+        let dpi=clone.scale_factor().unwrap_or(1.);
+        let edge=8.;
+        let outer=CreateRoundRectRgn(((rect.x-edge)*dpi).floor() as i32,((rect.y-edge)*dpi).floor() as i32,
+            ((rect.x+rect.width+edge)*dpi).ceil() as i32,((rect.y+rect.height+edge)*dpi).ceil() as i32,(28.*dpi) as i32,(28.*dpi) as i32);
+        let inner=CreateRectRgn(((rect.x+edge)*dpi).ceil() as i32,((rect.y+edge)*dpi).ceil() as i32,
+            ((rect.x+rect.width-edge)*dpi).floor() as i32,((rect.y+rect.height-edge)*dpi).floor() as i32);
+        if outer.0.is_null()||inner.0.is_null() {
+            if !outer.0.is_null(){let _=DeleteObject(outer.into());}
+            if !inner.0.is_null(){let _=DeleteObject(inner.into());}return;
+        }
+        let _=CombineRgn(Some(outer),Some(outer),Some(inner),RGN_DIFF);
+        let _=DeleteObject(inner.into());
+        if SetWindowRgn(hwnd,Some(outer),true)==0 {let _=DeleteObject(outer.into());}
+    }).map_err(|e|e.to_string())
+}
+#[tauri::command]
+pub fn screen_frame_drag(app: tauri::AppHandle, window: tauri::WebviewWindow, active: bool) -> Result<(), String> {
+    if !window.label().starts_with("screen-select-") {return Err("Vista incorrecta".into());}
+    let ctx=crate::screen_editor::screen_editor_context(app.state::<crate::screen_editor::Editor>()).ok_or("Captura no disponible")?;
+    if ctx.source_label!=window.label(){return Err("Vista incorrecta".into());}
+    set_frame_region(&window,if active {None}else{Some(ctx.rect)})
+}
+#[tauri::command]
+pub async fn screen_resize_region(app: tauri::AppHandle, window: tauri::WebviewWindow, id:String, rect:Rect) -> Result<(),String> {
+    tauri::async_runtime::spawn_blocking(move|| {
+        let screen=app.state::<Screen>();let _gate=screen.gate.lock().map_err(|_|"Captura ocupada")?;
+        let ctx=crate::screen_editor::screen_editor_context(app.state::<crate::screen_editor::Editor>()).ok_or("Captura no disponible")?;
+        if ctx.id!=id||ctx.source_label!=window.label(){return Err("La captura ya termino".into());}
+        let next=region(rect,ctx.scale,window.inner_position().map_err(|e|e.to_string())?,window.inner_size().map_err(|e|e.to_string())?)?;
+        let phase=screen.state.lock().map_err(|_|"Estado ocupado")?.phase.clone();
+        let bytes=if ctx.kind=="image" {
+            if phase!="editing"{return Err("La captura ya termino".into());}
+            Some(screen.snapshots.lock().map_err(|_|"Captura ocupada")?.get(window.label()).ok_or("Imagen no disponible")?.crop_png(next)?)
+        }else{
+            if !["recording","paused"].contains(&phase.as_str()){return Err("Espera a que termine el ajuste del video".into());}
+            let active=screen.active.lock().map_err(|_|"Video ocupado")?;
+            active.as_ref().ok_or("Video no disponible")?.stop.send(CaptureControl::Reframe(next)).map_err(|e|e.to_string())?;
+            if phase=="recording"{screen.state.lock().map_err(|_|"Estado ocupado")?.phase="reframing".into();}
+            None
+        };
+        crate::screen_editor::resize(&app,&window,&id,rect,next,bytes)
+    }).await.map_err(|e|e.to_string())?
 }
 #[tauri::command]
 pub async fn screen_select_image(app: tauri::AppHandle) -> Result<(), String> {
@@ -578,7 +631,8 @@ pub async fn screen_start(
                 let mut snapshots = screen.snapshots.lock().map_err(|_| "Captura ocupada")?;
                 let frame = snapshots.get(window.label()).ok_or("La imagen de seleccion ya no esta disponible")?;
                 let cropped = frame.crop_png(region)?;
-                snapshots.clear();
+                // Keep this monitor's original pixels so its crop remains adjustable.
+                snapshots.retain(|label, _| label == window.label());
                 cropped
             };
             screen.state.lock().map_err(|_| "Estado ocupado")?.phase = "editing".into();
@@ -781,7 +835,7 @@ fn gated_action(screen: &Screen) -> Result<(MutexGuard<'_, ()>, ToggleAction), S
         .phase
         .as_str()
     {
-        "recording" | "paused" | "pausing" | "resuming" => ToggleAction::Stop,
+        "recording" | "paused" | "pausing" | "resuming" | "reframing" => ToggleAction::Stop,
         "selecting" => ToggleAction::Cancel,
         "editing" => ToggleAction::Cancel,
         "starting" => ToggleAction::Wait,
@@ -1010,7 +1064,7 @@ fn pcm_bytes(values:&[i16],bytes:&mut Vec<u8>) {
     for value in values {bytes.extend_from_slice(&value.to_le_bytes());}
 }
 fn capture(
-    region: Region,
+    mut region: Region,
     prefs: Preferences,
     binary: PathBuf,
     dir: PathBuf,
@@ -1020,6 +1074,7 @@ fn capture(
     transcribe_microphone: bool,
 ) {
     let result = (|| -> Result<Option<PathBuf>, String> {
+        let output_size=((region.width+1)/2*2,(region.height+1)/2*2);
         let mut segments = Vec::new();
         let mut elapsed = 0.;
         let mut cancelled = false;
@@ -1028,6 +1083,7 @@ fn capture(
             fs::create_dir_all(&part).map_err(|e| e.to_string())?;
             let (path, action, seconds) = record(
                 region,
+                output_size,
                 prefs.clone(),
                 binary.clone(),
                 &part,
@@ -1057,9 +1113,11 @@ fn capture(
                             }
                             CaptureControl::Stop => break 'capture,
                             CaptureControl::Pause => {}
+                            CaptureControl::Reframe(next) => {region=next;}
                         }
                     }
                 }
+                CaptureControl::Reframe(next) => {region=next;}
                 _ => break,
             }
         }
@@ -1187,6 +1245,7 @@ fn wait_encoder(child: &mut Child) -> Result<(), String> {
 
 fn record(
     region: Region,
+    output_size:(u32,u32),
     prefs: Preferences,
     binary: PathBuf,
     dir: &Path,
@@ -1231,7 +1290,7 @@ fn record(
             "desktop",
             "-an",
             "-vf",
-            "pad=ceil(iw/2)*2:ceil(ih/2)*2",
+            &format!("pad=ceil(iw/2)*2:ceil(ih/2)*2,scale={}:{}:force_original_aspect_ratio=decrease:force_divisible_by=2,pad={}:{}:(ow-iw)/2:(oh-ih)/2,setsar=1",output_size.0,output_size.1,output_size.0,output_size.1),
             "-c:v",
             "libx264",
             "-preset",
@@ -1320,6 +1379,8 @@ fn record(
         status.seconds = elapsed + seconds;
         status.phase = if reason == CaptureControl::Pause {
             "pausing"
+        } else if matches!(reason,CaptureControl::Reframe(_)) {
+            "reframing"
         } else {
             "saving"
         }
@@ -1429,7 +1490,7 @@ mod tests {
     #[test]
     fn video_remains_busy_until_finalization() {
         let screen = Screen::new();
-        for phase in ["recording", "paused", "saving"] {
+        for phase in ["recording", "paused", "reframing", "saving"] {
             screen.state.lock().unwrap().phase = phase.into();
             assert!(screen.busy());
         }
@@ -1485,12 +1546,47 @@ mod tests {
     #[test]
     fn shortcut_finishes_paused_video_without_starting_another_selection() {
         let screen = Screen::new();
-        for phase in ["paused", "pausing", "resuming"] {
+        for phase in ["paused", "pausing", "resuming", "reframing"] {
             screen.state.lock().unwrap().phase = phase.into();
             assert!(screen.busy());
             let (_guard, action) = gated_action(&screen).unwrap();
             assert_eq!(action, ToggleAction::Stop);
         }
+    }
+    #[test]
+    #[ignore = "Records two tiny desktop regions without audio; run explicitly on Windows"]
+    fn native_reframe_keeps_resolution_and_decodes_joined_video() {
+        let binary=PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../node_modules/ffmpeg-static/ffmpeg.exe");
+        let root=PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target/screen-smoke").join(uuid::Uuid::new_v4().to_string());
+        fs::create_dir_all(&root).unwrap();
+        let regions=[Region{x:0,y:0,width:129,height:131},Region{x:20,y:20,width:160,height:90}];
+        let mut elapsed=0.;
+        for (index,area) in regions.into_iter().enumerate() {
+            let dir=root.join(format!("part-{index:04}"));fs::create_dir_all(&dir).unwrap();
+            let (tx,rx)=mpsc::channel();let (ready_tx,ready_rx)=mpsc::channel();
+            let binary_clone=binary.clone();let dir_clone=dir.clone();let start=elapsed;
+            let worker=std::thread::spawn(move||record(area,(130,132),Preferences{audio:"none".into(),..Default::default()},binary_clone,&dir_clone,&Arc::new(Mutex::new(Status::default())),&rx,&ready_tx,start,false));
+            ready_rx.recv_timeout(Duration::from_secs(15)).unwrap().unwrap();
+            std::thread::sleep(Duration::from_millis(400));
+            let action=if index==0 {CaptureControl::Reframe(regions[1])}else{CaptureControl::Stop};
+            tx.send(action).unwrap();
+            let (path,reason,seconds)=worker.join().unwrap().unwrap();assert_eq!(reason,action);assert!(path.is_some());elapsed+=seconds;
+        }
+        // Use actual segment filenames; they are timestamped by the recorder.
+        let mut list=String::new();
+        for index in 0..2 {
+            let path=fs::read_dir(root.join(format!("part-{index:04}"))).unwrap().filter_map(Result::ok).map(|e|e.path()).find(|p|p.extension().is_some_and(|e|e=="mp4")).unwrap();
+            list.push_str(&format!("file '{}'\n",path.strip_prefix(&root).unwrap().to_string_lossy().replace('\\',"/")));
+        }
+        fs::write(root.join("segments.txt"),list).unwrap();
+        let joined=root.join("joined.mp4");
+        let join=command(&binary).args(["-hide_banner","-loglevel","error","-y","-f","concat","-safe","1","-i"]).arg(root.join("segments.txt")).args(["-c","copy","-movflags","+faststart"]).arg(&joined).output().unwrap();
+        assert!(join.status.success(),"{}",String::from_utf8_lossy(&join.stderr));
+        let decode=command(&binary).args(["-hide_banner","-i"]).arg(&joined).args(["-f","null","-"]).output().unwrap();
+        let info=String::from_utf8_lossy(&decode.stderr);
+        assert!(decode.status.success()&&info.contains("130x132")&&info.contains("Video: h264"),"{info}");
+        assert!(!info.contains("Audio:"));assert!(elapsed>0.);
+        let resolved=root.canonicalize().unwrap();let allowed=PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target/screen-smoke").canonicalize().unwrap();assert!(resolved.starts_with(allowed));fs::remove_dir_all(resolved).unwrap();
     }
     #[test]
     #[ignore = "Records a tiny desktop region and optional default audio devices; run explicitly on Windows"]
@@ -1520,6 +1616,7 @@ mod tests {
                         width: 129,
                         height: 131,
                     },
+                    (130,132),
                     prefs,
                     binary_clone,
                     &dir_clone,

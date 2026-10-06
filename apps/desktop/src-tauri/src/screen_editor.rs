@@ -24,6 +24,10 @@ pub struct Context {
     pub frame_color: String,
     pub hud_scale: f64,
     pub hud_above: bool,
+    pub rect: Rect,
+    pub monitor_width: f64,
+    pub monitor_height: f64,
+    pub source_label: String,
 }
 #[derive(Default)]
 pub struct Editor {
@@ -119,6 +123,9 @@ fn window(
     Ok(window)
 }
 fn raise_controls(app: &tauri::AppHandle) {
+    if let Some(ctx)=app.state::<Editor>().context.lock().ok().and_then(|c|c.clone()) {
+        if let Some(source)=app.get_webview_window(&ctx.source_label){let _=source.set_always_on_top(true);}
+    }
     for label in ["screen-tools", "screen-hud"] {
         if let Some(window) = app.get_webview_window(label) {
             if window.is_visible().unwrap_or(false) {
@@ -367,6 +374,10 @@ pub(crate) fn open_with_image(
         scale,
         hud_scale,
         hud_above,
+        rect,
+        monitor_width: size.width as f64 / scale,
+        monitor_height: size.height as f64 / scale,
+        source_label: source.label().into(),
         frame_color: app
             .state::<crate::storage::Store>()
             .get::<screen::Preferences>("screen_preferences")
@@ -399,6 +410,31 @@ pub(crate) fn open_with_image(
             .map_err(|e| e.to_string())?;
     }
     editor.configured.store(true, Ordering::SeqCst);
+    source.set_ignore_cursor_events(false).map_err(|e|e.to_string())?;
+    screen::set_frame_region(source,Some(rect))?;
+    source.emit("screen-editor-reset",&ctx).map_err(|e|e.to_string())?;
+    Ok(())
+}
+pub(crate) fn resize(app:&tauri::AppHandle,source:&tauri::WebviewWindow,id:&str,rect:Rect,region:Region,bytes:Option<Vec<u8>>) -> Result<(),String> {
+    let mut ctx=context(app,id)?;let editor=app.state::<Editor>();
+    let monitor=editor.monitor.lock().map_err(|_|"Editor ocupado")?.ok_or("Pantalla no disponible")?;
+    ctx.rect=rect;ctx.width=rect.width;ctx.height=rect.height;
+    ctx.hud_scale=fit_hud_scale(region,monitor,ctx.scale,app.state::<crate::storage::Store>().get::<crate::storage::Settings>("settings")?.recorder_scale);
+    ctx.hud_above=hud_anchor(region,monitor,ctx.scale,ctx.hud_scale).1;
+    if let Some(bytes)=bytes{*editor.image.lock().map_err(|_|"Editor ocupado")?=bytes;}
+    *editor.region.lock().map_err(|_|"Editor ocupado")?=Some(region);
+    *editor.context.lock().map_err(|_|"Editor ocupado")?=Some(ctx.clone());
+    let ink=app.get_webview_window("screen-ink").ok_or("Editor no disponible")?;
+    ink.set_position(tauri::PhysicalPosition::new(region.x,region.y)).map_err(|e|e.to_string())?;
+    ink.set_size(tauri::PhysicalSize::new(region.width,region.height)).map_err(|e|e.to_string())?;
+    for label in ["screen-tools","screen-hud"] {
+        if let Some(window)=app.get_webview_window(label){place_controls(&window,&ctx,region,monitor,false)?;}
+    }
+    screen::set_frame_region(source,Some(rect))?;
+    for window in [Some(ink),app.get_webview_window("screen-tools"),app.get_webview_window("screen-hud"),Some(source.clone())].into_iter().flatten(){
+        window.emit("screen-editor-reset",&ctx).map_err(|e|e.to_string())?;
+    }
+    raise_controls(app);
     Ok(())
 }
 #[tauri::command]
@@ -750,6 +786,10 @@ mod tests {
                     let ctx = Context {
                         id: "test".into(),
                         kind: "video".into(),
+                        rect:Rect{x:(rx-x) as f64/scale,y:(ry-y) as f64/scale,width:rw as f64/scale,height:rh as f64/scale},
+                        monitor_width:width as f64/scale,
+                        monitor_height:height as f64/scale,
+                        source_label:"screen-select-0".into(),
                         width: rw as f64 / scale,
                         height: rh as f64 / scale,
                         scale,

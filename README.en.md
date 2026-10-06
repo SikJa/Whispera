@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/SikJa/Whispera/releases"><kbd>⬇ Download</kbd></a>&ensp;·&ensp;
+  <a href="https://github.com/kazu00001/Whispera-K/releases"><kbd>⬇ Download</kbd></a>&ensp;·&ensp;
   <a href="README.md">Español</a>&ensp;·&ensp;
   <a href="https://console.groq.com/keys">Get a Groq key</a>&ensp;·&ensp;
   <a href="docs/PRIVACY.md">Privacy</a>
@@ -40,6 +40,10 @@ It shows up as a **transparent floating folder** on top of any window. Record, t
 - 🌐 **Spanish & English** — interface, installer and setup wizard are bilingual
 
 ## Features
+
+[Version 0.2.6](docs/releases/0.2.6.md) adds draggable and resizable capture
+borders for screenshots and video, preserving the rounded design and existing
+annotations. Video reframing has a brief transition between recording segments.
 
 | | |
 |---|---|
@@ -72,7 +76,7 @@ pasting. A local temporary copy keeps the clipboard valid.
 
 ## Install
 
-1. Download `Whispera_*_x64-setup.exe` from [Releases](https://github.com/SikJa/Whispera/releases)
+1. Download `Whispera_*_x64-setup.exe` from [Releases](https://github.com/kazu00001/Whispera-K/releases)
 2. Install for your user — no admin rights needed
 3. First launch opens a **4-step setup wizard**:
 

@@ -1,4 +1,4 @@
-import {readFileSync,writeFileSync,existsSync} from 'node:fs';
+import {readFileSync,writeFileSync,existsSync,copyFileSync} from 'node:fs';
 import {createHash} from 'node:crypto';
 import {execFileSync} from 'node:child_process';
 import {pathToFileURL} from 'node:url';
@@ -18,6 +18,12 @@ export function publish(){
   writeFileSync(latest,JSON.stringify(manifest(version,repo,readFileSync(sig,'utf8'),notes),null,2)+'\n');
   const hash=createHash('sha256').update(readFileSync(exe)).digest('hex');
   writeFileSync(checksum,`${hash}  ${name}\n`);
+  // Keep a stable, direct download URL for the README across release versions.
+  const directName='Whispera-K-setup.exe',direct=`${dir}/${directName}`;
+  copyFileSync(exe,direct);
+  copyFileSync(sig,direct+'.sig');
+  writeFileSync(direct+'.sha256',`${hash}  ${directName}\n`);
+  const files=[exe,sig,checksum,latest,direct,direct+'.sig',direct+'.sha256'];
   const findRelease=()=>{
     // The by-tag API returns 404 for a draft whose Git tag is not created yet.
     const value=execFileSync(gh,['api',`repos/${repo}/releases`,'--paginate','--jq',`.[] | select(.tag_name == "${tag}") | @json`],{encoding:'utf8'}).trim();
@@ -26,13 +32,13 @@ export function publish(){
   let release=findRelease();
   if(release&&!release.draft)throw Error('Esta versión ya está publicada; no se reemplaza un instalador anunciado');
   if(!release)execFileSync(gh,['release','create',tag,'--repo',repo,'--target',sha,'--draft','--title',`Whispera (K) ${version}`,'--notes-file','.local/release-notes.md'],{stdio:'inherit'});
-  const pending=[exe,sig,checksum,latest].filter(file=>{
+  const pending=files.filter(file=>{
     const asset=release?.assets.find(a=>a.name===file.split('/').at(-1));
     return !asset||asset.digest!=='sha256:'+createHash('sha256').update(readFileSync(file)).digest('hex');
   });
   if(pending.length)execFileSync(gh,['release','upload',tag,...pending,'--repo',repo,'--clobber'],{stdio:'inherit'});
   release=findRelease();
-  for(const file of [exe,sig,checksum,latest]){
+  for(const file of files){
     const asset=release.assets.find(a=>a.name===file.split('/').at(-1));
     const data=readFileSync(file),digest='sha256:'+createHash('sha256').update(data).digest('hex');
     if(!asset||asset.state!=='uploaded'||asset.size!==data.length||asset.digest!==digest)throw Error('GitHub no confirmó el archivo completo: '+file);

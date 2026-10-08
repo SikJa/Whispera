@@ -23,6 +23,7 @@ mod retention;
 mod unification;
 mod legacy;
 mod onboarding;
+mod startup;
 mod paste;
 mod paste_focus;
 mod profile;
@@ -463,6 +464,12 @@ fn main() {
                 .event("Whispera 2 iniciada")
                 .map_err(std::io::Error::other)?;
             app.manage(store);
+            let startup_app=app.handle().clone();
+            tauri::async_runtime::spawn_blocking(move || {
+                if let Err(error)=startup::reconcile() {
+                    let _=startup_app.state::<Store>().event(&format!("Inicio automático: {error}"));
+                }
+            });
             app.manage(library::Library::default());
             library::start(app.handle());
             video_transcript::start(app.handle());

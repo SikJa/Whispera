@@ -1,6 +1,5 @@
 use cpal::traits::{DeviceTrait, HostTrait};
 use tauri::State;
-use tauri_plugin_autostart::ManagerExt;
 use crate::{groq, storage::Store};
 
 #[derive(serde::Serialize)]
@@ -12,28 +11,25 @@ pub struct SetupInfo {
 }
 
 #[tauri::command]
-pub fn setup_info(app: tauri::AppHandle, store: State<Store>) -> Result<SetupInfo, String> {
-    Ok(SetupInfo {
-        complete: store.get("setup_complete")?,
-        startup: app.autolaunch().is_enabled().map_err(|e| e.to_string())?,
+pub async fn setup_info(store: State<'_, Store>) -> Result<SetupInfo, String> {
+    let complete=store.get("setup_complete")?;
+    tauri::async_runtime::spawn_blocking(move || Ok(SetupInfo {
+        complete,
+        startup: crate::startup::enabled()?,
         microphone: cpal::default_host().default_input_device().and_then(|d| d.name().ok()),
-    })
+    })).await.map_err(|e|e.to_string())?
 }
 
 #[tauri::command]
-pub fn startup_enabled(window: tauri::WebviewWindow, app: tauri::AppHandle) -> Result<bool, String> {
+pub async fn startup_enabled(window: tauri::WebviewWindow) -> Result<bool, String> {
     if window.label() != "main" { return Err("Abrí Configuración para cambiar el inicio automático".into()); }
-    app.autolaunch().is_enabled().map_err(|e| e.to_string())
+    tauri::async_runtime::spawn_blocking(crate::startup::enabled).await.map_err(|e|e.to_string())?
 }
 
 #[tauri::command]
-pub fn set_startup(window: tauri::WebviewWindow, app: tauri::AppHandle, enabled: bool) -> Result<bool, String> {
+pub async fn set_startup(window: tauri::WebviewWindow, enabled: bool) -> Result<bool, String> {
     if window.label() != "main" { return Err("Abrí Configuración para cambiar el inicio automático".into()); }
-    if enabled { app.autolaunch().enable() } else { app.autolaunch().disable() }
-        .map_err(|e| e.to_string())?;
-    let actual = app.autolaunch().is_enabled().map_err(|e| e.to_string())?;
-    if actual != enabled { return Err("Windows no confirmó el cambio del inicio automático".into()); }
-    Ok(actual)
+    tauri::async_runtime::spawn_blocking(move || crate::startup::set_enabled(enabled)).await.map_err(|e|e.to_string())?
 }
 
 #[tauri::command]

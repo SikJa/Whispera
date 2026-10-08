@@ -42,6 +42,10 @@ jobs:
         if: steps.version.outputs.skip != 'true'
         working-directory: apps/desktop/src-tauri
         run: cargo test --locked
+      - name: Probar inicio automático en claves aisladas
+        if: steps.version.outputs.skip != 'true'
+        shell: pwsh
+        run: ./apps/desktop/tests/verify-startup-provider.ps1
       - name: Compilar y firmar
         if: steps.version.outputs.skip != 'true'
         working-directory: apps/desktop

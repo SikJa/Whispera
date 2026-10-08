@@ -21,6 +21,11 @@ pub fn ui_heartbeat(window: tauri::WebviewWindow, health: State<Health>) {
 pub fn busy(phase: &str) -> bool {
     ["recording", "paused", "processing"].contains(&phase)
 }
+fn stale_heartbeat(beat: Option<&mut Instant>, reset: bool) -> bool {
+    let Some(beat) = beat else { return false; };
+    if reset { *beat = Instant::now(); }
+    beat.elapsed() > Duration::from_secs(30)
+}
 #[cfg(test)]
 mod tests {
     #[test]
@@ -29,6 +34,14 @@ mod tests {
             assert!(super::busy(phase));
         }
         assert!(!super::busy("idle"));
+    }
+    #[test]
+    fn watchdog_requires_opt_in_and_resets_on_show_or_recording() {
+        assert!(!super::stale_heartbeat(None, false));
+        let mut old = std::time::Instant::now() - std::time::Duration::from_secs(60);
+        assert!(super::stale_heartbeat(Some(&mut old), false));
+        assert!(!super::stale_heartbeat(Some(&mut old), true));
+        assert!(!super::stale_heartbeat(Some(&mut old), false));
     }
 }
 #[tauri::command]
@@ -45,6 +58,7 @@ pub fn restart_app(app: tauri::AppHandle) -> Result<(), String> {
         return Err("Termina o guarda la grabacion antes de reiniciar".into());
     }
     crate::engine::shutdown(&app);
+    crate::lifecycle::record("Manual restart requested");
     app.restart();
 }
 pub fn start(app: &tauri::AppHandle) {
@@ -69,7 +83,10 @@ pub fn start(app: &tauri::AppHandle) {
                     .processing
                     .load(std::sync::atomic::Ordering::SeqCst);
             let health = app.state::<Health>();
-            for (label, window) in app.webview_windows() {
+            let windows = app.webview_windows();
+            visible.retain(|label| windows.contains_key(label));
+            if let Ok(mut beats) = health.beats.lock() { beats.retain(|label, _| windows.contains_key(label)); }
+            for (label, window) in windows {
                 if !window.is_visible().unwrap_or(false) {
                     visible.remove(&label);
                     continue;
@@ -80,11 +97,8 @@ pub fn start(app: &tauri::AppHandle) {
                         Ok(b) => b,
                         Err(_) => continue,
                     };
-                    let beat = beats.entry(label.clone()).or_insert_with(Instant::now);
-                    if first || occupied || !enabled {
-                        *beat = Instant::now();
-                    }
-                    beat.elapsed() > Duration::from_secs(30)
+                    // Auxiliary editors do not implement heartbeats; silence is not a hang.
+                    stale_heartbeat(beats.get_mut(&label), first || occupied || !enabled)
                 };
                 if stale {
                     let mut attempts = match health.restarts.lock() {

@@ -490,6 +490,7 @@ pub async fn library_drag(
     let preview = crate::library_media::drag_image(&app, &files[0])
         .unwrap_or_else(|_| include_bytes!("../icons/cristal/32x32.png").to_vec());
     let (files, _) = crate::video_transcript::package(&app.state::<Store>(), &files)?;
+    let files = crate::video_transcript::share_files(&app, &files)?;
     let files: Vec<PathBuf> = files.into_iter().map(PathBuf::from).collect();
     let w = window.clone();
     let (send, receive) = tokio::sync::oneshot::channel();

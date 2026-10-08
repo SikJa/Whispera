@@ -136,44 +136,50 @@ fn fit_start(value: i32, origin: i32, span: u32, size: u32, gap: i32) -> i32 {
         (origin + span as i32 - size as i32 - gap).max(origin + gap),
     )
 }
+fn intersection(a: Region, b: Region) -> u64 {
+    let w = (a.x + a.width as i32).min(b.x + b.width as i32) - a.x.max(b.x);
+    let h = (a.y + a.height as i32).min(b.y + b.height as i32) - a.y.max(b.y);
+    w.max(0) as u64 * h.max(0) as u64
+}
+fn external_dock(region: Region, monitor: Region, width: u32, height: u32, gap: i32, vertical: bool, avoid: Option<Region>) -> Region {
+    let cx = region.x + (region.width as i32 - width as i32) / 2;
+    let cy = region.y + (region.height as i32 - height as i32) / 2;
+    let left = (region.x - width as i32 - gap, cy);
+    let right = (region.x + region.width as i32 + gap, cy);
+    let above = (cx, region.y - height as i32 - gap);
+    let below = (cx, region.y + region.height as i32 + gap);
+    let mut candidates = if vertical { vec![left, right, above, below] } else { vec![below, above, right, left] };
+    if let Some(other) = avoid {
+        candidates.push((other.x + other.width as i32 + gap, cy));
+        candidates.push((other.x - width as i32 - gap, cy));
+        for x in [right.0, left.0] {
+            candidates.push((x, other.y - height as i32 - gap));
+            candidates.push((x, other.y + other.height as i32 + gap));
+        }
+    }
+    candidates.into_iter().map(|(x,y)| Region {
+        x: fit_start(x, monitor.x, monitor.width, width, gap),
+        y: fit_start(y, monitor.y, monitor.height, height, gap),
+        width, height,
+    }).min_by_key(|dock| (
+        intersection(*dock, region),
+        avoid.map_or(0, |other| intersection(*dock, other)),
+    )).unwrap()
+}
 fn tool_bounds(region: Region, monitor: Region, scale: f64, compact: bool) -> Region {
     let gap = pixels(10., scale) as i32;
     let width = pixels(50., scale).min(monitor.width.saturating_sub(2 * gap as u32));
     let full_height = pixels(450., scale).min(monitor.height.saturating_sub(2 * gap as u32));
     let height = if compact { pixels(96., scale).min(full_height) } else { full_height };
-    let left = region.x - width as i32 - gap;
-    let x = if left >= monitor.x + gap {
-        left
-    } else {
-        region.x + region.width as i32 - width as i32 - gap
-    };
-    Region {
-        x: fit_start(x, monitor.x, monitor.width, width, gap),
-        y: fit_start(region.y + (region.height as i32-height as i32)/2, monitor.y, monitor.height, height, gap),
-        width,
-        height,
-    }
+    external_dock(region, monitor, width, height, gap, true, None)
 }
 fn hud_anchor(region: Region, monitor: Region, scale: f64, _hud_scale: f64) -> (Region, bool) {
     let gap = pixels(10., scale) as i32;
     let width = pixels(260., scale)
         .min(monitor.width.saturating_sub(2 * gap as u32));
     let height = pixels(56., scale);
-    let below = region.y + region.height as i32 + gap;
-    let y = if below + height as i32 + gap <= monitor.y + monitor.height as i32 {
-        below
-    } else if region.y - height as i32 - gap >= monitor.y + gap {
-        region.y - height as i32 - gap
-    } else {
-        region.y + region.height as i32 - height as i32 - gap
-    };
-    let x = region.x + (region.width as i32 - width as i32) / 2;
-    let anchor = Region {
-        x: fit_start(x, monitor.x, monitor.width, width, gap),
-        y: fit_start(y, monitor.y, monitor.height, height, gap),
-        width,
-        height,
-    };
+    let anchor = external_dock(region, monitor, width, height, gap, false,
+        Some(tool_bounds(region, monitor, scale, false)));
     (anchor, false)
 }
 fn fit_hud_scale(region: Region, monitor: Region, scale: f64, preferred: f64) -> f64 {
@@ -769,17 +775,38 @@ mod tests {
                                 "{label}: {dock:?} / {monitor:?} at {scale}"
                             );
                         }
-                        assert_eq!(full.x, small.x);
                         if label == "screen-tools" {
                             let gap = pixels(10., scale) as i32;
-                            assert_eq!(small.y, fit_start(region.y + (region.height as i32-small.height as i32)/2, monitor.y, monitor.height, small.height, gap));
+                            if small.x + small.width as i32 <= region.x || small.x >= region.x + region.width as i32 {
+                                assert_eq!(small.y, fit_start(region.y + (region.height as i32-small.height as i32)/2, monitor.y, monitor.height, small.height, gap));
+                            }
                         } else {
                             assert_eq!(full, small);
-                            let gap = pixels(10., scale) as i32;
-                            assert_eq!(small.x, fit_start(region.x + (region.width as i32-small.width as i32)/2, monitor.x, monitor.width, small.width, gap));
                         }
                     }
                 }
+            }
+        }
+    }
+    #[test]
+    fn hud_stays_centered_below_when_there_is_room() {
+        let monitor = Region { x: 0, y: 0, width: 1920, height: 1080 };
+        let region = Region { x: 400, y: 200, width: 800, height: 500 };
+        let hud = hud_anchor(region, monitor, 1., 0.85).0;
+        assert_eq!(hud.x + hud.width as i32 / 2, region.x + region.width as i32 / 2);
+        assert!(hud.y > region.y + region.height as i32);
+    }
+    #[test]
+    fn docks_use_free_space_instead_of_covering_left_edge_capture() {
+        for scale in [1., 1.25, 1.5, 2.] {
+            let monitor = Region { x: -1920, y: -300, width: 1920, height: 1080 };
+            let region = Region { x: -1920, y: -300, width: 700, height: 1080 };
+            for compact in [false, true] {
+                let tools = tool_bounds(region, monitor, scale, compact);
+                let hud = hud_anchor(region, monitor, scale, 0.85).0;
+                assert_eq!(intersection(tools, region), 0);
+                assert_eq!(intersection(hud, region), 0);
+                assert_eq!(intersection(hud, tools), 0);
             }
         }
     }

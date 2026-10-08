@@ -26,7 +26,7 @@ export default function FloatingRecorder() {
     if(!native)return;
     let pending=false; let disposed=false; let previous='';
     const timer=setInterval(async()=>{
-      if(pending||disposed)return;
+      if(pending||disposed||document.hidden)return;
       const rects=Array.from(document.querySelectorAll('[data-hit], [data-slot="folder-card"], .glass-control:not([disabled]), .float-actions button, .float-error, .float-cancel'))
         .map(el=>el.getBoundingClientRect()).filter(r=>r.width>0&&r.height>0).map(r=>({x:r.x,y:r.y,width:r.width,height:r.height}));
       const signature=JSON.stringify(rects.map(r=>[r.x,r.y,r.width,r.height].map(Math.round)));
@@ -43,7 +43,7 @@ export default function FloatingRecorder() {
         if (native) { const value = await invoke<State>('recording_state'); if (!disposed) setState(value); }
         if (Date.now() - refreshed > 1500) { const value = await readSettings(); if (!disposed) setSettings(value); refreshed = Date.now(); }
       } catch (e) { if (!disposed) setError(String(e)); }
-      finally { if (!disposed) timer = setTimeout(poll, 250); }
+      finally { if (!disposed) timer = setTimeout(poll, document.hidden ? 1500 : 250); }
     }
     void poll(); return () => { disposed = true; clearTimeout(timer); };
   }, []);

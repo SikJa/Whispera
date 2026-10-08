@@ -5,7 +5,7 @@ use std::{
     io::{Read, Write},
     path::{Path, PathBuf},
     sync::{
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicUsize, Ordering},
         mpsc, Arc, Mutex,
     },
     time::{Duration, Instant},
@@ -52,13 +52,96 @@ pub struct Recorder {
 struct Capture {
     stream: Option<cpal::Stream>,
     rx: mpsc::Receiver<Vec<i16>>,
-    fault: Arc<AtomicBool>,
+    input: Arc<InputBuffer>,
+    faults: mpsc::Receiver<String>,
+    sync: DiskSync,
     file: File,
     dir: PathBuf,
     rate: u32,
     samples: u64,
     synced: Instant,
     paused: Arc<AtomicBool>,
+}
+
+// Bound by audio duration, not by the device's variable callback block size.
+struct InputBuffer {
+    tx: mpsc::Sender<Vec<i16>>,
+    queued: AtomicUsize,
+    limit: usize,
+    failed: AtomicBool,
+    faults: mpsc::SyncSender<String>,
+}
+impl InputBuffer {
+    fn fail(&self, message: String) {
+        if !self.failed.swap(true, Ordering::Relaxed) {
+            let _ = self.faults.try_send(message);
+        }
+    }
+    fn send(&self, samples: Vec<i16>) {
+        if samples.is_empty() || self.failed.load(Ordering::Relaxed) {
+            return;
+        }
+        let count = samples.len();
+        if self
+            .queued
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |n| {
+                n.checked_add(count).filter(|total| *total <= self.limit)
+            })
+            .is_err()
+        {
+            self.fail("El guardado se atraso mas de 30 segundos. Se detuvo la grabacion para no ocultar perdida de audio.".into());
+            return;
+        }
+        if self.tx.send(samples).is_err() {
+            self.queued.fetch_sub(count, Ordering::Relaxed);
+            self.fail("Se cerro el canal interno de audio.".into());
+        }
+    }
+}
+
+// Slow disk flushes must not block the audio consumer. Only one flush is queued.
+struct DiskSync {
+    tx: Option<mpsc::SyncSender<()>>,
+    worker: Option<std::thread::JoinHandle<Result<(), String>>>,
+    errors: mpsc::Receiver<String>,
+}
+impl DiskSync {
+    fn new(file: File) -> Result<Self, String> {
+        let (tx, rx) = mpsc::sync_channel(1);
+        let (errors_tx, errors) = mpsc::channel();
+        let worker = std::thread::Builder::new()
+            .name("whispera-audio-sync".into())
+            .spawn(move || {
+                while rx.recv().is_ok() {
+                    if let Err(e) = file.sync_data() {
+                        let message = format!("No se pudo sincronizar el audio con el disco: {e}");
+                        let _ = errors_tx.send(message.clone());
+                        return Err(message);
+                    }
+                }
+                Ok(())
+            })
+            .map_err(|e| e.to_string())?;
+        Ok(Self {
+            tx: Some(tx),
+            worker: Some(worker),
+            errors,
+        })
+    }
+    fn finish(&mut self) -> Result<(), String> {
+        self.tx.take();
+        match self.worker.take() {
+            Some(worker) => worker
+                .join()
+                .map_err(|_| "El hilo de sincronizacion de audio fallo".to_string())?,
+            None => Ok(()),
+        }
+    }
+}
+impl Drop for DiskSync {
+    fn drop(&mut self) {
+        let _ = self.finish();
+    }
 }
 
 impl Recorder {
@@ -104,9 +187,8 @@ fn send_samples<T: Copy>(
     data: &[T],
     channels: usize,
     convert: impl Fn(T) -> f32,
-    tx: &mpsc::SyncSender<Vec<i16>>,
+    input: &InputBuffer,
     paused: &AtomicBool,
-    fault: &AtomicBool,
 ) {
     if paused.load(Ordering::Relaxed) {
         return;
@@ -118,9 +200,7 @@ fn send_samples<T: Copy>(
             (x.clamp(-1., 1.) * 32767.).round() as i16
         })
         .collect();
-    if tx.try_send(mono).is_err() {
-        fault.store(true, Ordering::Relaxed);
-    }
+    input.send(mono);
 }
 fn begin(root: &Path) -> Result<Capture, String> {
     let device = cpal::default_host()
@@ -144,57 +224,59 @@ fn begin(root: &Path) -> Result<Capture, String> {
         &serde_json::to_vec(&manifest).map_err(|e| e.to_string())?,
     )?;
     let file = File::create(dir.join("audio.pcm")).map_err(|e| e.to_string())?;
-    let (tx, rx) = mpsc::sync_channel(128);
+    let sync = DiskSync::new(file.try_clone().map_err(|e| e.to_string())?)?;
+    let (tx, rx) = mpsc::channel();
+    let (fault_tx, faults) = mpsc::sync_channel(1);
+    let input = Arc::new(InputBuffer {
+        tx,
+        queued: AtomicUsize::new(0),
+        limit: rate as usize * 30,
+        failed: AtomicBool::new(false),
+        faults: fault_tx,
+    });
     let paused = Arc::new(AtomicBool::new(false));
-    let fault = Arc::new(AtomicBool::new(false));
     let p = paused.clone();
-    let f = fault.clone();
-    let err = fault.clone();
-    let error = move |_: cpal::StreamError| {
-        err.store(true, Ordering::Relaxed);
+    let f = input.clone();
+    let err = input.clone();
+    let error = move |e: cpal::StreamError| {
+        err.fail(format!("El microfono interrumpio la captura: {e}"));
     };
     let cfg: cpal::StreamConfig = config.clone().into();
-    let stream = match config.sample_format() {
-        cpal::SampleFormat::F32 => device.build_input_stream(
-            &cfg,
-            move |data: &[f32], _| send_samples(data, channels, |x| x, &tx, &p, &f),
-            error,
-            None,
-        ),
-        cpal::SampleFormat::I16 => device.build_input_stream(
-            &cfg,
-            move |data: &[i16], _| send_samples(data, channels, |x| x as f32 / 32768., &tx, &p, &f),
-            error,
-            None,
-        ),
-        cpal::SampleFormat::U16 => device.build_input_stream(
-            &cfg,
-            move |data: &[u16], _| {
-                send_samples(
-                    data,
-                    channels,
-                    |x| (x as f32 - 32768.) / 32768.,
-                    &tx,
-                    &p,
-                    &f,
-                )
-            },
-            error,
-            None,
-        ),
-        _ => {
-            return Err(
+    let stream =
+        match config.sample_format() {
+            cpal::SampleFormat::F32 => device.build_input_stream(
+                &cfg,
+                move |data: &[f32], _| send_samples(data, channels, |x| x, &f, &p),
+                error,
+                None,
+            ),
+            cpal::SampleFormat::I16 => device.build_input_stream(
+                &cfg,
+                move |data: &[i16], _| send_samples(data, channels, |x| x as f32 / 32768., &f, &p),
+                error,
+                None,
+            ),
+            cpal::SampleFormat::U16 => device.build_input_stream(
+                &cfg,
+                move |data: &[u16], _| {
+                    send_samples(data, channels, |x| (x as f32 - 32768.) / 32768., &f, &p)
+                },
+                error,
+                None,
+            ),
+            _ => return Err(
                 "Formato del microfono no compatible. Selecciona PCM 16 bits o float32 en Windows."
                     .into(),
-            )
+            ),
         }
-    }
-    .map_err(|e| format!("Error de microfono: {e}"))?;
+        .map_err(|e| format!("Error de microfono: {e}"))?;
     stream.play().map_err(|e| e.to_string())?;
     Ok(Capture {
         stream: Some(stream),
         rx,
-        fault,
+        input,
+        faults,
+        sync,
         file,
         dir,
         rate,
@@ -205,11 +287,19 @@ fn begin(root: &Path) -> Result<Capture, String> {
 }
 impl Capture {
     fn drain(&mut self, view: &Arc<Mutex<RecordingState>>) -> Result<(), String> {
+        self.drain_blocks(view, 128)
+    }
+    fn drain_blocks(
+        &mut self,
+        view: &Arc<Mutex<RecordingState>>,
+        blocks: usize,
+    ) -> Result<(), String> {
         let mut level = 0f32;
-        for _ in 0..128 {
+        for _ in 0..blocks {
             let Ok(data) = self.rx.try_recv() else {
                 break;
             };
+            self.input.queued.fetch_sub(data.len(), Ordering::Relaxed);
             let bytes: Vec<u8> = data.iter().flat_map(|s| s.to_le_bytes()).collect();
             self.file
                 .write_all(&bytes)
@@ -222,7 +312,9 @@ impl Capture {
             );
         }
         if self.synced.elapsed() >= Duration::from_secs(1) {
-            self.file.sync_data().map_err(|e| e.to_string())?;
+            if let Some(tx) = &self.sync.tx {
+                let _ = tx.try_send(());
+            }
             self.synced = Instant::now();
         }
         let mut state = view.lock().unwrap_or_else(|e| e.into_inner());
@@ -232,26 +324,58 @@ impl Capture {
     }
     fn finish(mut self, view: &Arc<Mutex<RecordingState>>) -> Result<String, String> {
         drop(self.stream.take());
-        self.drain(view)?;
-        self.file.sync_all().map_err(|e| e.to_string())?;
-        if self.samples == 0 {
-            return Err("El microfono no entrego audio. Revisa los permisos de Windows.".into());
+        let result = (|| {
+            self.drain_blocks(view, usize::MAX)?;
+            self.sync.finish()?;
+            self.file
+                .sync_all()
+                .map_err(|e| format!("No se pudo finalizar el audio en disco: {e}"))?;
+            if let Ok(error) = self.faults.try_recv() {
+                return Err(error);
+            }
+            if self.samples == 0 {
+                return Err(
+                    "El microfono no entrego audio. Revisa los permisos de Windows.".into(),
+                );
+            }
+            Ok(self.dir.file_name().unwrap().to_string_lossy().into_owned())
+        })();
+        if let Err(error) = &result {
+            record_capture_error(&self.dir, error);
         }
-        Ok(self.dir.file_name().unwrap().to_string_lossy().into_owned())
+        result
+    }
+}
+fn record_capture_error(dir: &Path, error: &str) {
+    let diagnostic = serde_json::json!({ "at": chrono::Utc::now().to_rfc3339(), "error": error });
+    if let Ok(bytes) = serde_json::to_vec(&diagnostic) {
+        let _ = write_new(&dir.join("capture-error.json"), &bytes);
     }
 }
 fn worker(rx: mpsc::Receiver<Command>, view: Arc<Mutex<RecordingState>>, root: PathBuf) {
     let mut capture: Option<Capture> = None;
     loop {
         if let Some(c) = capture.as_mut() {
-            let result=c.drain(&view).and_then(|_|if c.fault.load(Ordering::Relaxed){Err("Se interrumpio el microfono o el disco no pudo seguir el ritmo. El audio guardado esta en Recuperar.".into())}else{Ok(())});
-            if let Err(error) = result {
+            let result = c.drain(&view).and_then(|_| {
+                if let Ok(error) = c.faults.try_recv() {
+                    return Err(error);
+                }
+                if let Ok(error) = c.sync.errors.try_recv() {
+                    return Err(error);
+                }
+                Ok(())
+            });
+            if let Err(mut error) = result {
                 if let Some(c) = capture.take() {
-                    let _ = c.finish(&view);
+                    let dir = c.dir.clone();
+                    if let Err(finish_error) = c.finish(&view) {
+                        error = format!("{error} Error al finalizar: {finish_error}");
+                    }
+                    record_capture_error(&dir, &error);
                 }
                 let mut s = view.lock().unwrap();
                 s.phase = "error".into();
-                s.error = error;
+                s.error = format!("{error} El audio guardado esta en Recuperar.");
             }
         }
         match rx.recv_timeout(Duration::from_millis(10)) {
@@ -520,15 +644,180 @@ mod tests {
     }
     #[test]
     fn stereo_downmix() {
-        let (tx, rx) = mpsc::sync_channel(1);
+        let (input, rx, _) = test_input(16000);
         send_samples(
             &[1f32, -1., 0.5, 0.5],
             2,
             |x| x,
-            &tx,
-            &AtomicBool::new(false),
+            &input,
             &AtomicBool::new(false),
         );
         assert_eq!(rx.recv().unwrap(), vec![0, 16384]);
+    }
+    fn test_input(
+        limit: usize,
+    ) -> (
+        Arc<InputBuffer>,
+        mpsc::Receiver<Vec<i16>>,
+        mpsc::Receiver<String>,
+    ) {
+        let (tx, rx) = mpsc::channel();
+        let (faults, errors) = mpsc::sync_channel(1);
+        (
+            Arc::new(InputBuffer {
+                tx,
+                queued: AtomicUsize::new(0),
+                limit,
+                failed: AtomicBool::new(false),
+                faults,
+            }),
+            rx,
+            errors,
+        )
+    }
+    #[test]
+    fn buffering_handles_more_than_128_device_callbacks_without_loss() {
+        let (input, rx, errors) = test_input(48000 * 30);
+        for _ in 0..300 {
+            input.send(vec![123; 480]);
+        }
+        assert!(errors.try_recv().is_err());
+        assert_eq!(input.queued.load(Ordering::Relaxed), 144000);
+        assert_eq!(rx.try_iter().map(|b| b.len()).sum::<usize>(), 144000);
+    }
+    #[test]
+    fn buffer_limit_reports_loss_and_preserves_only_contiguous_prefix() {
+        let (input, rx, errors) = test_input(4);
+        input.send(vec![1, 2, 3, 4]);
+        input.send(vec![5]);
+        input.queued.store(0, Ordering::Relaxed);
+        input.send(vec![6]);
+        assert!(errors.recv().unwrap().contains("30 segundos"));
+        assert_eq!(rx.try_iter().collect::<Vec<_>>(), vec![vec![1, 2, 3, 4]]);
+    }
+    #[test]
+    fn microphone_and_disconnected_consumer_have_distinct_errors() {
+        let (input, rx, errors) = test_input(4);
+        drop(rx);
+        input.send(vec![1]);
+        assert!(errors.recv().unwrap().contains("canal interno"));
+        assert_eq!(input.queued.load(Ordering::Relaxed), 0);
+        let (input, _, errors) = test_input(4);
+        input.fail("El microfono interrumpio la captura: device disconnected".into());
+        assert!(errors.recv().unwrap().contains("device disconnected"));
+    }
+    #[test]
+    fn finish_drains_entire_backlog_and_keeps_recovery_pcm() {
+        let dir = std::env::temp_dir().join(format!("whispera-drain-{}", uuid::Uuid::new_v4()));
+        fs::create_dir(&dir).unwrap();
+        let file = File::create(dir.join("audio.pcm")).unwrap();
+        let sync = DiskSync::new(file.try_clone().unwrap()).unwrap();
+        let (input, rx, faults) = test_input(48000 * 30);
+        for _ in 0..300 {
+            input.send(vec![123; 480]);
+        }
+        let capture = Capture {
+            stream: None,
+            rx,
+            input,
+            faults,
+            sync,
+            file,
+            dir: dir.clone(),
+            rate: 48000,
+            samples: 0,
+            synced: Instant::now(),
+            paused: Arc::new(AtomicBool::new(false)),
+        };
+        let view = Arc::new(Mutex::new(RecordingState::default()));
+        capture.finish(&view).unwrap();
+        assert_eq!(view.lock().unwrap().seconds, 3.0);
+        let bytes = fs::read(dir.join("audio.pcm")).unwrap();
+        assert_eq!(bytes.len(), 288000);
+        assert!(bytes
+            .chunks_exact(2)
+            .all(|b| i16::from_le_bytes([b[0], b[1]]) == 123));
+        fs::remove_dir_all(dir).unwrap();
+    }
+    #[test]
+    fn stalled_flush_does_not_block_audio_drain() {
+        let dir = std::env::temp_dir().join(format!("whispera-sync-test-{}", uuid::Uuid::new_v4()));
+        fs::create_dir(&dir).unwrap();
+        let file = File::create(dir.join("audio.pcm")).unwrap();
+        let (flush_tx, _flush_rx) = mpsc::sync_channel(1);
+        flush_tx.send(()).unwrap();
+        let (_error_tx, errors) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel();
+        let worker = std::thread::spawn(move || {
+            release_rx.recv().unwrap();
+            Ok(())
+        });
+        let sync = DiskSync {
+            tx: Some(flush_tx),
+            worker: Some(worker),
+            errors,
+        };
+        let (input, rx, faults) = test_input(48000 * 30);
+        input.send(vec![123; 480]);
+        let mut capture = Capture {
+            stream: None,
+            rx,
+            input,
+            faults,
+            sync,
+            file,
+            dir: dir.clone(),
+            rate: 48000,
+            samples: 0,
+            synced: Instant::now() - Duration::from_secs(2),
+            paused: Arc::new(AtomicBool::new(false)),
+        };
+        let (done_tx, done_rx) = mpsc::channel();
+        let drain = std::thread::spawn(move || {
+            let result = capture.drain(&Arc::new(Mutex::new(RecordingState::default())));
+            done_tx.send(result.map(|_| capture.samples)).unwrap();
+            capture
+        });
+        let result = done_rx.recv_timeout(Duration::from_secs(2));
+        release_tx.send(()).unwrap();
+        drop(drain.join().unwrap());
+        assert_eq!(result.unwrap().unwrap(), 480);
+        fs::remove_dir_all(dir).unwrap();
+    }
+    #[test]
+    fn stop_does_not_report_success_after_input_failure() {
+        let dir =
+            std::env::temp_dir().join(format!("whispera-fault-test-{}", uuid::Uuid::new_v4()));
+        fs::create_dir(&dir).unwrap();
+        let file = File::create(dir.join("audio.pcm")).unwrap();
+        let sync = DiskSync::new(file.try_clone().unwrap()).unwrap();
+        let (input, rx, faults) = test_input(48000 * 30);
+        input.send(vec![123; 480]);
+        input.fail("El microfono interrumpio la captura: test failure".into());
+        let capture = Capture {
+            stream: None,
+            rx,
+            input,
+            faults,
+            sync,
+            file,
+            dir: dir.clone(),
+            rate: 48000,
+            samples: 0,
+            synced: Instant::now(),
+            paused: Arc::new(AtomicBool::new(false)),
+        };
+        assert!(capture
+            .finish(&Arc::new(Mutex::new(RecordingState::default())))
+            .unwrap_err()
+            .contains("test failure"));
+        assert_eq!(fs::metadata(dir.join("audio.pcm")).unwrap().len(), 960);
+        let diagnostic: serde_json::Value =
+            serde_json::from_slice(&fs::read(dir.join("capture-error.json")).unwrap()).unwrap();
+        assert!(diagnostic["error"]
+            .as_str()
+            .unwrap()
+            .contains("test failure"));
+        fs::remove_dir_all(dir).unwrap();
     }
 }

@@ -205,6 +205,8 @@ fn run(app: &tauri::AppHandle, video: &Path) -> Result<(), String> {
     if transcript.status == "ready" {
         // Sidecar and database IO must not hold the system clipboard open.
         let (files, text) = package(&store, &[video.to_path_buf()])?;
+        let shared_original = share_files(app, &[video.to_string_lossy().into_owned()])?;
+        let files = share_files(app, &files)?;
         let mut changed = false;
         if let Ok(_clipboard) = clipboard_win::Clipboard::new_attempts(10) {
             let mut current = Vec::<String>::new();
@@ -212,7 +214,7 @@ fn run(app: &tauri::AppHandle, video: &Path) -> Result<(), String> {
             if clipboard_win::formats::FileList
                 .read_clipboard(&mut current)
                 .is_ok()
-                && current == vec![video.to_string_lossy().into_owned()]
+                && (current == vec![video.to_string_lossy().into_owned()] || current == shared_original)
             {
                 write_open(&files, &text)?;
                 changed = true;
@@ -281,7 +283,9 @@ pub fn package(store: &Store, original: &[PathBuf]) -> Result<(Vec<String>, Stri
             let sidecar = path.with_extension("transcript.txt");
             if t.status == "ready" && !t.text.trim().is_empty() {
                 // Regenerate only our recorded transcript, never an arbitrary neighboring file.
-                fs::write(&sidecar, &t.text).map_err(|e| e.to_string())?;
+                if fs::read_to_string(&sidecar).ok().as_deref() != Some(t.text.as_str()) {
+                    fs::write(&sidecar, &t.text).map_err(|e| e.to_string())?;
+                }
                 files.push(sidecar.to_string_lossy().into_owned());
                 texts.push(t.text);
             }
@@ -289,16 +293,14 @@ pub fn package(store: &Store, original: &[PathBuf]) -> Result<(Vec<String>, Stri
     }
     Ok((files, texts.join("\n\n")))
 }
-pub(crate) fn write_open(files: &[String], text: &str) -> Result<(), String> {
+pub(crate) fn write_open(files: &[String], _text: &str) -> Result<(), String> {
     validate_files(files)?;
     // set_file_list preserves existing formats by default. Replace the previous
     // clipboard item first so paste targets cannot pick an unrelated PNG or HTML.
     clipboard_win::raw::empty().map_err(|e| e.to_string())?;
     clipboard_win::raw::set_file_list(files).map_err(|e| e.to_string())?;
-    if !text.is_empty() {
-        clipboard_win::raw::set_string_with(text, clipboard_win::options::NoClear)
-            .map_err(|e| e.to_string())?;
-    }
+    // File paste targets may prefer CF_UNICODETEXT over CF_HDROP. Keep the
+    // transcript in the TXT attachment; explicit "copy text" remains separate.
     Ok(())
 }
 fn validate_files(files: &[String]) -> Result<(), String> {
@@ -309,12 +311,49 @@ fn validate_files(files: &[String]) -> Result<(), String> {
 }
 pub fn copy_files(app: &tauri::AppHandle, paths: &[PathBuf]) -> Result<(), String> {
     let (files, text) = package(&app.state::<Store>(), paths)?;
+    let files = share_files(app, &files)?;
     {
         let _clipboard = clipboard_win::Clipboard::new_attempts(20).map_err(|e| e.to_string())?;
         write_open(&files, &text)?;
     }
     library::suppress_clipboard(app);
     Ok(())
+}
+// MSIX apps can see a virtualized AppData tree. Export outside AppData so
+// clipboard and native drag recipients resolve the same physical files.
+pub(crate) fn share_files(app: &tauri::AppHandle, files: &[String]) -> Result<Vec<String>, String> {
+    let root = app.path().video_dir().map_err(|e| e.to_string())?
+        .join("Whispera").join("Compartir");
+    share_files_at(&root, files)
+}
+fn share_files_at(root: &Path, files: &[String]) -> Result<Vec<String>, String> {
+    use std::hash::{Hash, Hasher};
+    static EXPORT_GATE: Mutex<()> = Mutex::new(());
+    let _guard = EXPORT_GATE.lock().map_err(|_| "Exportacion ocupada")?;
+    validate_files(files)?;
+    files.iter().map(|file| {
+        let source = Path::new(file);
+        if source.starts_with(root) { return Ok(file.clone()); }
+        let metadata = fs::metadata(source).map_err(|e| e.to_string())?;
+        let mut hash = std::collections::hash_map::DefaultHasher::new();
+        source.hash(&mut hash);
+        metadata.len().hash(&mut hash);
+        metadata.modified().map_err(|e| e.to_string())?.hash(&mut hash);
+        let directory = root.join(format!("{:016x}", hash.finish()));
+        let target = directory.join(source.file_name().ok_or("Archivo sin nombre")?);
+        if !fs::metadata(&target).is_ok_and(|m| m.is_file() && m.len() == metadata.len()) {
+            fs::create_dir_all(&directory).map_err(|e| e.to_string())?;
+            let pending = directory.join(format!("{}.partial", uuid::Uuid::new_v4()));
+            let result = (|| -> Result<(), String> {
+                let copied = fs::copy(source, &pending).map_err(|e| e.to_string())?;
+                if copied != metadata.len() { return Err("El archivo cambio mientras se copiaba. Reintenta.".into()); }
+                fs::rename(&pending, &target).map_err(|e| e.to_string())
+            })();
+            if result.is_err() { let _ = fs::remove_file(&pending); }
+            result?;
+        }
+        Ok(target.to_string_lossy().into_owned())
+    }).collect()
 }
 #[tauri::command]
 pub fn video_transcript_action(
@@ -365,6 +404,31 @@ pub fn video_transcript_action(
 mod tests {
     use super::*;
     #[test]
+    fn sharing_uses_external_files_reuses_exports_and_preserves_sources() {
+        let root = root();
+        let source = root.join("private");
+        fs::create_dir_all(&source).unwrap();
+        let video = source.join("video.mp4");
+        let text = source.join("video.transcript.txt");
+        fs::write(&video, b"video fixture").unwrap();
+        fs::write(&text, b"text fixture").unwrap();
+        let originals = vec![video.to_string_lossy().into_owned(), text.to_string_lossy().into_owned()];
+        let shared = root.join("Videos/Whispera/Compartir");
+        let exports = share_files_at(&shared, &originals).unwrap();
+        assert_eq!(exports, share_files_at(&shared, &originals).unwrap());
+        assert_eq!(exports, share_files_at(&shared, &exports).unwrap());
+        for (original, export) in originals.iter().zip(&exports) {
+            assert!(Path::new(export).starts_with(&shared));
+            assert_eq!(fs::read(original).unwrap(), fs::read(export).unwrap());
+        }
+        fs::write(&text, b"updated transcript fixture").unwrap();
+        let changed = share_files_at(&shared, &originals).unwrap();
+        assert_eq!(changed[0], exports[0]);
+        assert_ne!(changed[1], exports[1]);
+        assert!(share_files_at(&shared, &[source.join("missing.mp4").to_string_lossy().into_owned()]).is_err());
+        fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
     #[ignore = "Run alone: uses a private Windows window station, never the interactive clipboard"]
     fn private_station_clipboard_replaces_stale_formats() {
         use std::ffi::c_void;
@@ -407,9 +471,10 @@ mod tests {
             clipboard_win::raw::get_file_list(&mut actual).unwrap();
             assert_eq!(actual, files);
             write_open(&files, "new transcript").unwrap();
-            let mut text = Vec::new();
-            clipboard_win::raw::get_string(&mut text).unwrap();
-            assert_eq!(String::from_utf8(text).unwrap(), "new transcript");
+            assert!(!clipboard_win::raw::is_format_avail(13));
+            let mut actual = Vec::new();
+            clipboard_win::raw::get_file_list(&mut actual).unwrap();
+            assert_eq!(actual, files);
             assert!(!clipboard_win::raw::is_format_avail(png));
             assert!(write_open(&[root.join("missing.mp4").to_string_lossy().into_owned()], "").is_err());
             let mut preserved = Vec::new();

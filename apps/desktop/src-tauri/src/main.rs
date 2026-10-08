@@ -9,6 +9,7 @@ mod engine;
 mod floating_window;
 mod groq;
 mod health;
+mod lifecycle;
 mod incremental;
 mod retention;
 mod unification;
@@ -408,6 +409,7 @@ fn main() {
         )
         .setup(|app| {
             let dir = app.path().app_data_dir()?;
+            lifecycle::init(app.path().app_log_dir()?);
             // A redirected data drive may mount after Windows starts tray apps.
             // Do not create a replacement profile while its junction is unavailable.
             if std::env::args().any(|arg| arg == "--autostart") {
@@ -497,6 +499,7 @@ fn main() {
                         });
                     }
                     "quit" => {
+                        lifecycle::record("Quit requested from tray");
                         let app = app.clone();
                         tauri::async_runtime::spawn_blocking(move || {
                             let _ = screen::stop(&app);
@@ -637,6 +640,7 @@ fn main() {
                 });
             }
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                if !lifecycle::keep_on_close(window.label()) { return; }
                 api.prevent_close();
                 let _ = window.hide();
                 if window.label().starts_with("screen-select-") {
@@ -647,6 +651,16 @@ fn main() {
                 }
             }
         })
-        .run(tauri::generate_context!())
-        .expect("No se pudo iniciar Whispera Preview");
+        .build(tauri::generate_context!())
+        .expect("No se pudo iniciar Whispera Preview")
+        .run(|_, event| match event {
+            tauri::RunEvent::ExitRequested { code, api, .. } => {
+                if lifecycle::prevent_implicit_exit(code) {
+                    api.prevent_exit();
+                    lifecycle::record("Implicit exit prevented; tray app remains active");
+                } else { lifecycle::record(&format!("Explicit exit requested: {code:?}")); }
+            }
+            tauri::RunEvent::Exit => lifecycle::clean_exit(),
+            _ => {}
+        });
 }

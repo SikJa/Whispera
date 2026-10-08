@@ -11,6 +11,11 @@ export function nextVersion(base,tags){
   if(!latest||compare(initial,latest)>0)return initial.join('.');
   return [latest[0],latest[1],latest[2]+1].join('.');
 }
+export function updateLockVersion(original,version){
+  const entry=/(name = "whispera-desktop"\r?\nversion = ")[^"]+"/;
+  if(!entry.test(original))throw Error('No se encontro el paquete en Cargo.lock');
+  return original.replace(entry,`$1${version}"`);
+}
 export function setVersion(version){
   const config='apps/desktop/src-tauri/tauri.conf.json';
   const c=JSON.parse(readFileSync(config,'utf8'));c.version=version;writeFileSync(config,JSON.stringify(c,null,2)+'\n');
@@ -18,8 +23,7 @@ export function setVersion(version){
   writeFileSync(manifest,readFileSync(manifest,'utf8').replace(/^(version\s*=\s*")[^"]+("\s*)$/m,`$1${version}$2`));
   const lock='apps/desktop/src-tauri/Cargo.lock';
   const original=readFileSync(lock,'utf8');
-  const changed=original.replace(/(name = "whispera-desktop"\r?\nversion = ")[^"]+"/,`$1${version}"`);
-  if(changed===original&&!original.includes(`name = "whispera-desktop"\nversion = "${version}"`))throw Error('No se encontró el paquete en Cargo.lock');
+  const changed=updateLockVersion(original,version);
   writeFileSync(lock,changed);
 }
 export function prepare(){

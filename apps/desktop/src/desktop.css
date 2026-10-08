@@ -88,6 +88,13 @@
 .empty-state h2 { font-size: 15px; font-weight: 500; color: #c8d0bf; }
 .empty-state p { font-size: 12px; color: #7f8a72; margin-top: 6px; }
 .appearance-preview { height: 226px; display: flex; align-items: center; justify-content: center; padding-top: 26px; }
+.artwork-picker { display:grid; grid-template-columns:40px minmax(0,321px) 40px; align-items:center; justify-content:center; gap:12px; }
+.desktop-app .artwork-arrow { width:40px; height:40px; display:grid; place-items:center; padding:0; border:1px solid #ffffff15; border-radius:50%; background:#ffffff06; color:#e3e3dd; }
+.desktop-app .artwork-arrow:hover { background:#ffffff10; border-color:#ffffff30; }
+.desktop-app .artwork-arrow:focus-visible { outline:2px solid #d9cee9; outline-offset:3px; }
+.artwork-model-name { text-align:center; font-size:13px; margin:20px 0 28px; color:#d8d9d3; }
+.artwork-model-name small { display:block; margin-top:5px; color:#858d7f; font-size:11px; }
+.artwork-picker .appearance-preview { min-width:0; }
 .desktop-app .text-link:not([data-slot]) { background: none; padding: 14px 0; color: #c3b5d7; font-size: 13px; }
 .color-values { display: flex; align-items: center; gap: 10px; margin-top: 18px; font-size: 12px; color: #7f8976; }
 .color-values > span { width: 15px; height: 15px; border-radius: 4px; }

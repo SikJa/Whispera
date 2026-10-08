@@ -1,16 +1,19 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { PaletteContents } from './PalettePanel';
 import { selectionHex } from './palette';
-import { listen, type UnlistenFn } from '@tauri-apps/api/event';
+import type { UnlistenFn } from '@tauri-apps/api/event';
+import { listenCapture as listen } from './capture-events';
 import { ArrowUpRight, Camera, ChevronLeft, ChevronRight, Circle, Triangle, Diamond, Hexagon, Star, MoreHorizontal, SlidersHorizontal, Pause, Play, Copy, Highlighter, Minus, MousePointer2, Pencil, Printer, Redo2, RotateCcw, Save, Square, SquareDashed, Trash2, Type, Undo2, X } from 'lucide-react';
 import { blurredTile, bounds, commit, constrained, emptyHistory, hitTest, isShape, paint, redo, undo, type Shape, type History, type Mark, type Point, type Tool } from './screen-annotations';
 import './screen-recorder.css';
 import './capture-line.css';
 import { showWhenReady } from './screen-ready';
 import CaptureFrame from './CaptureFrame';
+import IndicatorArtwork from './IndicatorArtwork';
+import type {CaptureContext} from './EditableCaptureFrame';
 
-type Context = { id: string; kind: 'image' | 'video'; width: number; height: number; scale: number; hud_scale?:number; hud_above?:boolean; frame_color?:string };
+type Context = CaptureContext;
 type Action = { action: string; value?: string };
 type Feedback = { tool: Tool; color: string; width: number; canUndo: boolean; canRedo: boolean; count: number; busy: boolean; error: string };
 const defaults: Feedback = { tool: 'pointer', color: '#ff4545', width: 3, canUndo: false, canRedo: false, count: 0, busy: false, error: '' };
@@ -43,12 +46,13 @@ function shortcut(e: KeyboardEvent): Action | undefined {
 function useContext() {
   const [context, setContext] = useState<Context>();
   useEffect(() => {
-    let alive = true; let remove: UnlistenFn | undefined;
+    let alive = true, revision = 0; let remove: UnlistenFn | undefined;
     void (async () => {
-      const unlisten = await listen<Context|null>('screen-editor-reset', e => { if (alive) setContext(e.payload??undefined); });
+      const unlisten = await listen<Context|null>('screen-editor-reset', e => { revision++; if (alive) setContext(e.payload??undefined); });
       if (!alive) { unlisten(); return; } remove = unlisten;
+      const requested = revision;
       const current = await invoke<Context | null>('screen_editor_context');
-      if (alive && current) setContext(current);
+      if (alive && revision === requested) setContext(current??undefined);
     })().catch(() => {});
     return () => { alive = false; remove?.(); };
   }, []);
@@ -57,17 +61,26 @@ function useContext() {
 export function ScreenInk() { const context = useContext(); return context ? <Ink key={context.id} context={context} /> : null; }
 function Ink({ context }: { context: Context }) {
   const canvas = useRef<HTMLCanvasElement>(null), background = useRef<HTMLImageElement | null>(null);
+  const fullBackground=useRef(false);
   const history = useRef<History>(emptyHistory());
+  const previousRect=useRef(context.rect);
   const draft = useRef<Mark | null>(null), moving = useRef<{ start: Point; mark: Mark } | null>(null);
   const frame = useRef(0), selected = useRef<string | undefined>(undefined);
   const [version, setVersion] = useState(0), [options, setOptions] = useState(preferences);
   const [tool, setTool] = useState<Tool>('pointer'), [error, setError] = useState(''), [busy, setBusy] = useState(false);
   const [text, setText] = useState<{ point: Point; value: string }>();
   const actions = useRef<(a: Action) => void>(() => {}), live = useRef(true), working = useRef(false);
+  const shown = useRef(false);
+  const paintBackground=(ctx:CanvasRenderingContext2D)=>{
+    if(!background.current)return;
+    if(fullBackground.current&&context.rect) {
+      ctx.drawImage(background.current,context.rect.x*context.scale,context.rect.y*context.scale,context.width*context.scale,context.height*context.scale,0,0,context.width,context.height);
+    } else ctx.drawImage(background.current,0,0,context.width,context.height);
+  };
   const draw = () => {
     const ctx = canvas.current?.getContext('2d'); if (!ctx) return;
     ctx.setTransform(context.scale,0,0,context.scale,0,0); ctx.clearRect(0,0,context.width,context.height);
-    if (background.current) ctx.drawImage(background.current,0,0,context.width,context.height);
+    paintBackground(ctx);
     for (const mark of history.current.present) if (mark.id !== moving.current?.mark.id) paint(ctx,mark);
     if (draft.current) paint(ctx,draft.current);
     if (selected.current && context.kind === 'image' && tool === 'pointer') {
@@ -88,7 +101,7 @@ function Ink({ context }: { context: Context }) {
     const b=bounds(mark);if(b.width<2||b.height<2){draft.current=null;schedule();return;}
     working.current=true;setBusy(true);
     try{
-      if(context.kind==='image'&&background.current)mark.bitmap=blurredTile(background.current,b.width,b.height,context.scale,b);
+      if(context.kind==='image'&&background.current)mark.bitmap=blurredTile(background.current,b.width,b.height,context.scale,fullBackground.current&&context.rect?{...b,x:b.x+context.rect.x,y:b.y+context.rect.y}:b);
       else{
         const bytes=await invoke<number[]>('screen_editor_sample',{id:context.id,rect:b});
         const url=URL.createObjectURL(new Blob([new Uint8Array(bytes)],{type:'image/png'}));
@@ -104,7 +117,7 @@ function Ink({ context }: { context: Context }) {
     try {
       const result = document.createElement('canvas'); result.width = Math.round(context.width*context.scale); result.height = Math.round(context.height*context.scale);
       const ctx = result.getContext('2d')!; ctx.setTransform(context.scale,0,0,context.scale,0,0);
-      ctx.drawImage(background.current,0,0,context.width,context.height);
+      paintBackground(ctx);
       for (const mark of history.current.present) paint(ctx,mark);
       const blob = await new Promise<Blob>((resolve,reject) => result.toBlob(b => b ? resolve(b) : reject(new Error('No se pudo preparar la imagen')), 'image/png'));
       await invoke('screen_image_export', { id: context.id, action, bytes: Array.from(new Uint8Array(await blob.arrayBuffer())) });
@@ -112,7 +125,7 @@ function Ink({ context }: { context: Context }) {
     finally { working.current = false; if (live.current) setBusy(false); }
   };
   actions.current = a => {
-    if (working.current) return;
+    if (working.current && !['tool','color','width','close','escape'].includes(a.action)) return;
     setError('');
     if (a.action === 'tool') { selected.current = undefined; setTool(a.value as Tool); }
     else if (a.action === 'color' && /^#[0-9a-f]{6}$/i.test(a.value ?? '')) setOptions(o => ({ ...o, color: a.value! }));
@@ -130,18 +143,11 @@ function Ink({ context }: { context: Context }) {
     }
   };
   useEffect(() => {
-    live.current = true; let unlisten: UnlistenFn | undefined; let imageUrl = '';
+    live.current = true; let unlisten: UnlistenFn | undefined;
     void (async () => {
       const remove = await listen<{ id:string; action:Action }>('screen-editor-action', e => { if (e.payload.id === context.id) actions.current(e.payload.action); });
       if (!live.current) { remove(); return; } unlisten = remove;
-      if (context.kind === 'image') {
-        const bytes = await invoke<number[]>('screen_editor_image',{ id:context.id });
-        if (!live.current) return;
-        imageUrl = URL.createObjectURL(new Blob([new Uint8Array(bytes)],{ type:'image/png' }));
-        const image = new Image(); image.src = imageUrl; await image.decode();
-        if (!live.current) return; background.current = image;
-      }
-      draw();await showWhenReady('screen_editor_ready',{id:context.id},()=>live.current);
+      if(context.kind==='video'){draw();await showWhenReady('screen_editor_ready',{id:context.id},()=>live.current);}
     })().catch(e => { if (live.current) setError(String(e)); });
     const key = (e:KeyboardEvent) => {
       const action = shortcut(e); if (!action) return;
@@ -151,8 +157,45 @@ function Ink({ context }: { context: Context }) {
       else actions.current(action);
     };
     window.addEventListener('keydown',key);
-    return () => { live.current = false; unlisten?.(); cancelAnimationFrame(frame.current); window.removeEventListener('keydown',key); if(imageUrl) URL.revokeObjectURL(imageUrl); };
+    return () => { live.current = false; unlisten?.(); cancelAnimationFrame(frame.current); window.removeEventListener('keydown',key); };
   }, [context.id]);
+  useLayoutEffect(()=>{
+    let alive=true,url='';
+    cancelAnimationFrame(frame.current);frame.current=0;
+    const previous=previousRect.current,next=context.rect;
+    if(previous&&next&&(previous.x!==next.x||previous.y!==next.y)){
+      const shift=(marks:Mark[])=>marks.map(mark=>({...mark,points:mark.points.map(p=>({x:p.x+previous.x-next.x,y:p.y+previous.y-next.y}))}));
+      history.current={past:history.current.past.map(shift),present:shift(history.current.present),future:history.current.future.map(shift)};
+    }
+    previousRect.current=next;draft.current=null;moving.current=null;setText(undefined);
+    // Changing canvas dimensions clears its bitmap. Repaint before the browser
+    // presents that frame, keeping the previous image until the new crop decodes.
+    draw();
+    if(context.kind==='image'&&fullBackground.current&&background.current) {
+      setError('');
+      if(shown.current){working.current=false;setBusy(false);}
+      else {
+        working.current=true;setBusy(true);
+        void showWhenReady('screen_editor_ready',{id:context.id},()=>alive)
+          .then(()=>{if(alive)shown.current=true;})
+          .catch(e=>{if(alive)setError(String(e));})
+          .finally(()=>{if(alive){working.current=false;setBusy(false);}});
+      }
+      return()=>{alive=false;};
+    }
+    if(context.kind==='image')void(async()=>{
+      working.current=true;setBusy(true);setError('');
+      const full=!!context.rect;
+      const bytes=await invoke<ArrayBuffer|number[]>(full?'screen_editor_background':'screen_editor_image',{id:context.id});
+      if(!alive)return;
+      url=URL.createObjectURL(new Blob([bytes instanceof ArrayBuffer?bytes:new Uint8Array(bytes)],{type:full?'image/bmp':'image/png'}));
+      const image=new Image();image.src=url;await image.decode();
+      if(!alive)return;background.current=image;fullBackground.current=full;draw();
+      // Re-cropping an already visible editor must not steal focus from its controls.
+      if(!shown.current){await showWhenReady('screen_editor_ready',{id:context.id},()=>alive);if(alive)shown.current=true;}
+    })().catch(e=>{if(alive)setError(String(e));}).finally(()=>{if(alive){working.current=false;setBusy(false);}});
+    return()=>{alive=false;if(url)URL.revokeObjectURL(url);};
+  },[context.id,context.rect?.x,context.rect?.y,context.width,context.height]);
   useEffect(() => {
     draw();
     try { localStorage.setItem('whispera.ink.v1',JSON.stringify(options)); } catch { /* Storage is optional. */ }
@@ -160,7 +203,7 @@ function Ink({ context }: { context: Context }) {
   }, [version,tool,options,busy,error,context.id]);
   const point = (e: React.PointerEvent) => ({ x:Math.max(0,Math.min(context.width,e.clientX)),y:Math.max(0,Math.min(context.height,e.clientY)) });
   return <div className="screen-ink" data-tool={tool} data-session={context.id} data-kind={context.kind}>
-    {context.kind==='image'&&<CaptureFrame className="screen-image-frame" width={context.width} height={context.height} color={context.frame_color}/>}
+    {context.kind==='image'&&!context.rect&&<CaptureFrame className="screen-image-frame" width={context.width} height={context.height} color={context.frame_color}/>}
     <canvas ref={canvas} style={context.kind === 'image' ? {borderRadius:Math.min(14,context.width/2,context.height/2)} : undefined} aria-label={context.kind === 'image' ? 'Editar captura' : 'Dibujar sobre video'} width={Math.round(context.width*context.scale)} height={Math.round(context.height*context.scale)}
       onPointerDown={e => {
         if (e.button !== 0 || busy) return; e.preventDefault(); commitText(); const p = point(e); e.currentTarget.setPointerCapture(e.pointerId);
@@ -207,20 +250,21 @@ function VideoHud({context}:{context:Context}) {
   const label=paused?'En pausa':status.phase==='pausing'?'Pausando…':status.phase==='resuming'?'Reanudando…':status.phase==='saving'?'Preparando…':'Grabando';
   const time=`${Math.floor(status.seconds/60).toString().padStart(2,'0')}:${Math.floor(status.seconds%60).toString().padStart(2,'0')}`;
   return <div className="capture-hud capture-line-hud" data-compact="true" data-paused={paused} aria-label="Controles de video">
-    <div className="capture-hud-controls"><span className="capture-hud-time" title={label}><i/><output aria-label="Tiempo grabado">{time}</output></span><button disabled={busy||!['recording','paused'].includes(status.phase)} aria-label="Capturar imagen del video" title="Capturar y copiar el área grabada" onClick={()=>void run('screen_video_snapshot')}><Camera size={16}/></button><button disabled={busy||!['recording','paused'].includes(status.phase)} aria-label={paused?'Reanudar video':'Pausar video'} title={paused?'Reanudar':'Pausar'} onClick={()=>void run('screen_pause')}><span className="t-icon-swap" data-state={paused?'b':'a'}><span className="t-icon" data-icon="a"><Pause size={16}/></span><span className="t-icon" data-icon="b"><Play size={16}/></span></span></button><button className="capture-stop" disabled={busy||!['recording','paused'].includes(status.phase)} aria-label="Detener video" title="Detener y guardar video" onClick={()=>void run('screen_stop')}><Square size={12} fill="currentColor"/></button><button disabled={busy||['saving','cancelling'].includes(status.phase)} aria-label="Cancelar video" title="Cancelar y descartar el video" onClick={()=>void run('screen_cancel')}><X size={16}/></button></div>
+    <div className="capture-hud-controls"><span className="capture-hud-time" title={label}><i/><output aria-label="Tiempo grabado">{time}</output></span><IndicatorArtwork kind="camera" compact active={status.phase==='recording'}/><button disabled={busy||!['recording','paused'].includes(status.phase)} aria-label="Capturar imagen del video" title="Capturar y copiar el área grabada" onClick={()=>void run('screen_video_snapshot')}><Camera size={16}/></button><button disabled={busy||!['recording','paused'].includes(status.phase)} aria-label={paused?'Reanudar video':'Pausar video'} title={paused?'Reanudar':'Pausar'} onClick={()=>void run('screen_pause')}><span className="t-icon-swap" data-state={paused?'b':'a'}><span className="t-icon" data-icon="a"><Pause size={16}/></span><span className="t-icon" data-icon="b"><Play size={16}/></span></span></button><button className="capture-stop" disabled={busy||!['recording','paused'].includes(status.phase)} aria-label="Detener video" title="Detener y guardar video" onClick={()=>void run('screen_stop')}><Square size={12} fill="currentColor"/></button><button disabled={busy||['saving','cancelling'].includes(status.phase)} aria-label="Cancelar video" title="Cancelar y descartar el video" onClick={()=>void run('screen_cancel')}><X size={16}/></button></div>
     {(error||status.error)&&<div role="alert" className="capture-hud-error">{error||status.error}</div>}
   </div>;
 }
 function useEditorControls(context:Context) {
   const [feedback,setFeedback] = useState<Feedback>({...defaults,...preferences()});
   const [error,setError] = useState('');
-  const send = (action:Action) => invoke('screen_editor_action',{ id:context.id,action }).catch(e => setError(String(e)));
+  const send = (action:Action) => {setError('');return invoke('screen_editor_action',{ id:context.id,action }).catch(e => setError(String(e)));};
   useEffect(() => {
-    let alive = true; let remove:UnlistenFn|undefined;
+    let alive = true, revision = 0; let remove:UnlistenFn|undefined;
     void (async () => {
-      const off = await listen<{id:string;feedback:Partial<Feedback>}>('screen-editor-feedback',e => { if(alive && e.payload.id===context.id) setFeedback(f => ({...f,...e.payload.feedback})); });
+      const off = await listen<{id:string;feedback:Partial<Feedback>}>('screen-editor-feedback',e => { if(alive && e.payload.id===context.id) {revision++;setFeedback(f => ({...f,...e.payload.feedback}));} });
       if(!alive){off();return;} remove=off;
-      const current = await invoke<Partial<Feedback>>('screen_editor_feedback_get'); if(alive) setFeedback(f=>({...f,...current}));
+      const requested=revision;
+      const current = await invoke<Partial<Feedback>>('screen_editor_feedback_get'); if(alive&&revision===requested) setFeedback(f=>({...f,...current}));
       await showWhenReady('screen_editor_ready',{id:context.id},()=>alive);
     })().catch(e=>{if(alive)setError(String(e));});
     const key=(e:KeyboardEvent)=>{const a=shortcut(e);if(!a)return;if(context.kind==='video'&&['copy','save'].includes(a.action))return;e.preventDefault();if(a.action==='escape')void invoke('screen_escape').catch(e=>setError(String(e)));else void send(a);};
@@ -231,7 +275,7 @@ function useEditorControls(context:Context) {
 }
 function ImageActions({context}:{context:Context}) {
   const {feedback,send,notice}=useEditorControls(context);
-  return <div className="capture-image-actions" aria-label="Acciones de captura">
+  return <div className="capture-image-actions" aria-label="Acciones de captura"><IndicatorArtwork kind="camera" compact/>
     <button className="capture-copy" disabled={feedback.busy} title="Copiar (Ctrl+C)" onClick={()=>void send({action:'copy'})}><Copy size={17}/>Copiar</button>
     <button disabled={feedback.busy} title="Guardar PNG (Ctrl+S)" aria-label="Guardar imagen" onClick={()=>void send({action:'save'})}><Save size={18}/></button>
     <button disabled={feedback.busy} title="Imprimir" aria-label="Imprimir imagen" onClick={()=>void send({action:'print'})}><Printer size={18}/></button>
@@ -248,6 +292,15 @@ function Toolbar({ context }: { context:Context }) {
   const [layout,setLayout]=useState({railX:4,railY:4,menuX:58,menuY:4});
   const timer=useRef<ReturnType<typeof setTimeout>>(undefined), epoch=useRef(0);
   const panelElement=useRef<HTMLDivElement>(null), panelAnchor=useRef(0);
+  useEffect(()=>{
+    let alive=true,remove:UnlistenFn|undefined;
+    void listen<string>('screen-editor-drag',e=>{
+      if(!alive||e.payload!==context.id)return;
+      clearTimeout(timer.current);++epoch.current;
+      setPanel(undefined);setClosing(false);setLayout({railX:4,railY:4,menuX:58,menuY:4});
+    }).then(off=>{if(alive)remove=off;else off();});
+    return()=>{alive=false;remove?.();};
+  },[context.id]);
   const closePanel=()=>{
     const request=++epoch.current;setClosing(true);clearTimeout(timer.current);
     const duration=matchMedia('(prefers-reduced-motion: reduce)').matches?0:parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--dropdown-close-dur'))||150;

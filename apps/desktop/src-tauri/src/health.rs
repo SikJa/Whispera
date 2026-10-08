@@ -46,7 +46,7 @@ mod tests {
 }
 #[tauri::command]
 pub fn restart_app(app: tauri::AppHandle) -> Result<(), String> {
-    if app.state::<crate::screen::Screen>().busy() {
+    if crate::screen::busy(&app) {
         return Err("Termina la grabacion de pantalla antes de reiniciar".into());
     }
     if busy(&app.state::<Engine>().recorder.snapshot().phase)
@@ -77,7 +77,7 @@ pub fn start(app: &tauri::AppHandle) {
                 .map(|s| s.watchdog)
                 .unwrap_or(false);
             let occupied = busy(&app.state::<Engine>().recorder.snapshot().phase)
-                || app.state::<crate::screen::Screen>().busy()
+                || crate::screen::busy(&app)
                 || app
                     .state::<Engine>()
                     .processing

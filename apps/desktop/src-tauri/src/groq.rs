@@ -1,6 +1,15 @@
 use crate::storage::{Rule, Settings};
 use reqwest::multipart;
-use std::path::Path;
+use std::{path::Path, sync::OnceLock};
+
+fn client() -> Result<&'static reqwest::Client, String> {
+    static CLIENT: OnceLock<Result<reqwest::Client, String>> = OnceLock::new();
+    CLIENT.get_or_init(|| reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(180))
+        .pool_idle_timeout(std::time::Duration::from_secs(120))
+        .build().map_err(|_| "No se pudo iniciar la conexion".to_owned()))
+        .as_ref().map_err(Clone::clone)
+}
 
 pub fn entry() -> Result<keyring::Entry, String> {
     keyring::Entry::new("Whispera.Desktop.Preview", "groq")
@@ -18,7 +27,8 @@ pub fn corrections(text: &str, rules: &[Rule]) -> String {
             .case_insensitive(true)
             .build()
         {
-            let word = regex::Regex::new(r"^\w$").unwrap();
+            static WORD: OnceLock<regex::Regex> = OnceLock::new();
+            let word = WORD.get_or_init(|| regex::Regex::new(r"^\w$").unwrap());
             let mut next = String::new();
             let mut previous = 0;
             for m in pattern.find_iter(&output) {
@@ -136,12 +146,15 @@ pub async fn request(
             "Selecciona un archivo de audio de hasta 24 MB. El original no se modifica.".into(),
         );
     }
-    let key = entry()?
-        .get_password()
-        .map_err(|_| "Configura la clave de Groq en Transcripcion")?;
     let bytes = tokio::fs::read(path)
         .await
         .map_err(|_| "No se pudo leer el audio")?;
+    if ext == "wav" && digital_silence(&bytes) {
+        return Ok(serde_json::json!({"text":"","words":[],"segments":[]}));
+    }
+    let key = entry()?
+        .get_password()
+        .map_err(|_| "Configura la clave de Groq en Transcripcion")?;
     let file = multipart::Part::bytes(bytes).file_name(format!("audio.{ext}"));
     let mut form = multipart::Form::new()
         .part("file", file)
@@ -160,10 +173,7 @@ pub async fn request(
     if settings.language != "auto" {
         form = form.text("language", settings.language.clone());
     }
-    let response = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(180))
-        .build()
-        .map_err(|_| "No se pudo iniciar la conexion")?
+    let response = client()?
         .post("https://api.groq.com/openai/v1/audio/transcriptions")
         .bearer_auth(key)
         .multipart(form)
@@ -182,9 +192,87 @@ pub async fn request(
         .map_err(|_| "Groq devolvio una respuesta no valida")?;
     Ok(json)
 }
+
+// Exact digital zero only: do not classify quiet speech or noise as silence.
+fn digital_silence(bytes:&[u8])->bool {
+    let Ok(mut reader)=hound::WavReader::new(std::io::Cursor::new(bytes)) else{return false;};
+    if reader.duration()==0{return false;}
+    match reader.spec().sample_format {
+        hound::SampleFormat::Int=>reader.samples::<i32>().all(|s|matches!(s,Ok(0))),
+        hound::SampleFormat::Float=>reader.samples::<f32>().all(|s|s.is_ok_and(|v|v==0.)),
+    }
+}
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn exact_silence_never_suppresses_even_one_quiet_sample() {
+        for value in [0i16,1,-1,100] {
+            let mut bytes=std::io::Cursor::new(Vec::new());
+            {let mut writer=hound::WavWriter::new(&mut bytes,hound::WavSpec{channels:1,sample_rate:16000,bits_per_sample:16,sample_format:hound::SampleFormat::Int}).unwrap();
+            for _ in 0..16000{writer.write_sample(0i16).unwrap();}writer.write_sample(value).unwrap();writer.finalize().unwrap();}
+            assert_eq!(digital_silence(bytes.get_ref()),value==0);
+        }
+        assert!(!digital_silence(b"bad wav"));
+    }
+    #[test]
+    fn transcription_transport_reuses_connection_without_reusing_credentials() {
+        use std::{io::{BufRead, BufReader, Write}, net::TcpListener,
+            sync::{Arc, Mutex, atomic::{AtomicUsize, Ordering}}, time::{Duration, Instant}};
+        let listener=TcpListener::bind("127.0.0.1:0").unwrap();
+        let url=format!("http://{}/fixture",listener.local_addr().unwrap());
+        listener.set_nonblocking(true).unwrap();
+        let completed=Arc::new(AtomicUsize::new(0));
+        let headers=Arc::new(Mutex::new(Vec::new()));
+        let done=completed.clone();let observed=headers.clone();
+        let server=std::thread::spawn(move|| {
+            let deadline=Instant::now()+Duration::from_secs(5);
+            let mut connections=0;let mut workers=vec![];
+            while done.load(Ordering::SeqCst)<2 && Instant::now()<deadline {
+                match listener.accept() {
+                    Ok((mut socket,_))=> {
+                        connections+=1;let done=done.clone();let observed=observed.clone();
+                        workers.push(std::thread::spawn(move|| {
+                            // Accepted sockets inherit nonblocking mode on Windows.
+                            socket.set_nonblocking(false).unwrap();
+                            socket.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
+                            let mut reader=BufReader::new(socket.try_clone().unwrap());
+                            while done.load(Ordering::SeqCst)<2 {
+                                let mut request=String::new();
+                                loop {
+                                    let mut line=String::new();
+                                    if reader.read_line(&mut line).unwrap_or(0)==0 {return;}
+                                    if line=="\r\n" {break;}
+                                    request.push_str(&line);
+                                }
+                                observed.lock().unwrap().push(request.to_lowercase());
+                                socket.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: keep-alive\r\n\r\nok").unwrap();
+                                done.fetch_add(1,Ordering::SeqCst);
+                            }
+                        }));
+                    }
+                    Err(e) if e.kind()==std::io::ErrorKind::WouldBlock=>std::thread::sleep(Duration::from_millis(5)),
+                    Err(e)=>panic!("Local fixture: {e}"),
+                }
+            }
+            for worker in workers {worker.join().unwrap();}connections
+        });
+        tauri::async_runtime::block_on(async {
+            for token in ["first","second"] {
+                let body=client().unwrap().get(&url).bearer_auth(token).timeout(Duration::from_secs(3))
+                    .send().await.unwrap().text().await.unwrap();
+                assert_eq!(body,"ok");
+                // Hyper returns the consumed connection to its pool asynchronously.
+                // Real dictations are separated by microphone recording time.
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        });
+        let connections=server.join().unwrap();
+        let requests=headers.lock().unwrap();
+        assert_eq!(connections,1,"successive requests should share the local TCP connection: {requests:?}");
+        assert!(requests[0].contains("authorization: bearer first"));
+        assert!(requests[1].contains("authorization: bearer second"));
+    }
     fn rule(source: &str, target: &str) -> Rule {
         Rule {
             id: source.into(),

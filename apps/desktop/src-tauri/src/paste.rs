@@ -3,11 +3,11 @@ use windows::Win32::{
     System::Threading::{AttachThreadInput, GetCurrentThreadId},
     UI::{
         Input::KeyboardAndMouse::{
-            SendInput, SetFocus, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYEVENTF_KEYUP,
-            VK_CONTROL, VK_V,
+            GetAsyncKeyState, SendInput, SetFocus, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYEVENTF_KEYUP,
+            VK_CONTROL, VK_MENU, VK_SHIFT, VK_LWIN, VK_RWIN, VK_V,
         },
         WindowsAndMessaging::{
-            GetForegroundWindow, GetGUIThreadInfo, GetWindowThreadProcessId, IsIconic, IsWindow,
+            GetForegroundWindow, GetGUIThreadInfo, GetWindowThreadProcessId, IsChild, IsIconic, IsWindow,
             SetForegroundWindow, ShowWindow, GUITHREADINFO, SW_RESTORE,
         },
     },
@@ -17,6 +17,16 @@ pub struct Target {
     hwnd: isize,
     focus: isize,
     pid: u32,
+    field: Option<u64>,
+}
+// WebView/Electron child controls can belong to a renderer process. Window
+// ancestry, rather than the child's PID, proves it is still our original field.
+unsafe fn field_belongs_to(hwnd: HWND, focus: HWND) -> bool {
+    IsWindow(Some(focus)).as_bool() && (focus == hwnd || IsChild(hwnd, focus).as_bool())
+}
+fn modifiers_down() -> bool {
+    unsafe { [VK_CONTROL, VK_MENU, VK_SHIFT, VK_LWIN, VK_RWIN]
+        .iter().any(|key| GetAsyncKeyState(key.0 as i32) < 0) }
 }
 pub fn capture() -> Option<Target> {
     unsafe {
@@ -26,19 +36,31 @@ pub fn capture() -> Option<Target> {
         if thread == 0 || pid == std::process::id() {
             return None;
         }
+        let tracked = crate::paste_focus::capture(hwnd.0 as isize, pid);
         let mut info = GUITHREADINFO {
             cbSize: std::mem::size_of::<GUITHREADINFO>() as u32,
             ..Default::default()
         };
-        let _ = GetGUIThreadInfo(thread, &mut info);
+        GetGUIThreadInfo(thread, &mut info).ok()?;
+        if let Some(field) = tracked { info.hwndFocus = HWND(field.focus as _); }
+        if !field_belongs_to(hwnd, info.hwndFocus) {
+            return None;
+        }
         Some(Target {
             hwnd: hwnd.0 as isize,
             focus: info.hwndFocus.0 as isize,
             pid,
+            field: tracked.map(|field| field.token),
         })
     }
 }
 pub fn restore_and_paste(target: Target) -> Result<(), String> {
+    restore_and_paste_checked(target, None)
+}
+pub fn restore_and_paste_text(target: Target, expected: &str) -> Result<(), String> {
+    restore_and_paste_checked(target, Some(expected))
+}
+fn restore_and_paste_checked(target: Target, expected: Option<&str>) -> Result<(), String> {
     unsafe {
         let hwnd = HWND(target.hwnd as _);
         let mut pid = 0;
@@ -48,16 +70,23 @@ pub fn restore_and_paste(target: Target) -> Result<(), String> {
                 "El destino original ya no existe. Texto conservado en el portapapeles.".into(),
             );
         }
-        if target.focus != 0 {
+        if target.focus != 0 && target.field.is_none() {
             let focus = HWND(target.focus as _);
-            let mut focus_pid = 0;
-            GetWindowThreadProcessId(focus, Some(&mut focus_pid));
-            if !IsWindow(Some(focus)).as_bool() || focus_pid != target.pid {
+            if !field_belongs_to(hwnd, focus) {
                 return Err(
                     "El campo original ya no existe. No se pego en otro campo; texto copiado."
                         .into(),
                 );
             }
+        }
+        // The stop shortcut is handled on key-down. Do not turn Ctrl+V into
+        // Alt+Ctrl+V (or release a physical key on the user's behalf).
+        let released = std::time::Instant::now();
+        while modifiers_down() {
+            if released.elapsed() >= std::time::Duration::from_secs(2) {
+                return Err("Solta las teclas del atajo para pegar. El texto sigue copiado.".into());
+            }
+            std::thread::sleep(std::time::Duration::from_millis(20));
         }
         if IsIconic(hwnd).as_bool() {
             let _ = ShowWindow(hwnd, SW_RESTORE);
@@ -65,7 +94,9 @@ pub fn restore_and_paste(target: Target) -> Result<(), String> {
         let current = GetCurrentThreadId();
         let foreground_thread = GetWindowThreadProcessId(GetForegroundWindow(), None);
         let mut attached = vec![];
-        for id in [foreground_thread, thread] {
+        let focus = HWND(target.focus as _);
+        let focus_thread = GetWindowThreadProcessId(focus, None);
+        for id in [foreground_thread, thread, focus_thread] {
             if id != 0
                 && id != current
                 && !attached.contains(&id)
@@ -75,17 +106,48 @@ pub fn restore_and_paste(target: Target) -> Result<(), String> {
             }
         }
         let _ = SetForegroundWindow(hwnd);
-        let focus = HWND(target.focus as _);
-        let mut focus_pid = 0;
-        GetWindowThreadProcessId(focus, Some(&mut focus_pid));
-        if IsWindow(Some(focus)).as_bool() && focus_pid == target.pid {
+        if target.field.is_none() && field_belongs_to(hwnd, focus) {
             let _ = SetFocus(Some(focus));
         }
-        for id in attached {
+        for id in attached.into_iter().rev() {
             let _ = AttachThreadInput(current, id, false);
+        }
+        if let Some(field) = target.field {
+            let _ = crate::paste_focus::focus(field, true);
         }
         for _ in 0..8 {
             if GetForegroundWindow() == hwnd {
+                // Allow the app to process activation before submitting input.
+                std::thread::sleep(std::time::Duration::from_millis(60));
+                let mut info = GUITHREADINFO {
+                    cbSize: std::mem::size_of::<GUITHREADINFO>() as u32,
+                    ..Default::default()
+                };
+                if GetForegroundWindow() != hwnd || modifiers_down() {
+                    continue;
+                }
+                if target.field.is_none() && !field_belongs_to(hwnd, focus) {
+                    return Err("El campo original ya no existe. Texto conservado en el portapapeles.".into());
+                }
+                if GetGUIThreadInfo(thread, &mut info).is_err()
+                    || (target.field.is_none() && info.hwndFocus != focus)
+                    || !field_belongs_to(hwnd, info.hwndFocus) {
+                    // Activation of a renderer can lag behind the top-level
+                    // window. Retry readiness, never the actual Ctrl+V.
+                    continue;
+                }
+                if target.field.is_some_and(|field| !crate::paste_focus::focus(field, false)) {
+                    continue;
+                }
+                if GetForegroundWindow() != hwnd || modifiers_down() { continue; }
+                if let Some(expected) = expected {
+                    let clipboard: Result<String, _> = clipboard_win::get_clipboard(clipboard_win::formats::Unicode);
+                    match clipboard {
+                        Ok(value) if value == expected => {}
+                        Ok(_) => return Err("El portapapeles cambio antes del pegado. La transcripcion sigue en el historial.".into()),
+                        Err(_) => continue,
+                    }
+                }
                 // Submit once only. Retrying Ctrl+V could duplicate already inserted text.
                 let keys = [
                     (VK_CONTROL, false),
@@ -119,8 +181,31 @@ pub fn restore_and_paste(target: Target) -> Result<(), String> {
             let _ = SetForegroundWindow(hwnd);
         }
         Err(
-            "No se pudo volver al destino. El texto sigue copiado; no se pego en otra ventana."
+            "No se pudo volver al campo original. El texto sigue copiado; no se pego en otra ventana."
                 .into(),
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn native_field_validation_rejects_another_window_and_destroyed_controls() {
+        use windows::{core::w, Win32::UI::WindowsAndMessaging::{CreateWindowExW, DestroyWindow, WINDOW_EX_STYLE, WS_CHILD, WS_POPUP}};
+        unsafe {
+            let create = |parent: Option<HWND>| CreateWindowExW(WINDOW_EX_STYLE::default(), w!("STATIC"), w!("Whispera paste fixture"),
+                if parent.is_some() { WS_CHILD } else { WS_POPUP }, 0, 0, 10, 10, parent, None, None, None).unwrap();
+            let first = create(None);
+            let second = create(None);
+            let field = create(Some(first));
+            assert!(field_belongs_to(first, first));
+            assert!(field_belongs_to(first, field));
+            assert!(!field_belongs_to(second, field));
+            DestroyWindow(field).unwrap();
+            assert!(!field_belongs_to(first, field));
+            DestroyWindow(first).unwrap();
+            DestroyWindow(second).unwrap();
+        }
     }
 }

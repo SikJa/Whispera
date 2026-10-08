@@ -91,6 +91,9 @@ pub async fn recording_action(action: String, app: tauri::AppHandle) -> Result<(
         .map_err(|e| e.to_string())?
 }
 pub fn control(app: &tauri::AppHandle, action: &str) -> Result<(), String> {
+    let _updating = crate::updates::work(app)?;
+    // Capture before microphone/keyring initialization can yield or change focus.
+    let original_target = if action == "start" { crate::paste::capture() } else { None };
     let engine = app.state::<Engine>();
     let _guard = engine.gate.lock().map_err(|_| "El motor esta ocupado")?;
     let state = engine.recorder.snapshot();
@@ -147,7 +150,7 @@ pub fn control(app: &tauri::AppHandle, action: &str) -> Result<(), String> {
                 jobs.retain(|_, job| !job.done.load(Ordering::SeqCst));
                 jobs.insert(id, crate::incremental::Live { stop, done, task });
             }
-            *engine.paste_target.lock().map_err(|_| "Destino ocupado")? = crate::paste::capture();
+            *engine.paste_target.lock().map_err(|_| "Destino ocupado")? = original_target;
             crate::sounds::play(&app.state::<Store>().get::<Settings>("settings")?, false);
         }
         "pause" => {
@@ -219,7 +222,9 @@ fn schedule(
         s.progress = "Preparando audio".into();
     });
     tauri::async_runtime::spawn(async move {
+        let processing_started = std::time::Instant::now();
         let result = process(&app, &id).await;
+        let text_ready_ms = processing_started.elapsed().as_millis();
         let engine = app.state::<Engine>();
         match result {
             Ok(text) => {
@@ -229,20 +234,26 @@ fn schedule(
                     .unwrap_or_default();
                 let target = engine.paste_target.lock().ok().and_then(|mut p| p.take());
                 if live_dictation && settings.auto_paste {
+                    if let Some(window) = app.get_webview_window("recorder") {
+                        let _ = window.hide();
+                    }
                     let app_copy = app.clone();
                     let value = text.clone();
                     let pasted = tauri::async_runtime::spawn_blocking(move || -> Result<(), String> {
                         let mut copied = false;
-                        for _ in 0..3 {
-                            if app_copy.clipboard().write_text(&value).is_ok() {
-                                std::thread::sleep(std::time::Duration::from_millis(100));
-                                if app_copy.clipboard().read_text().ok().as_deref() == Some(&value) { copied = true; break; }
+                        for attempt in 0..3 {
+                            if app_copy.clipboard().read_text().ok().as_deref() == Some(&value)
+                                || (app_copy.clipboard().write_text(&value).is_ok()
+                                    && app_copy.clipboard().read_text().ok().as_deref() == Some(&value)) {
+                                copied = true; break;
                             }
+                            if attempt < 2 { std::thread::sleep(std::time::Duration::from_millis(20)); }
                         }
                         if !copied { return Err("No se pudo verificar el portapapeles. El texto esta guardado.".into()); }
-                        match target { Some(target) => crate::paste::restore_and_paste(target), None => Err("Texto copiado. No habia un campo de destino externo al iniciar.".into()) }
+                        match target { Some(target) => crate::paste::restore_and_paste_text(target, &value), None => Err("Texto copiado. No habia un campo de destino externo al iniciar.".into()) }
                     }).await.map_err(|e| e.to_string()).and_then(|r| r);
                     if let Err(e) = pasted {
+                        let _ = app.state::<Store>().event(&e);
                         engine.recorder.change(|s| s.error = e);
                     }
                 }
@@ -251,6 +262,8 @@ fn schedule(
                     s.text = text;
                     s.progress.clear();
                 });
+                let _ = app.state::<Store>().event(&format!("Dictado: texto listo en {text_ready_ms} ms; copia/pegado en {} ms",
+                    processing_started.elapsed().as_millis().saturating_sub(text_ready_ms)));
                 if hide_after_completion(live_dictation, &engine.recorder.snapshot()) {
                     if let Some(window) = app.get_webview_window("recorder") {
                         let _ = window.hide();
@@ -341,6 +354,7 @@ async fn process(app: &tauri::AppHandle, id: &str) -> Result<String, String> {
 }
 #[tauri::command]
 pub fn retry_recording(id: String, app: tauri::AppHandle) -> Result<(), String> {
+    let _updating=crate::updates::work(&app)?;
     let engine = app.state::<Engine>();
     let _guard = engine.gate.lock().map_err(|_| "Motor ocupado")?;
     if ["recording", "paused", "processing"].contains(&engine.recorder.snapshot().phase.as_str()) {

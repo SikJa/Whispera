@@ -38,6 +38,31 @@ pub fn recording_enabled(store: &Store) -> bool {
     enabled(store, "transcribeVideo")
 }
 
+// Replay trimming transcribes the final MP4 soundtrack, never discarded intervals.
+pub fn transcribe_selection(app:&tauri::AppHandle,video:&Path)->Result<(),String>{
+    let _guard=GATE.lock().map_err(|_|"Transcripciones ocupadas")?;
+    let store=app.state::<Store>();
+    let root=app.path().app_cache_dir().map_err(|e|e.to_string())?.join("trim-speech").join(uuid::Uuid::new_v4().to_string());
+    let binary=crate::screen::ffmpeg(app)?;
+    transcribe_track(&store,&root,&binary,video)
+}
+fn transcribe_track(store:&Store,root:&Path,binary:&Path,video:&Path)->Result<(),String>{
+    let settings:Settings=store.get("settings")?;let rules:Vec<Rule>=store.get("rules")?;
+    fs::create_dir_all(root).map_err(|e|e.to_string())?;
+    let result=(||{
+        let mut command=crate::replay::command(binary);
+        command.args(["-hide_banner","-loglevel","error","-y","-i"]).arg(video).args(["-map","0:a:0","-vn","-ar","16000","-ac","1","-c:a","pcm_s16le","-f","segment","-segment_time","300"]).arg(root.join("speech-%04d.wav")).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null());
+        crate::replay::run_command(&mut command,Duration::from_secs(60))?;
+        let mut parts:Vec<_>=fs::read_dir(&root).map_err(|e|e.to_string())?.filter_map(Result::ok).map(|entry|entry.path()).filter(|path|path.extension().is_some_and(|ext|ext=="wav")).collect();parts.sort();
+        let mut texts=Vec::new();for part in parts{texts.push(tauri::async_runtime::block_on(groq::transcribe(&part,&settings,&rules))?);}
+        let text=texts.join("\n\n");fs::write(video.with_extension("transcript.txt"),&text).map_err(|e|e.to_string())?;
+        store.put(&key(video),&Transcript{status:"ready".into(),text,..Default::default()})
+    })();
+    let _=fs::remove_dir_all(root);
+    if let Err(error)=&result{let _=store.put(&key(video),&Transcript{status:"error".into(),error:error.clone(),..Default::default()});}
+    result
+}
+
 // The source is the microphone PCM, never the mixed desktop soundtrack.
 pub fn prepare(binary: &Path, pcm: &Path, rate: u32, channels: u16) -> Result<(), String> {
     use std::os::windows::process::CommandExt;
@@ -199,6 +224,7 @@ fn process_with(
     Ok(transcript)
 }
 fn run(app: &tauri::AppHandle, video: &Path) -> Result<(), String> {
+    let _updating=crate::updates::work(app)?;
     let store = app.state::<Store>();
     let transcript = process(&store, video)?;
     // Never overwrite a clipboard which the user changed while Groq was working.
@@ -354,6 +380,18 @@ fn share_files_at(root: &Path, files: &[String]) -> Result<Vec<String>, String> 
         }
         Ok(target.to_string_lossy().into_owned())
     }).collect()
+}
+// A selected replay explicitly includes its own transcription, independently of
+// the normal recording attachment preference. Only our stored result is trusted.
+pub fn copy_selection(app:&tauri::AppHandle,path:&Path)->Result<(),String>{
+    let mut files=vec![path.to_string_lossy().into_owned()];let mut text=String::new();
+    if let Ok(result)=get(&app.state::<Store>(),path){if result.status=="ready"{
+        let sidecar=path.with_extension("transcript.txt");
+        if sidecar.is_file(){files.push(sidecar.to_string_lossy().into_owned());text=result.text;}
+    }}
+    let files=share_files(app,&files)?;
+    {let _clipboard=clipboard_win::Clipboard::new_attempts(20).map_err(|e|e.to_string())?;write_open(&files,&text)?;}
+    library::suppress_clipboard(app);Ok(())
 }
 #[tauri::command]
 pub fn video_transcript_action(
@@ -655,5 +693,27 @@ mod tests {
         assert_eq!(reader.duration(), 16000);
         assert!(pcm.exists());
         fs::remove_dir_all(root).unwrap();
+    }
+}
+
+#[cfg(test)]
+mod trim_live_tests {
+    use super::*;
+    #[test]
+    #[ignore = "Opt-in: transcribes only local synthetic speech with Groq and tests the real Windows clipboard"]
+    fn selected_clip_transcribes_only_retained_speech_and_copies_both_files(){
+        let fixture=Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../.local/replay-qa");
+        let before=fixture.join("before.wav");let selected=fixture.join("selected.wav");assert!(before.is_file()&&selected.is_file());
+        let a=hound::WavReader::open(&before).unwrap();let start=a.duration() as f64/a.spec().sample_rate as f64;
+        let b=hound::WavReader::open(&selected).unwrap();let end=start+b.duration() as f64/b.spec().sample_rate as f64;
+        let root=std::env::temp_dir().join(format!("whispera-speech-qa-{}",uuid::Uuid::new_v4()));fs::create_dir(&root).unwrap();let source=root.join("source.mp4");let output=root.join("selected.mp4");
+        let binary=Path::new(env!("CARGO_MANIFEST_DIR")).join("../node_modules/ffmpeg-static/ffmpeg.exe");let mut command=crate::replay::command(&binary);
+        command.args(["-hide_banner","-loglevel","error","-y","-f","lavfi","-i","color=size=320x180:rate=30","-i"]).arg(&before).arg("-i").arg(&selected).args(["-filter_complex","[1:a][2:a]concat=n=2:v=0:a=1[a]","-map","0:v:0","-map","[a]","-t"]).arg(end.to_string()).args(["-c:v","libx264","-preset","ultrafast","-c:a","aac"]).arg(&source).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null());crate::replay::run_command(&mut command,Duration::from_secs(30)).unwrap();
+        crate::video_trim::trim(&binary,&source,&output,start,end).unwrap();
+        let store=Store::open(Path::new(":memory:")).unwrap();let mut settings=Settings::default();settings.language="en".into();store.put("settings",&settings).unwrap();store.put("rules",&Vec::<Rule>::new()).unwrap();
+        transcribe_track(&store,&root.join("speech"),&binary,&output).unwrap();let text=get(&store,&output).unwrap().text.to_lowercase();assert!(text.contains("camera"),"Selected message missing: {text}");assert!(!text.contains("banana")&&!text.contains("discarded"),"Discarded words survived: {text}");
+        let files=vec![output.to_string_lossy().into_owned(),output.with_extension("transcript.txt").to_string_lossy().into_owned()];
+        {let _clipboard=clipboard_win::Clipboard::new_attempts(20).unwrap();let mut old=Vec::new();let _=clipboard_win::raw::get_string(&mut old);let mut old_files=Vec::<String>::new();let _=clipboard_win::raw::get_file_list(&mut old_files);write_open(&files,&text).unwrap();let mut actual=Vec::<String>::new();clipboard_win::raw::get_file_list(&mut actual).unwrap();assert_eq!(actual,files);if !old_files.is_empty(){write_open(&old_files,&String::from_utf8_lossy(&old)).unwrap();}else{clipboard_win::raw::set_string(&String::from_utf8_lossy(&old)).unwrap();}}
+        eprintln!("LIVE QA passed: discarded speech excluded, selected speech transcribed, MP4 plus TXT on Windows clipboard");fs::remove_dir_all(root).unwrap();
     }
 }

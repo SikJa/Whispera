@@ -1,6 +1,15 @@
 #![cfg_attr(target_os = "windows", windows_subsystem = "windows")]
+mod replay;
+#[cfg(test)]
+mod audit_tests;
+mod replay_audio;
+mod encoder_job;
+mod video_trim;
+mod updates;
+mod update_transport;
 mod audio;
 mod capture_history;
+mod capture_session;
 mod library;
 mod library_media;
 mod video_transcript;
@@ -15,7 +24,11 @@ mod retention;
 mod unification;
 mod legacy;
 mod onboarding;
+mod startup;
 mod paste;
+mod paste_focus;
+mod profile;
+mod windows_capture_keys;
 mod screen;
 mod screen_editor;
 mod shortcuts;
@@ -129,6 +142,7 @@ async fn transcribe_file(
     app: tauri::AppHandle,
     store: State<'_, Store>,
 ) -> Result<String, String> {
+    let _updating = updates::work(&app)?;
     let engine = app.state::<engine::Engine>();
     {
         let _lock = engine.gate.lock().map_err(|_| "Motor ocupado")?;
@@ -211,6 +225,18 @@ async fn open_recorder(app: tauri::AppHandle, visible: Option<bool>) -> Result<(
 fn show_recorder(app: tauri::AppHandle) -> Result<(), String> {
     prepare_recorder(app, true)
 }
+#[tauri::command]
+async fn toggle_recorder(window: tauri::WebviewWindow, app: tauri::AppHandle) -> Result<(), String> {
+    if window.label() != "main" { return Err("Control disponible únicamente en Configuración".into()); }
+    tauri::async_runtime::spawn_blocking(move || {
+        if let Some(recorder) = app.get_webview_window("recorder") {
+            if recorder.is_visible().map_err(|e| e.to_string())? {
+                return recorder.hide().map_err(|e| e.to_string());
+            }
+        }
+        prepare_recorder(app, true)
+    }).await.map_err(|e| e.to_string())?
+}
 fn prepare_recorder(app: tauri::AppHandle, visible: bool) -> Result<(), String> {
     if let Some(w) = app.get_webview_window("recorder") {
         if visible {
@@ -245,6 +271,18 @@ fn prepare_recorder(app: tauri::AppHandle, visible: bool) -> Result<(), String> 
 }
 
 #[tauri::command]
+fn settings_window_action(window:tauri::WebviewWindow,action:String)->Result<bool,String>{
+    if window.label()!="main"{return Err("Control disponible únicamente en Configuración".into());}
+    match action.as_str(){
+        "state"=>{},
+        "minimize"=>window.minimize().map_err(|e|e.to_string())?,
+        "maximize"=>{if window.is_maximized().map_err(|e|e.to_string())?{window.unmaximize().map_err(|e|e.to_string())?;}else{window.maximize().map_err(|e|e.to_string())?;}},
+        "close"=>window.close().map_err(|e|e.to_string())?,
+        _=>return Err("Acción de ventana no válida".into()),
+    }
+    window.is_maximized().map_err(|e|e.to_string())
+}
+#[tauri::command]
 fn open_settings(app: tauri::AppHandle) -> Result<(), String> {
     let w = app
         .get_webview_window("main")
@@ -264,6 +302,11 @@ fn open_settings(app: tauri::AppHandle) -> Result<(), String> {
         }
         let _ = window.set_focus();
     }).map_err(|e| e.to_string())
+}
+#[tauri::command]
+fn open_updates(app: tauri::AppHandle) -> Result<(), String> {
+    open_settings(app.clone())?;
+    tauri::Emitter::emit_to(&app, "main", "updater-open", ()).map_err(|e| e.to_string())
 }
 #[tauri::command]
 async fn open_recording_details(app: tauri::AppHandle) -> Result<(), String> {
@@ -301,8 +344,8 @@ async fn open_import(app: tauri::AppHandle) -> Result<(), String> {
             tauri::WebviewUrl::App("index.html?view=import".into()),
         )
         .title("Whispera - Transcribir audio")
-        .inner_size(650., 680.)
-        .min_inner_size(450., 550.)
+        .inner_size(480., 430.)
+        .min_inner_size(420., 360.)
         .build()
         .map_err(|e| e.to_string())?;
         Ok(())
@@ -316,6 +359,7 @@ fn main() {
         .plugin(tauri_plugin_autostart::Builder::new().app_name("Whispera").args(["--autostart"]).build())
         // Launching again must not turn the background dictation tool into a visible window.
         .plugin(tauri_plugin_single_instance::init(|_, _, _| {}))
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(
@@ -334,10 +378,14 @@ fn main() {
                             tauri::async_runtime::spawn(async move { let _ = library::library_toggle(app).await; });
                             return;
                         }
+                        if shortcuts::parse(&replay::hotkey(&app)).map(|key| key == *shortcut).unwrap_or(false) {
+                            tauri::async_runtime::spawn_blocking(move || { if let Err(error)=replay::save(&app){ replay::report_error(&app,error); } });
+                            return;
+                        }
                         if shortcuts::parse("Escape")
                             .map(|key| key == *shortcut)
                             .unwrap_or(false)
-                            && app.state::<screen::Screen>().busy()
+                            && (app.state::<screen::Screen>().busy() || app.state::<capture_session::ImageCapture>().screen.busy())
                         {
                             tauri::async_runtime::spawn_blocking(move || {
                                 if let Err(error) = screen::escape(&app) {
@@ -356,7 +404,7 @@ fn main() {
                         {
                             tauri::async_runtime::spawn_blocking(move || {
                                 if let Err(error) = screen::select_image(&app) {
-                                    screen::report_error(&app, error);
+                                    screen::report_image_error(&app, error);
                                 }
                             });
                             return;
@@ -408,6 +456,12 @@ fn main() {
                 .build(),
         )
         .setup(|app| {
+            // Set the live window and tray icons explicitly as well as the EXE resource.
+            // Windows can otherwise keep the previous icon when the app is upgraded in place.
+            if let Some(window) = app.get_webview_window("main") {
+                window.set_icon(tauri::image::Image::from_bytes(include_bytes!("../icons/cristal/64x64.png"))?)?;
+            }
+            paste_focus::start();
             let dir = app.path().app_data_dir()?;
             lifecycle::init(app.path().app_log_dir()?);
             // A redirected data drive may mount after Windows starts tray apps.
@@ -421,15 +475,17 @@ fn main() {
                 }
             }
             std::fs::create_dir_all(&dir)?;
-            let store = Store::open(&dir.join("whispera.sqlite")).map_err(std::io::Error::other)?;
-            let dictionary: Vec<Rule> = store.get("rules").map_err(std::io::Error::other)?;
-            let profile = dir.canonicalize().unwrap_or_else(|_| dir.clone());
-            store.event(&format!("Perfil activo: {}; diccionario: {} reglas", profile.display(), dictionary.len()))
-                .map_err(std::io::Error::other)?;
+            let store = profile::open(&dir.join("whispera.sqlite")).map_err(std::io::Error::other)?;
             store
                 .event("Whispera 2 iniciada")
                 .map_err(std::io::Error::other)?;
             app.manage(store);
+            let startup_app=app.handle().clone();
+            tauri::async_runtime::spawn_blocking(move || {
+                if let Err(error)=startup::reconcile() {
+                    let _=startup_app.state::<Store>().event(&format!("Inicio automático: {error}"));
+                }
+            });
             app.manage(library::Library::default());
             library::start(app.handle());
             video_transcript::start(app.handle());
@@ -441,8 +497,13 @@ fn main() {
             }
             app.manage(shortcuts::Capture::default());
             app.manage(screen::Screen::new());
+            app.manage(capture_session::ImageCapture::default());
             app.manage(screen_editor::Editor::default());
             app.manage(engine::Engine::new(dir.clone()).map_err(std::io::Error::other)?);
+            app.manage(replay::Replay::default());
+            app.manage(video_trim::Editors::default());
+            app.manage(updates::Updates::default());
+            updates::start(app.handle());
             health::start(app.handle());
             retention::start(app.handle());
             let settings: Settings = app
@@ -462,6 +523,14 @@ fn main() {
             if let Err(e) = shortcuts::register(app.handle(), &video.image_hotkey) {
                 let _ = app.state::<Store>().event(&e);
             }
+            replay::initialize(app.handle());
+            windows_capture_keys::start(app.handle());
+            let capture_app = app.handle().clone();
+            tauri::async_runtime::spawn_blocking(move || {
+                if let Err(error) = screen::warm_selectors(&capture_app) {
+                    let _ = capture_app.state::<Store>().event(&format!("Preparacion de capturas: {error}"));
+                }
+            });
             use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
             let show = MenuItem::with_id(app, "settings", "Configuracion", true, None::<&str>)?;
             let record = MenuItem::with_id(app, "recorder", "Abrir grabadora", true, None::<&str>)?;
@@ -470,19 +539,24 @@ fn main() {
             let video = MenuItem::with_id(app, "screen", "Iniciar video", true, None::<&str>)?;
             let image =
                 MenuItem::with_id(app, "screenshot", "Capturar imagen", true, None::<&str>)?;
+            let update_menu=MenuItem::with_id(app,"updates","Buscar actualizaciones",true,None::<&str>)?;
+            app.manage(updates::UpdateMenu(update_menu.clone()));
             let quit = MenuItem::with_id(app, "quit", "Salir / Quit Whispera", true, None::<&str>)?;
             let library_menu = MenuItem::with_id(app, "library", "Biblioteca / Portapapeles", true, None::<&str>)?;
             let sep = PredefinedMenuItem::separator(app)?;
             let menu =
-                Menu::with_items(app, &[&record, &video, &image, &import, &library_menu, &show, &sep, &quit])?;
+                Menu::with_items(app, &[&record, &video, &image, &import, &library_menu, &show, &update_menu, &sep, &quit])?;
             tauri::tray::TrayIconBuilder::new()
-                .icon(app.default_window_icon().unwrap().clone())
+                .icon(tauri::image::Image::from_bytes(include_bytes!("../icons/cristal/32x32.png"))?)
                 .tooltip("Whispera")
                 .menu(&menu)
                 .on_menu_event(|app, event| match event.id.as_ref() {
                     "library" => { let app=app.clone(); tauri::async_runtime::spawn(async move { let _ = library::library_toggle(app).await; }); }
                     "settings" => {
                         if let Err(error) = open_settings(app.clone()) { let _ = app.state::<Store>().event(&error); }
+                    }
+                    "updates" => {
+                        let _=open_updates(app.clone());
                     }
                     "recorder" => {
                         let app = app.clone();
@@ -504,6 +578,7 @@ fn main() {
                         tauri::async_runtime::spawn_blocking(move || {
                             let _ = screen::stop(&app);
                             engine::shutdown(&app);
+                            replay::stop(&app);
                             app.exit(0);
                         });
                     }
@@ -519,7 +594,7 @@ fn main() {
                         let app = app.clone();
                         tauri::async_runtime::spawn_blocking(move || {
                             if let Err(error) = screen::select_image(&app) {
-                                screen::report_error(&app, error);
+                                screen::report_image_error(&app, error);
                             }
                         });
                     }
@@ -540,6 +615,9 @@ fn main() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            replay::replay_preferences, replay::replay_status, replay::replay_create_folder, replay::replay_save_preferences, replay::replay_save,
+            video_trim::video_trim_open, video_trim::video_trim_context, video_trim::video_trim_close, video_trim::video_trim_save,
+            updates::updater_status, updates::updater_check, updates::updater_install,
             library::library_state,
             library::library_collect,
             library::library_action,
@@ -565,7 +643,13 @@ fn main() {
             screen::screen_select_image,
             screen::screen_selection_kind,
             screen::screen_selection_image,
+            screen::screen_editor_background,
+            screen::screen_frozen_state,
+            screen::screen_frozen_ready,
             screen::screen_overlay_ready,
+            screen::screen_frame_drag,
+            screen::screen_frame_preview,
+            screen::screen_resize_region,
             screen_editor::screen_editor_context,
             screen_editor::screen_editor_image,
             screen_editor::screen_editor_sample,
@@ -593,6 +677,8 @@ fn main() {
             onboarding::set_startup,
             onboarding::startup_enabled,
             onboarding::validate_key,
+            windows_capture_keys::windows_capture_shortcuts,
+            windows_capture_keys::save_windows_capture_shortcuts,
             snapshot,
             save_settings,
             read_settings,
@@ -609,9 +695,12 @@ fn main() {
             import_groq_key,
             open_recorder,
             open_settings,
+            open_updates,
+            settings_window_action,
             open_recording_details,
             open_import,
             copy_text,
+            toggle_recorder,
             floating_window::recorder_region,
             floating_window::recorder_size,
             health::ui_heartbeat,
@@ -624,6 +713,14 @@ fn main() {
             engine::reveal_recording
         ])
         .on_window_event(|window, event| {
+            if window.label().starts_with("video-trim-") {
+                if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                    if window.app_handle().state::<video_trim::Editors>().busy.load(std::sync::atomic::Ordering::SeqCst) { api.prevent_close(); }
+                    else { video_trim::destroyed(window.app_handle(),window.label()); }
+                }
+                if matches!(event, tauri::WindowEvent::Destroyed) { video_trim::destroyed(window.app_handle(),window.label()); }
+                return;
+            }
             if window.label() == "main"
                 && matches!(
                     event,
@@ -643,10 +740,11 @@ fn main() {
                 if !lifecycle::keep_on_close(window.label()) { return; }
                 api.prevent_close();
                 let _ = window.hide();
-                if window.label().starts_with("screen-select-") {
+                if capture_session::selector(window.label()) {
                     let app = window.app_handle().clone();
+                    let scope=window.label().to_string();
                     tauri::async_runtime::spawn_blocking(move || {
-                        let _ = screen::cancel_selection(app);
+                        let _ = screen::cancel_selection_for(app,&scope);
                     });
                 }
             }

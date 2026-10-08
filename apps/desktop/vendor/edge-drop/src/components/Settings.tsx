@@ -30,13 +30,32 @@ export function Settings({
   const { t, language, languages } = useTranslation()
   const settings = useStore((s) => s.settings)
   const isHorizontal = propIsHorizontal ?? (settings.stickPosition === 'top')
+  const isWhispera = Boolean((window as any).__TAURI_INTERNALS__)
+  const whisperaUpdates = (horizontal = false) => (
+    <div className={horizontal ? 'settings-shelf-card updates-card behaviour-col' : 'setting-card'}>
+      <div className="shelf-card-top">
+        <div className="setting-title">Actualizaciones de Whispera</div>
+        <div className="setting-desc">Whispera te avisa cuando hay una nueva versión. Consultá el estado y actualizá desde Configuración.</div>
+      </div>
+      <div className="shelf-card-bottom">
+        <button type="button" className="pill display-pill" onClick={() => {
+          void (window.edge as any).openWhisperaUpdates().catch((error: unknown) => pushToast({id:crypto.randomUUID(),message:String(error),tone:'error'}))
+        }}>Abrir actualizaciones</button>
+      </div>
+    </div>
+  )
 
   const TABS: { id: SettingsTab; label: string }[] = [
     { id: 'behaviour',  label: t('tabs.behaviour') },
     { id: 'position',   label: t('tabs.position') },
     { id: 'appearance', label: t('tabs.appearance') },
   ]
-  const patch = useStore((s) => s.patchSettings)
+  const persist = useStore((s) => s.patchSettings)
+  const [settingsError, setSettingsError] = useState('')
+  const patch = async (value: Parameters<typeof persist>[0]) => {
+    setSettingsError('')
+    try { await persist(value) } catch (error) { setSettingsError(String(error)) }
+  }
   const pushToast = useStore((s) => s.pushToast)
   const updateInfo = useStore((s) => s.updateInfo)
   const isStoreBuild = useStore((s) => s.isStoreBuild)
@@ -883,6 +902,7 @@ export function Settings({
 
     return (
       <div className="settings-horizontal-shelf">
+        {settingsError && <p role="alert" className="setting-desc">{settingsError}</p>}
         <div
           className="settings-shelf-track tab-view"
           ref={shelfTrackRef}
@@ -953,9 +973,6 @@ export function Settings({
                     <Toggle
                       checked={settings.launchAtLogin}
                       onChange={(v) => {
-                        useStore.setState((s) => ({
-                          settings: { ...s.settings, launchAtLogin: v }
-                        }))
                         void patch({ launchAtLogin: v })
                       }}
                     />
@@ -1170,6 +1187,7 @@ export function Settings({
               </div>
 
               {/* ── SUB-GROUP 5 DIVIDER: Updates ── */}
+              {isWhispera ? whisperaUpdates(true) : <>
               {!isStoreBuild && (
                 <div className="shelf-section-divider">
                   <span className="shelf-section-divider-text">{t('tabs.updates') || 'UPDATES'}</span>
@@ -1265,6 +1283,7 @@ export function Settings({
                 </div>
               )}
 
+              </>}
             </>
           )}
 
@@ -1551,6 +1570,7 @@ export function Settings({
       style={{ width: '100%', height: '100%', display: 'flex', flexDirection: 'column', overflow: 'hidden', position: 'relative' }}
     >
       {/* ── Stationary Fixed Header (Tab Selector) ────────────────── */}
+      {settingsError && <p role="alert" className="setting-desc">{settingsError}</p>}
           <div className="settings-fixed-header">
             <div className="settings-tab-bar">
               {TABS.map((tab) => {
@@ -1619,9 +1639,6 @@ export function Settings({
                         <Toggle
                           checked={settings.launchAtLogin}
                           onChange={(v) => {
-                            useStore.setState((s) => ({
-                              settings: { ...s.settings, launchAtLogin: v }
-                            }))
                             void patch({ launchAtLogin: v })
                           }}
                         />
@@ -1832,7 +1849,7 @@ export function Settings({
                   </div>
 
                   {/* ── UPDATES SECTION (Consolidated above Community & Support) ── */}
-                  {!isStoreBuild && (
+                  {isWhispera ? whisperaUpdates() : !isStoreBuild && (
                     <>
                       <div className="setting-section-divider">
                         <span className="setting-section-divider-text">{t('tabs.updates') || 'UPDATES'}</span>

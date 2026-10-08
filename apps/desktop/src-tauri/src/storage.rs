@@ -18,6 +18,9 @@ pub struct Settings {
     pub sound_theme: String,
     pub sounds: bool,
     pub recorder_scale: f64,
+    pub dictation_artwork: String,
+    pub metallic_color: String,
+    pub metallic_original: bool,
     pub trim_silence: bool,
     pub watchdog: bool,
     pub incremental_transcription: bool,
@@ -36,6 +39,9 @@ impl Default for Settings {
             sound_theme: "cristal".into(),
             sounds: true,
             recorder_scale: 0.85,
+            dictation_artwork: "original".into(),
+            metallic_color: "#ffffff".into(),
+            metallic_original: true,
             trim_silence: true,
             watchdog: true,
             incremental_transcription: true,
@@ -44,6 +50,12 @@ impl Default for Settings {
 }
 impl Settings {
     pub fn validate(&self) -> Result<(), String> {
+        if !["original", "metallic"].contains(&self.dictation_artwork.as_str()) {
+            return Err("Indicador de dictado no admitido".into());
+        }
+        if self.metallic_color.len()!=7 || !self.metallic_color.starts_with('#') || !self.metallic_color[1..].bytes().all(|b|b.is_ascii_hexdigit()) {
+            return Err("Color de carpeta metálica inválido".into());
+        }
         if ![
             "pop", "marimba", "cristal", "gota", "madera", "seda", "pulso", "orbita", "tecla",
             "destello",

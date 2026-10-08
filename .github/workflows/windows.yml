@@ -29,9 +29,15 @@ jobs:
       - name: Rust unit tests (no desktop or network fixtures)
         working-directory: apps/desktop/src-tauri
         run: cargo test --locked
+      - name: Windows startup provider regression (isolated registry keys)
+        shell: pwsh
+        run: ./apps/desktop/tests/verify-startup-provider.ps1
       - name: Build installer
         working-directory: apps/desktop
-        run: npm run tauri build -- --bundles nsis
+        shell: pwsh
+        run: |
+          '{"bundle":{"createUpdaterArtifacts":false}}' | Set-Content unsigned-build.json
+          npm run tauri build -- --bundles nsis --config unsigned-build.json
       - name: Install headless browser
         working-directory: apps/desktop
         run: npx playwright install chromium

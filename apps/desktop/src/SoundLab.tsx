@@ -71,7 +71,7 @@ export default function SoundLab() {
   }
   const pair = soundPairs.find(p => p.id === selected)!;
   return <MotionConfig reducedMotion="user"><main className="sound-lab">
-    <header className="sound-top"><a href="/"><ArrowLeft size={16}/><img src="/cristal/32x32.png" alt=""/>Whispera</a><span>Laboratorio de sonido · Preview</span></header>
+    <header className="sound-top"><a href="/"><ArrowLeft size={16}/><img src="/cristal/64x64.png" alt=""/>Whispera</a><span>Laboratorio de sonido · Preview</span></header>
     <div className="sound-layout"><section className="sound-library" aria-label="Opciones de sonido">
       <div className="sound-heading"><h1>Sonidos</h1><span>10 pares</span></div>
       <div className="sound-volume"><Volume2 size={17}/><label htmlFor="cue-volume">Volumen</label><input id="cue-volume" type="range" min="0" max="1" step=".01" value={volume} onChange={e => setVolume(Number(e.target.value))}/><output>{Math.round(volume * 100)}%</output></div>

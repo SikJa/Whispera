@@ -17,7 +17,14 @@ Escape cancela la selección o el editor de imagen; durante el video lo termina
 y copia, incluso si estás usando otra ventana. No hay botones para detener.
 Cada selección pertenece a un monitor; reconoce
 su escala de Windows y monitores colocados a la izquierda del principal.
-El área queda fija: no sigue a una ventana que se mueva.
+El área no sigue automáticamente a una ventana. Podés moverla arrastrando el
+borde y cambiar su tamaño desde las ocho esquinas y puntos laterales, tanto
+en el editor de captura como durante el video. Las herramientas acompañan el
+recuadro y los dibujos conservan su posición sobre la pantalla.
+
+En video el ajuste se aplica al soltar, con una breve transición mientras se
+prepara el nuevo tramo. El archivo mantiene la resolución inicial; un cambio
+de proporción agrega márgenes y un área mayor se reduce sin deformarse.
 
 Mientras grabás, el borde redondeado sigue marcando el recorte y una luz recorre
 su contorno (border beam). Es blanco por defecto, con color configurable para
@@ -27,7 +34,8 @@ si falta espacio, se ajustan dentro de los bordes de la pantalla. Los grosores s
 eligen con cuatro muestras visuales. La barra se puede contraer; la carpeta
 animada conserva tu color y patrón y se puede ocultar para dejar el contador.
 La preferencia de carpeta compacta se recuerda. No hay leyenda inferior de atajos.
-El borde deja pasar los clics y Windows excluye tanto el borde y su animación
+El interior del borde deja pasar los clics en modo puntero de video; el contorno
+recibe los arrastres para ajustar el área. Windows excluye tanto el borde y su animación
 como los controles de la captura. Las esquinas visuales no recortan los archivos:
 el PNG y el MP4 conservan todos los píxeles del área rectangular seleccionada.
 Al terminar de preparar el MP4, los controles desaparecen automáticamente.

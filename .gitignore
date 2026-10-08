@@ -19,3 +19,9 @@ Thumbs.db
 .codex/
 .agents/
 __pycache__/
+.vite/
+# Local audit reports may contain device paths or personal runtime evidence.
+outputs/
+
+# Private signing keys never belong in the public repository.
+*.key

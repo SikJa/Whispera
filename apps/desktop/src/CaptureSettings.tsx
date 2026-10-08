@@ -4,7 +4,7 @@ import { AudioLines, Camera, ClipboardList, Keyboard, Mic, Monitor, RefreshCw, V
 import { native } from './client';
 import HotkeyInput from './HotkeyInput';
 import { finishHotkeyCapture } from './hotkey-capture';
-import { SaveButton } from './ResourceControls';
+import {useAutoSave,AutoSaveStatus} from './useAutoSave';
 
 export type CapturePreferences = { audio: 'none' | 'system' | 'microphone' | 'both'; hotkey: string; image_hotkey: string; frame_color: string; image_auto_copy: boolean };
 export const defaultCapturePreferences: CapturePreferences = { audio:'none',hotkey:'Control+Shift+F9',image_hotkey:'Control+Shift+F10',frame_color:'#ffffff',image_auto_copy:false };
@@ -20,18 +20,18 @@ export function ShortcutSettings({ voice, onSaved }: { voice:string; onSaved:()=
     if(native) void Promise.all([invoke<CapturePreferences>('screen_preferences'),invoke<{toggleHotkey:string}>('library_preferences')]).then(([p,l])=>{if(alive)setKeys(k=>({...k,video:p.hotkey,image:p.image_hotkey,library:l.toggleHotkey}));}).catch(e=>{if(alive)setMessage(String(e));}).finally(()=>{if(alive)setLoading(false);});
     return()=>{alive=false;};
   },[]);
-  const save=async()=>{
+  const autosave=useAutoSave<typeof keys>(async next=>{
     setBusy(true);setMessage('');
-    try { await finishHotkeyCapture(); await invoke('save_all_shortcuts', keys); onSaved();setMessage('Los cuatro atajos quedaron guardados.');return true; }
-    catch(e){setMessage(String(e));return false;}finally{setBusy(false);}
-  };
+    try { await finishHotkeyCapture(); await invoke('save_all_shortcuts', next); onSaved(); }
+    finally{setBusy(false);}
+  });
   return <section className="shortcut-settings">
     <p className="muted-note">Hacé clic en cada campo y presioná la combinación. Cada función usa un atajo distinto.</p>
     {([['voice','Dictado por voz','Iniciar y terminar la transcripción.',Keyboard],['video','Grabar video','Seleccionar un área y terminar la grabación.',Video],['image','Capturar imagen','Seleccionar un área de la pantalla.',Camera],['library','Portapapeles','Abrir y cerrar la biblioteca.',ClipboardList]] as const).map(([name,label,help,Icon])=><div className="form-row shortcut-setting-row" key={name}>
       <label htmlFor={`shortcut-${name}`}><Icon size={18}/>{label}<span>{help}</span></label>
-      <HotkeyInput id={`shortcut-${name}`} disabled={busy||loading} value={keys[name]} onChange={value=>setKeys(k=>({...k,[name]:value}))}/>
+      <HotkeyInput id={`shortcut-${name}`} disabled={busy||loading} value={keys[name]} onChange={value=>setKeys(k=>{const next={...k,[name]:value};autosave.queue(next);return next;})}/>
     </div>)}
-    <div className="page-actions"><SaveButton busy={busy||loading} onSave={save}/></div>
+    <AutoSaveStatus save={autosave}/>
     <p className="muted-note">Escape cierra una captura o termina el video. Al dibujar, V vuelve al puntero.</p>
     {message&&<p className="notice" role="status">{message}</p>}
   </section>;

@@ -16,12 +16,12 @@ try {
   await image.click();await image.locator('..').filter({has:page.locator('input')}).waitFor();
   await page.waitForFunction(()=>document.querySelector('#shortcut-image').parentElement.dataset.listening==='true');
   await page.keyboard.press('Control+Shift+KeyS');assert.equal(await image.inputValue(),'Ctrl + Shift + S');
-  await page.keyboard.press('Escape');assert.equal(await image.inputValue(),'Ctrl + Shift + F10','Escape restores original shortcut');
+  await page.keyboard.press('Escape');assert.equal(await image.inputValue(),'Ctrl + Shift + S','Released combination is committed automatically');
   await image.click();await page.waitForFunction(()=>document.querySelector('#shortcut-image').parentElement.dataset.listening==='true');
   await page.keyboard.press('Control+Alt+F7');await page.keyboard.press('Tab');
   assert.equal(await image.inputValue(),'Ctrl + Alt + F7');
-  await page.getByRole('button',{name:'Guardar',exact:true}).click();
-  await page.getByText('Los cuatro atajos quedaron guardados.').waitFor();
+
+  await page.getByText('Guardado automáticamente',{exact:true}).waitFor();
   assert.deepEqual(await page.evaluate(()=>window.videoPreferences),{audio:'none',hotkey:'Alt+KeyX',image_hotkey:'Control+Alt+F7',frame_color:'#ffffff',image_auto_copy:false});
   const captures=await page.evaluate(()=>window.calls.filter(c=>c.command==='shortcut_capture').map(c=>c.args.active));
   assert.ok(captures.includes(true));assert.equal(captures.at(-1),false);
@@ -35,17 +35,19 @@ try {
   await image.click();await page.waitForFunction(()=>document.querySelector('#shortcut-image').parentElement.dataset.listening==='true');
   await image.dispatchEvent('keyup',{key:'PrintScreen',code:'PrintScreen',bubbles:true});
   assert.equal(await image.inputValue(),'Impr Pant','Print Screen works with keyup only');
+  await image.click();await page.waitForFunction(()=>document.querySelector('#shortcut-image').parentElement.dataset.listening==='true');
   await image.dispatchEvent('keyup',{key:'PrintScreen',code:'',ctrlKey:true,bubbles:true});
   assert.equal(await image.inputValue(),'Ctrl + Impr Pant','Missing physical code falls back to named key');
+  await image.click();await page.waitForFunction(()=>document.querySelector('#shortcut-image').parentElement.dataset.listening==='true');
   await image.dispatchEvent('keydown',{key:'PrintScreen',code:'PrintScreen',altKey:true,bubbles:true});
   await image.dispatchEvent('keyup',{key:'PrintScreen',code:'PrintScreen',bubbles:true});
   assert.equal(await image.inputValue(),'Alt + Impr Pant','Release must not overwrite modifiers captured on keydown');
   await page.keyboard.press('Escape');
-  assert.equal(await image.inputValue(),'Ctrl + Alt + F7','Print Screen edit still supports cancellation');
+  assert.equal(await image.inputValue(),'Alt + Impr Pant','Released Print Screen combination is already committed');
   await image.click();await page.waitForFunction(()=>document.querySelector('#shortcut-image').parentElement.dataset.listening==='true');
   await image.dispatchEvent('keyup',{key:'PrintScreen',code:'PrintScreen',bubbles:true});
   await page.keyboard.press('Tab');
-  await page.getByRole('button',{name:'Guardar',exact:true}).click();
+  await page.getByText('Guardado automáticamente',{exact:true}).waitFor();
   await page.waitForFunction(()=>window.videoPreferences.image_hotkey==='PrintScreen');
   assert.deepEqual(errors,[]);
   console.log('PASS: pressed combinations for voice/video/image, plus formatting, modifier-only input, Escape rollback, focus release, persistence, editable white-default border.');

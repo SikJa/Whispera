@@ -7,7 +7,6 @@ use std::{
     time::Duration,
 };
 use tauri::{Emitter, Manager};
-use tauri_plugin_autostart::ManagerExt as _;
 use tauri_plugin_clipboard_manager::ClipboardExt;
 use tauri_plugin_global_shortcut::GlobalShortcutExt;
 static GATE: Mutex<()> = Mutex::new(());
@@ -71,14 +70,7 @@ fn update_settings(app: &tauri::AppHandle, patch: &Value) -> Result<Value, Strin
         config[k] = v.clone();
     }
     if let Some(enabled) = patch["launchAtLogin"].as_bool() {
-        if app.autolaunch().is_enabled().map_err(|e| e.to_string())? != enabled {
-            if enabled {
-                app.autolaunch().enable()
-            } else {
-                app.autolaunch().disable()
-            }
-            .map_err(|e| e.to_string())?;
-        }
+        crate::startup::set_enabled(enabled)?;
     }
     if let Some(key) = config["toggleHotkey"].as_str() {
         let parsed = crate::shortcuts::parse(key)?;
@@ -334,8 +326,9 @@ pub async fn library_state(
         let store = app.state::<Store>();
         let items = save(&store, rows(&store)?)?;
         use std::hash::{Hash, Hasher};
+        let startup=crate::startup::cached_enabled()?;
         let mut hash = std::collections::hash_map::DefaultHasher::new();
-        serde_json::to_string(&(items, settings(&store)?))
+        serde_json::to_string(&(items, settings(&store)?, startup))
             .map_err(|e| e.to_string())?
             .hash(&mut hash);
         let current = format!("{:x}", hash.finish());
@@ -355,7 +348,7 @@ pub async fn library_state(
             result["settings"] = json!({});
         }
         result["settings"]["launchAtLogin"] =
-            json!(app.autolaunch().is_enabled().map_err(|e| e.to_string())?);
+            json!(startup);
         Ok(result)
     })
     .await
@@ -488,7 +481,7 @@ pub async fn library_drag(
         return Err("El archivo ya no existe".into());
     }
     let preview = crate::library_media::drag_image(&app, &files[0])
-        .unwrap_or_else(|_| include_bytes!("../icons/cristal/32x32.png").to_vec());
+        .unwrap_or_else(|_| include_bytes!("../icons/wave/32x32.png").to_vec());
     let (files, _) = crate::video_transcript::package(&app.state::<Store>(), &files)?;
     let files = crate::video_transcript::share_files(&app, &files)?;
     let files: Vec<PathBuf> = files.into_iter().map(PathBuf::from).collect();

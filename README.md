@@ -10,11 +10,15 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/SikJa/Whispera/releases"><kbd>⬇ Descargar</kbd></a>&ensp;·&ensp;
+  <a href="https://github.com/SikJa/Whispera/releases/latest/download/Whispera-setup.exe"><kbd>⬇ Descargar última versión · Windows</kbd></a>&ensp;·&ensp;
   <a href="README.en.md">English</a>&ensp;·&ensp;
   <a href="https://console.groq.com/keys">Obtener clave Groq</a>&ensp;·&ensp;
   <a href="docs/PRIVACY.md">Privacidad</a>
 </p>
+
+<p align="center">El botón descarga directamente el instalador para Windows, sin buscar entre versiones.<br/>Si ya tenés Whispera, buscá la actualización desde <strong>Configuración → Actualizaciones</strong>.</p>
+
+Para pasar desde Whispera-K o una versión anterior de SikJa sin actualizador, instalá esta versión una vez usando el botón. Conserva tu perfil y configura la firma propia de SikJa para futuras actualizaciones.
 
 ---
 
@@ -26,7 +30,7 @@
 
 ## ¿Qué es?
 
-**Whispera 0.2.1** reúne dictado, portapapeles, captura de imágenes y video por región.
+**Whispera** reúne dictado, portapapeles, captura de imágenes y video por región.
 Esta actualización integra también el trabajo del fork
 [Whispera-K](https://github.com/kazu00001/Whispera-K), conservando su historial y créditos.
 El código de Whispera mantiene su licencia MIT; los componentes de terceros
@@ -41,6 +45,18 @@ Aparece como una **carpeta flotante transparente** sobre cualquier ventana. Grab
 - 🌐 **Español e inglés** — interfaz, instalador y guía inicial bilingüe
 
 ## Características
+
+### Novedades de 0.2.22
+
+- **Replay opcional:** guardar los últimos segundos de la pantalla principal, con duración y carpeta elegidas por vos y audio opcional. Después elegís el tramo que querés conservar y podés guardarlo con Ctrl+C. Con audio habilitado, se genera la transcripción del tramo seleccionado.
+- **Configuración más cómoda:** inicio con Windows desde la app, Tu espacio desplegable e importación de archivos en una ventana compacta.
+- **Correcciones y rendimiento:** recortes de Replay sin perder cuadros al inicio, atajos accesibles, preferencias protegidas durante la carga, recuperación ante errores de captura y menos trabajo repetido en la grabadora y el diccionario.
+
+Replay viene apagado y consume recursos mientras está habilitado. Los detalles de cambios, validación y límites están en [las notas de 0.2.22](docs/releases/0.2.22.md).
+
+La [versión 0.2.6](docs/releases/0.2.6.md) permite mover y redimensionar el
+recuadro de capturas y videos desde sus bordes, manteniendo el diseño redondeado
+y las anotaciones existentes. En video, el cambio de encuadre tiene una breve transición.
 
 ### Novedades de 0.2.0
 

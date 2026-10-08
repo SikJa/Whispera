@@ -1,20 +1,35 @@
-export function installNativeMock({kind='video',width=640,height=480,scale=1,setupComplete=true}={}) {
+export function installNativeMock({kind='video',width=640,height=480,scale=1,setupComplete=true,selectionPhase,frozenImage,adjustable=false,windowLabel}={}) {
+  const view=new URLSearchParams(location.search).get('view');
+  const label=windowLabel??(view==='screen-select'?'screen-select-0':view==='screen-freeze'?'screen-freeze-0':view?.startsWith('screen-')?view:'main');
+  window.updateStatus={currentVersion:'0.2.15',version:null,notes:'',phase:'idle',downloaded:0,total:null,error:''};
   window.calls=[]; const callbacks=new Map(), listeners=new Map();let next=1;
   window.videoPreferences={audio:'none',hotkey:'Control+Shift+F9',image_hotkey:'Control+Shift+F10',frame_color:'#ffffff',image_auto_copy:false};
   window.voiceShortcut='Alt+KeyZ';
   window.libraryPreferences={toggleHotkey:'Alt+C',captureGlobal:true,incognito:false,historyLimit:250,autoDeleteHours:48};
-  window.videoStatus={phase:'idle',seconds:0,path:'',error:'',copied:false};
+  window.videoStatus={phase:selectionPhase??(new URLSearchParams(location.search).get('view')==='screen-select'?'selecting':'idle'),seconds:0,path:'',error:'',copied:false};
   window.editorContext={id:'test-session',kind,width,height,scale};
   window.feedback={};window.exports=[];window.failExport=false;
-  window.emitNative=(event,payload)=>{for(const [id,v] of listeners)if(v.event===event)callbacks.get(v.handler)?.({event,id,payload});};
+  window.emitNative=(event,payload,target=label)=>{for(const [id,v] of listeners)if(v.event===event&&(v.target?.kind==='Any'||!v.target||v.target.label===target))callbacks.get(v.handler)?.({event,id,payload});};
   window.__TAURI_EVENT_PLUGIN_INTERNALS__={unregisterListener:(_,id)=>listeners.delete(id)};
   window.__TAURI_INTERNALS__={
-    metadata:{currentWindow:{label:'main'},currentWebview:{label:'main'}},
+    metadata:{currentWindow:{label},currentWebview:{label}},
     transformCallback:callback=>{const id=next++;callbacks.set(id,callback);return id;},
     invoke:async(command,args={})=>{
       window.calls.push({command,args});
       if(command==='plugin:event|listen'){const id=next++;listeners.set(id,args);return id;}
       if(command==='plugin:event|unlisten')return;
+      if(command==='replay_preferences')return{enabled:false,seconds:60,audio:'none',folder:'',hotkey:''};
+      if(command==='replay_status')return{phase:'off',availableSeconds:0,encoder:'',error:''};
+      if(command==='updater_status')return window.updateStatus;
+      if(command==='updater_check'){
+        if(window.failUpdateCheck)throw Error('No se pudo consultar la actualización');
+        window.updateStatus={...window.updateStatus,version:window.nextUpdate?'0.2.16':null,notes:'Herramientas corregidas',phase:window.nextUpdate?'available':'current'};
+        window.emitNative('updater-status',window.updateStatus,'main');return window.updateStatus;
+      }
+      if(command==='updater_install'){
+        if(window.updateWorkActive)throw Error('Terminá el dictado, la transcripción o la captura antes de actualizar. Tu trabajo sigue abierto.');
+        window.updateStatus={...window.updateStatus,phase:'downloading',downloaded:50,total:100};window.emitNative('updater-status',window.updateStatus,'main');
+      }
       if(command==='setup_info')return{complete:setupComplete||localStorage.getItem('test.setup.complete')==='true',startup:false,microphone:'Micrófono de prueba'};
       if(command==='complete_setup')localStorage.setItem('test.setup.complete','true');
       if(command==='snapshot')return{settings:{color:'#9024DC',hotkey:window.voiceShortcut,language:'es',autoPaste:true},rules:[],history:[],logs:[],keyConfigured:false,native:true};
@@ -23,7 +38,8 @@ export function installNativeMock({kind='video',width=640,height=480,scale=1,set
       if(command==='read_rules')return [];
       if(command==='screen_recent')return[{id:'recent-1',kind:'image',created_at:'2026-10-02T00:00:00Z',path:'test.png'}];
       if(command==='screen_selection_kind')return kind;
-      if(command==='screen_selection_image')return new ArrayBuffer(0);
+      if(command==='screen_selection_image')return frozenImage?new Uint8Array(frozenImage).buffer:new ArrayBuffer(0);
+      if(command==='screen_frozen_state')return kind==='image'&&['selecting','editing'].includes(window.videoStatus.phase)?1:null;
       if(command==='screen_preferences')return window.videoPreferences;
       if(command==='library_preferences')return window.libraryPreferences;
       if(command==='library_action'&&args.action==='settings'){window.libraryPreferences={...window.libraryPreferences,...args.value};return window.libraryPreferences;}
@@ -35,17 +51,25 @@ export function installNativeMock({kind='video',width=640,height=480,scale=1,set
       if(command==='screen_stop')window.videoStatus.phase='idle';
       if(command==='screen_video_snapshot')return true;
       if(command==='screen_tools_panel')return {railX:4,railY:4,menuX:58,menuY:Math.max(4,Math.min(innerHeight-args.panelHeight+4,args.anchor-args.panelHeight/2))};
+      if(command==='screen_frame_drag'&&args.active)window.emitNative('screen-editor-drag',window.editorContext.id);
+      if(command==='screen_frame_preview')window.previewRect=args.rect;
       if(command==='screen_save_preferences')window.videoPreferences=args.preferences;
-      if(command==='screen_start'){window.videoStatus.phase=kind==='image'?'editing':'recording';window.emitNative('screen-stage',{rect:args.rect,kind});}
+      if(command==='screen_start'){window.videoStatus.phase=kind==='image'?'editing':'recording';window.emitNative('screen-stage',{rect:args.rect,kind});if(adjustable){window.editorContext={...window.editorContext,rect:args.rect,width:args.rect.width,height:args.rect.height,monitor_width:innerWidth,monitor_height:innerHeight,source_label:'screen-select-0'};window.emitNative('screen-editor-reset',window.editorContext);}}
+      if(command==='screen_resize_region'){
+        if(window.failResize)throw Error('No se pudo ajustar el área');
+        window.editorContext={...window.editorContext,rect:args.rect,width:args.rect.width,height:args.rect.height};
+        window.emitNative('screen-editor-reset',window.editorContext);
+      }
       if(command==='screen_editor_context')return window.editorContext;
       if(command==='screen_editor_action')window.emitNative('screen-editor-action',args);
       if(command==='screen_editor_feedback'){window.feedback=args.feedback;window.emitNative('screen-editor-feedback',args);}
       if(command==='screen_editor_feedback_get')return window.feedback;
-      if(command==='screen_editor_image'||command==='screen_editor_sample'){
-        const canvas=document.createElement('canvas');canvas.width=(args.rect?.width??width)*scale;canvas.height=(args.rect?.height??height)*scale;
+      if(command==='screen_editor_image'||command==='screen_editor_background'||command==='screen_editor_sample'){
+        const canvas=document.createElement('canvas');canvas.width=(command==='screen_editor_background'?(window.editorContext.monitor_width??innerWidth):(args.rect?.width??width))*scale;canvas.height=(command==='screen_editor_background'?(window.editorContext.monitor_height??innerHeight):(args.rect?.height??height))*scale;
         const ctx=canvas.getContext('2d');ctx.fillStyle='#eeeeee';ctx.fillRect(0,0,canvas.width,canvas.height);
         if(command==='screen_editor_sample'){ctx.fillStyle='#3355aa';ctx.fillRect(0,0,canvas.width/2,canvas.height);}
-        return Array.from(Uint8Array.from(atob(canvas.toDataURL('image/png').split(',')[1]),v=>v.charCodeAt(0)));
+        const bytes=Uint8Array.from(atob(canvas.toDataURL('image/png').split(',')[1]),v=>v.charCodeAt(0));
+        return command==='screen_editor_image'||command==='screen_editor_background'?bytes.buffer:Array.from(bytes);
       }
       if(command==='screen_image_export'){if(window.failExport)throw Error('Portapapeles ocupado');window.exports.push(args);return true;}
     }

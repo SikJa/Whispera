@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/SikJa/Whispera/releases"><kbd>⬇ Download</kbd></a>&ensp;·&ensp;
+  <a href="https://github.com/SikJa/Whispera/releases/latest/download/Whispera-setup.exe"><kbd>⬇ Download latest version · Windows</kbd></a>&ensp;·&ensp;
   <a href="README.md">Español</a>&ensp;·&ensp;
   <a href="https://console.groq.com/keys">Get a Groq key</a>&ensp;·&ensp;
   <a href="docs/PRIVACY.md">Privacy</a>
@@ -26,7 +26,9 @@
 
 ## What is it?
 
-**Whispera 0.2.1** unifies dictation, clipboard history, screenshots and screen recording.
+When switching from Whispera-K or an older SikJa version without the updater, install this version once using the download button. Your profile is preserved and future updates use SikJa's own signing key.
+
+**Whispera** unifies dictation, clipboard history, screenshots and screen recording.
 This update also integrates work from the
 [Whispera-K fork](https://github.com/kazu00001/Whispera-K), preserving its history and credits.
 Whispera remains MIT-licensed; third-party components retain their own licenses.
@@ -40,6 +42,10 @@ It shows up as a **transparent floating folder** on top of any window. Record, t
 - 🌐 **Spanish & English** — interface, installer and setup wizard are bilingual
 
 ## Features
+
+[Version 0.2.6](docs/releases/0.2.6.md) adds draggable and resizable capture
+borders for screenshots and video, preserving the rounded design and existing
+annotations. Video reframing has a brief transition between recording segments.
 
 | | |
 |---|---|

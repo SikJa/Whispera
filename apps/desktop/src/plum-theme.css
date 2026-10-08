@@ -1,0 +1,20 @@
+html[data-settings-shell=true]{background:#211922;color:#f8edf4;--muted:#b4a0b2;--primary:#f4b59c;--primary-foreground:#211922;--ring:#f4b59c;--background:#211922;--foreground:#f8edf4;--border:#ffffff18}
+html[data-settings-shell=true] body,.desktop-app{background:#211922;color:#f8edf4}
+.desktop-app .settings-sidebar{background:#2b2030;border-color:#ffffff12}
+.desktop-app .desktop-content,.desktop-app .desktop-main,.desktop-app .settings-shell,.desktop-app .settings-page{background:#211922}
+.desktop-app .sidebar-link[aria-current=page],.desktop-app .sidebar-link[data-active=true]{background:#f4b59c;color:#211922}
+.desktop-app .sidebar-link:not([aria-current=page]),.desktop-app .desktop-brand small,.desktop-app .sidebar-group-title{color:#b4a0b2}
+.desktop-app .form-row select,.desktop-app .form-row input:not([type=range]):not([type=color]),.desktop-app .recorder-link,.desktop-app .update-action-card,.desktop-app .appearance-card,.desktop-app .application-card{background:#372939;color:#f8edf4;border-color:#ffffff18}
+.desktop-app button:focus-visible,.desktop-app a:focus-visible,.desktop-app input:focus-visible{outline-color:#f4b59c}
+.desktop-app .muted-note,.desktop-app .form-row label>span,.desktop-app .form-row label>small{color:#b4a0b2}
+.desktop-app .desktop-titlebar{background:#2b2030;color:#f8edf4;border-color:#ffffff12}
+.file-import{background:#211922;color:#f8edf4}.file-import .import-header,.file-import .import-drop,.file-import .import-actions button{background:#372939;color:#f8edf4}.file-import .import-subtitle{color:#b4a0b2}
+
+.desktop-app{--background:#211922;--foreground:#f8edf4;--primary:#f4b59c;--primary-foreground:#211922;--secondary:#372939;--muted:#372939;--muted-foreground:#b4a0b2;--ring:#f4b59c}
+.desktop-app .settings-sidebar .sidebar-active-surface{background:#f4b59c}
+.desktop-app .settings-sidebar nav button.active:not([data-slot]){color:#211922;background:transparent}
+.desktop-app .settings-sidebar nav button:not(.active):not([data-slot]),.desktop-app .settings-sidebar .nav-group{color:#b4a0b2}
+.desktop-app .page-heading p,.desktop-app .desktop-content h3,.desktop-app .form-row label>span{color:#b4a0b2}
+.desktop-app .form-row label{color:#f8edf4}.desktop-app .brand-mark{background:#211922}
+
+.settings-window,.settings-window .window-chrome{background:#211922;color:#f8edf4}.settings-window .window-chrome-caption,.settings-window .window-chrome-controls button{color:#b4a0b2}

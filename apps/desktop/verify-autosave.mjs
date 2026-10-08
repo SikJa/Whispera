@@ -1,0 +1,82 @@
+import assert from 'node:assert/strict';
+import {createServer} from 'vite';
+import {launchSilentBrowser} from './tests/silent-browser.mjs';
+import {installNativeMock} from './tests/native-mock.mjs';
+import {PNG} from 'pngjs';
+const server=process.env.WHISPERA_TEST_URL?null:await createServer({server:{host:'127.0.0.1',port:0}});await server?.listen();
+const browser=await launchSilentBrowser();
+try{
+ const page=await browser.newPage();
+ await page.addInitScript(installNativeMock,{});
+ await page.addInitScript(()=>{
+   const invoke=window.__TAURI_INTERNALS__.invoke;
+   window.saveCalls=[];window.savedSettings=JSON.parse(localStorage.getItem('test.settings')||'null')||{model:'whisper-large-v3-turbo',language:'es',hotkey:'Alt+Z',color:'#9024DC',pattern:'wave',placement:'right',autoCopy:true,autoPaste:true,soundTheme:'cristal',sounds:true,recorderScale:.85,trimSilence:true,watchdog:true,incrementalTranscription:true,dictationArtwork:'original'};
+   window.__TAURI_INTERNALS__.invoke=async(command,args)=>{
+     if(command==='read_settings')return {...window.savedSettings};
+     if(command==='snapshot')return {...await invoke(command,args),settings:{...window.savedSettings}};
+     if(command==='save_settings'){
+       window.saveCalls.push(args.settings);await new Promise(r=>setTimeout(r,300));
+       if(window.failNext){window.failNext=false;throw Error('Simulated write failure');}
+       window.savedSettings=args.settings;localStorage.setItem('test.settings',JSON.stringify(args.settings));return null;
+     }
+     return invoke(command,args);
+   };
+ });
+ await page.goto(process.env.WHISPERA_TEST_URL||`http://127.0.0.1:${server.httpServer.address().port}`);
+ await page.locator('#language').selectOption('en');
+ await page.waitForFunction(()=>window.saveCalls.length===1);
+ await page.locator('#model').selectOption('whisper-large-v3');
+ await page.waitForFunction(()=>window.savedSettings.language==='en'&&window.savedSettings.model==='whisper-large-v3');
+ assert.equal(await page.getByRole('button',{name:'Guardar',exact:true}).count(),0);
+ await page.getByRole('button',{name:'Apariencia',exact:true}).click();
+ await page.getByRole('button',{name:'Modelo siguiente',exact:true}).click();
+ await page.waitForFunction(()=>window.savedSettings.dictationArtwork==='metallic');
+ assert.equal(await page.locator('.appearance-preview img').getAttribute('src'),'/indicators/folder.png');
+ assert.equal(await page.locator('#pattern').isDisabled(),true);
+ await page.getByRole('button',{name:'Apariencia',exact:true}).click();
+ assert.equal(await page.getByRole('button',{name:'Personalizado',exact:true}).count(),0,'appearance and colors share one page');
+ await page.getByRole('button',{name:'Elegir color',exact:true}).click();
+ await page.getByRole('button',{name:'Azul',exact:true}).click();
+ await page.getByRole('button',{name:'Cerrar paleta'}).click();
+ await page.waitForFunction(()=>window.savedSettings.metallicColor==='#50B1FD');
+ assert.equal(await page.locator('.color-values code').textContent(),'#50B1FD');
+ await page.screenshot({path:'../../.local/metallic-blue-0.2.19.png'});
+ await page.reload();await page.getByRole('button',{name:'Apariencia',exact:true}).click();
+ assert.equal(await page.locator('.color-values code').textContent(),'#50B1FD');
+ await page.getByRole('button',{name:'Restaurar color original'}).click();
+ await page.waitForFunction(()=>window.savedSettings.metallicColor==='#ffffff');
+ const original=PNG.sync.read(await page.locator('.appearance-preview').screenshot());
+ await page.getByRole('button',{name:'Elegir color',exact:true}).click();
+ await page.getByRole('button',{name:'Blanco',exact:true}).click();
+ await page.getByRole('button',{name:'Cerrar paleta'}).click();
+ await page.waitForFunction(()=>window.savedSettings.metallicOriginal===false);
+ const white=PNG.sync.read(await page.locator('.appearance-preview').screenshot());
+ const brightness=png=>{let total=0;for(let i=0;i<png.data.length;i+=4)total+=png.data[i]+png.data[i+1]+png.data[i+2];return total/(png.width*png.height*3);};
+ assert.ok(brightness(white)>brightness(original)+15,'white changes the folder surface, not only its edges');
+ await page.getByRole('button',{name:'Elegir color',exact:true}).click();
+ await page.locator('.palette-tabs').getByRole('button',{name:'Personalizado',exact:true}).click();
+ const track=await page.locator('.palette-track').boundingBox(),thumb=await page.locator('.palette-hue .palette-thumb').boundingBox();
+ assert.ok(Math.abs(thumb.y+thumb.height/2-track.y-track.height/2)<1,'hue handle sits on the color track center');
+ await page.screenshot({path:'../../.local/metallic-white-palette-0.2.19.png'});
+ await page.getByRole('button',{name:'Cerrar paleta'}).click();
+ await page.getByRole('button',{name:'Restaurar color original'}).click();
+ await page.waitForFunction(()=>window.savedSettings.metallicOriginal===true);
+ await page.getByRole('button',{name:'Modelo anterior',exact:true}).click();
+ await page.waitForFunction(()=>window.savedSettings.dictationArtwork==='original');
+ assert.equal(await page.locator('.color-values code').textContent(),'#9024DC','the original folder keeps its own color');
+ await page.getByRole('button',{name:'Modelo siguiente',exact:true}).click();
+ await page.waitForFunction(()=>window.savedSettings.dictationArtwork==='metallic');
+ assert.equal(await page.locator('.color-values code').textContent(),'#FFFFFF','the metallic model retains its restored original appearance');
+ await page.getByRole('button',{name:'Apariencia',exact:true}).click();
+ await page.evaluate(()=>window.failNext=true);
+ await page.locator('#placement').selectOption('left');
+ await page.getByRole('button',{name:'Reintentar',exact:true}).waitFor();
+ assert.equal(await page.evaluate(()=>window.savedSettings.placement),'right','a failed write is never reported as saved');
+ await page.getByRole('button',{name:'Reintentar',exact:true}).click();
+ await page.waitForFunction(()=>window.savedSettings.placement==='left');
+ await page.reload();await page.getByRole('button',{name:'Apariencia',exact:true}).click();
+ assert.match(await page.locator('.artwork-model-name').textContent(),/Carpeta metálica/);
+ assert.equal(await page.locator('#placement').inputValue(),'left');
+ await page.screenshot({path:'../../.local/appearance-0.2.19.png'});
+ console.log('PASS: automatic saving, edits during an in-flight write, visible failure/retry, persistence after reopen and selected artwork. Native IPC mocked.');
+}finally{await browser.close();await server?.close();}

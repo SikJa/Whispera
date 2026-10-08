@@ -1,1 +1,1 @@
-Guardá los últimos segundos con Replay y recortá el tramo que necesitás. Mejoramos el rendimiento del diccionario y corregimos fallos de capturas, atajos, guardado de preferencias y actualización del portapapeles.
+Solucionamos el inicio con Windows cuando la opción estaba activada pero la ruta era antigua. La grabación hacia atrás ahora tiene un botón visible y pasos claros para crear la carpeta, elegir el atajo y activarla.

@@ -2,7 +2,7 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 
 // Advance this commit only when upstream changes have actually been integrated.
-pub const INTEGRATED_COMMIT: &str = "e8c51d4d3636acc0b2c5c41583454b0b487d1a91";
+pub const INTEGRATED_COMMIT: &str = "32b265d50e887f875f59fd45d60cd41eefaa2e0a";
 const REPOSITORY: &str = "kazu00001/Whispera-K";
 
 #[derive(Clone, Default, Serialize)]

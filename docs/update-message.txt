@@ -1,1 +1,1 @@
-Whispera suma Replay, recorte de video y capturas simultaneas. Conserva el logo Cristal y tus preferencias, refuerza el diccionario y el audio, y recibe actualizaciones firmadas desde SikJa/Whispera.
+Integramos las novedades de Whispera-K: Replay con configuracion guiada y activacion explicita. Agregamos deteccion independiente de novedades de K. Conservamos el logo Cristal, tus preferencias y las actualizaciones firmadas desde SikJa/Whispera.

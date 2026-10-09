@@ -70,7 +70,7 @@ export default function EditableCaptureFrame({context}:{context:CaptureContext})
       await invoke('screen_frame_drag',{active:false}).catch(()=>{});if(alive.current)setBusy(false);
     }
   };
-  const props=(handle:SelectionHandle)=>({disabled:busy,onPointerDown:(e:PointerEvent<HTMLButtonElement>)=>start(e,handle),onPointerMove:move,onPointerUp:()=>void finish(),onPointerCancel:()=>void finish(true)});
+  const props=(handle:SelectionHandle)=>({disabled:busy,onPointerDown:(e:PointerEvent<HTMLButtonElement>)=>start(e,handle),onPointerMove:move,onPointerUp:()=>void finish(),onPointerCancel:()=>void finish(true),onLostPointerCapture:()=>void finish(true)});
   return <div className="screen-indicator" aria-label="Área de captura editable">
     <CaptureFrame width={rect.width} height={rect.height} color={context.frame_color} image={context.kind==='image'} testId="recording-frame" className="editable-capture-frame" style={{left:rect.x,top:rect.y}}>
       <button className="capture-frame-move" aria-label="Mover área de captura" title="Arrastrá para mover el área" {...props('move')}/>

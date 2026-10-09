@@ -61,6 +61,20 @@ try {
     await drag(page.locator('.capture-frame-handle-e'),30,0);
     await page.getByRole('alert').waitFor();
     assert.deepEqual(await frame.boundingBox(),{x:220,y:240,width:550,height:340},'failed native crop restores border');
+    await page.evaluate(()=>window.failResize=false);
+    const handle=page.locator('.capture-frame-handle-se');
+    await page.waitForFunction(element=>!element.disabled,await handle.elementHandle());
+    await handle.evaluate(element=>element.addEventListener('pointerdown',e=>window.dragPointerId=e.pointerId,{once:true}));
+    const box=await handle.boundingBox();
+    await page.mouse.move(box.x+box.width/2,box.y+box.height/2);await page.mouse.down();
+    await page.mouse.move(1200,900);
+    await page.waitForFunction(()=>window.previewRect.width===880&&window.previewRect.height===560);
+    const before=await page.evaluate(()=>window.calls.filter(c=>c.command==='screen_frame_drag'&&!c.args.active).length);
+    await handle.evaluate(element=>element.releasePointerCapture(window.dragPointerId));
+    await page.mouse.move(1201,901);
+    await page.waitForFunction(count=>window.calls.filter(c=>c.command==='screen_frame_drag'&&!c.args.active).length>count,before,{timeout:3000});
+    await page.mouse.up();
+    assert.deepEqual(await frame.boundingBox(),{x:220,y:240,width:550,height:340},'lost pointer capture restores the crop and native controls');
     assert.deepEqual(errors,[]);await page.close();
   }
   const queued=await browser.newPage({viewport:{width:1100,height:800}});

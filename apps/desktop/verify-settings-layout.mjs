@@ -19,6 +19,7 @@ try{
     };
   });
   await page.goto(process.env.WHISPERA_TEST_URL||`http://127.0.0.1:${server.httpServer.address().port}`);
+  assert.equal(await page.getByRole('button',{name:'General',exact:true}).count(),0,'empty General route must not return');
   await page.getByRole('button',{name:'Historial',exact:true}).click();
   const sidebar=page.locator('.settings-sidebar');
   const top=(await sidebar.boundingBox()).y;

@@ -36,7 +36,6 @@ import LibrarySettings from './LibrarySettings';
 import ApplicationSettings from './ApplicationSettings';
 
 const routes = [
-  { id: "general", name: "General", icon: Activity, group: "Aplicación" },
   { id: "transcription", name: "Transcripción", icon: AudioLines, group: "Preferencias" },
   { id: "appearance", name: "Apariencia", icon: Palette },
   { id: "hotkey", name: "Atajos", icon: Keyboard },
@@ -52,7 +51,6 @@ const routes = [
 type Route = typeof routes[number]["id"];
 const artworkModels = [{id:'original',name:'Carpeta animada original'},{id:'metallic',name:'Carpeta metálica'}] as const;
 const descriptions: Record<Route, string> = {
-  general: "Inicio y comportamiento de Whispera.",
   transcription: "Tu voz, con tus preferencias.", dictionary: "Las palabras que tienen que salir bien.",
   appearance: "Tus indicadores, a tu manera.",
   hotkey: "Dictado, video y capturas, cada uno con su combinación.", history: "Transcripciones, capturas y videos, en un lugar.",

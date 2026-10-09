@@ -1,1 +1,1 @@
-Integramos las novedades de Whispera-K: Replay con configuracion guiada y activacion explicita. Agregamos deteccion independiente de novedades de K. Conservamos el logo Cristal, tus preferencias y las actualizaciones firmadas desde SikJa/Whispera.
+Corregimos el recorte al cruzar de monitor y recuperamos las herramientas si se interrumpe el arrastre. Eliminamos la seccion General vacia. Conservamos tus atajos, diccionario y preferencias.

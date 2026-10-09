@@ -61,6 +61,11 @@ export function ScreenSelection({kind='video',frameColor='#ffffff',snapshot,onPr
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   const anchor = useRef<Point | undefined>(undefined);
+  const boundedPoint=(x:number,y:number):Point=>({x:Math.max(0,Math.min(innerWidth,x)),y:Math.max(0,Math.min(innerHeight,y))});
+  const interruptSelection=()=>{
+    if(!anchor.current)return;
+    anchor.current=undefined;setOrigin(undefined);setEnd(undefined);
+  };
   const cancel = () => invoke('screen_cancel_selection').catch(e => setError(String(e)));
   useEffect(() => {
     const listener = (e: KeyboardEvent) => {
@@ -82,14 +87,15 @@ export function ScreenSelection({kind='video',frameColor='#ffffff',snapshot,onPr
   return <div className="screen-selection" style={snapshot?{backgroundImage:`url("${snapshot}")`,backgroundSize:'100% 100%'}:undefined} data-frozen={!!snapshot} data-has-selection={!!rect} onPointerDown={e => {
     if (busy || e.button !== 0 || (e.target as HTMLElement).closest('button')) return;
     e.currentTarget.setPointerCapture(e.pointerId);
-    anchor.current = { x: e.clientX, y: e.clientY }; setOrigin(anchor.current); setEnd(anchor.current); setError('');
-  }} onPointerMove={e => { if (anchor.current && !busy) setEnd({ x: e.clientX, y: e.clientY }); }} onPointerUp={async e => {
+    anchor.current = boundedPoint(e.clientX,e.clientY); setOrigin(anchor.current); setEnd(anchor.current); setError('');
+  }} onPointerMove={e => { if (anchor.current && !busy) setEnd(boundedPoint(e.clientX,e.clientY)); }} onPointerUp={async e => {
     const start = anchor.current; anchor.current = undefined;
     if (!start || busy) return;
-    const rect = { x: Math.min(start.x, e.clientX), y: Math.min(start.y, e.clientY), width: Math.abs(e.clientX - start.x), height: Math.abs(e.clientY - start.y) };
+    const end=boundedPoint(e.clientX,e.clientY);
+    const rect = { x: Math.min(start.x, end.x), y: Math.min(start.y, end.y), width: Math.abs(end.x - start.x), height: Math.abs(end.y - start.y) };
     if (rect.width < 16 || rect.height < 16) { setError('Seleccioná un área más grande.'); return; }
     await beginCapture(rect);
-  }}>
+  }} onPointerCancel={interruptSelection} onLostPointerCapture={interruptSelection}>
     <div className="screen-selection-help" role="status">{busy ? 'Preparando…' : error || (kind==='image'?'Seleccioná el área para capturar.':'Seleccioná el área. Al soltar empieza a grabar.')} <kbd>Ctrl+A: pantalla completa</kbd><kbd>Esc: salir</kbd></div>
     {rect && <CaptureFrame className="screen-selection-rect" width={rect.width} height={rect.height} color={frameColor} style={{left:rect.x,top:rect.y}}/>}
   </div>;

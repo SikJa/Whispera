@@ -4,6 +4,9 @@
 .update-card h3{margin-top:0}.update-card details{margin:16px 0}.update-card summary{cursor:pointer}
 .update-notes{white-space:normal;overflow-wrap:anywhere;color:#babac0;margin-top:12px;font-size:13px;line-height:1.5}
 .updates-panel{display:flex;flex-direction:column}
+.upstream-updates{margin-top:24px;padding-top:18px;border-top:1px solid #ffffff18;min-width:0}
+.upstream-updates h3{margin:0;font-size:15px}.upstream-updates h3 small{display:block;margin-top:5px;font-size:12px;font-weight:400;color:#96969e;overflow-wrap:anywhere}
+.upstream-updates p{font-size:13px;overflow-wrap:anywhere}.upstream-updates button{min-height:36px}.upstream-notes{max-width:70ch}
 .updates-panel[data-updating=true]>.form-row{order:-2}
 .updates-panel[data-updating=true] .update-progress-card{order:-1;margin-top:12px;padding:16px}
 .updates-panel[data-updating=true] .update-card{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-top:12px;padding:0;border:0;background:transparent}

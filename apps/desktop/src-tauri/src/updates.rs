@@ -9,6 +9,7 @@ use tauri_plugin_updater::{Update,UpdaterExt};
 pub struct Status {
     pub current_version:String,pub version:Option<String>,pub notes:String,
     pub phase:String,pub downloaded:u64,pub total:Option<u64>,pub error:String,
+    pub upstream:crate::upstream_updates::Status,
 }
 pub struct Updates {
     status:Mutex<Status>,available:Mutex<Option<Update>>,operation:AtomicBool,
@@ -17,7 +18,7 @@ pub struct Updates {
 pub struct UpdateMenu(pub tauri::menu::MenuItem<tauri::Wry>);
 impl Default for Updates {
     fn default()->Self {Self {
-        status:Mutex::new(Status{current_version:env!("CARGO_PKG_VERSION").into(),version:None,notes:String::new(),phase:"idle".into(),downloaded:0,total:None,error:String::new()}),
+        status:Mutex::new(Status{current_version:env!("CARGO_PKG_VERSION").into(),version:None,notes:String::new(),phase:"idle".into(),downloaded:0,total:None,error:String::new(),upstream:crate::upstream_updates::Status::default()}),
         available:Mutex::new(None),operation:AtomicBool::new(false),installing:AtomicBool::new(false),work:AtomicUsize::new(0),recovery_route:AtomicBool::new(false),
     }}
 }
@@ -56,6 +57,16 @@ fn trusted(url:&str)->bool {url.starts_with("https://github.com/SikJa/Whispera/r
 pub fn updater_status(app:tauri::AppHandle)->Status {snapshot(&app)}
 
 #[tauri::command]
+pub fn updater_open_upstream(app:tauri::AppHandle)->Result<(),String>{
+    let url=snapshot(&app).upstream.url;
+    if !crate::upstream_updates::trusted_release(&url){return Err("Buscá las novedades de Whispera-K primero".into());}
+    use windows::{core::{w,HSTRING},Win32::UI::{Shell::ShellExecuteW,WindowsAndMessaging::SW_SHOWNORMAL}};
+    let result=unsafe{ShellExecuteW(None,w!("open"),&HSTRING::from(url),None,None,SW_SHOWNORMAL)};
+    if result.0 as isize<=32{return Err("No se pudo abrir el navegador".into());}
+    Ok(())
+}
+
+#[tauri::command]
 pub async fn updater_check(app:tauri::AppHandle)->Result<Status,String> {
     check(app,true).await
 }
@@ -72,7 +83,7 @@ async fn fetch_update(app:&tauri::AppHandle)->Result<Option<Update>,String>{
             .on_before_exit(move||crate::engine::shutdown(&exit_app));
         match crate::update_transport::configure(builder,routes).build().map_err(|e|e.to_string())?.check().await{
             Ok(update)=>{
-                if let Some(ref u)=update{if !trusted(u.download_url.as_str()){return Err("La actualización no proviene del repositorio de Whispera (K)".into());}}
+                if let Some(ref u)=update{if !trusted(u.download_url.as_str()){return Err("La actualización no proviene de SikJa/Whispera".into());}}
                 app.state::<Updates>().recovery_route.store(recovery,Ordering::Relaxed);
                 return Ok(update);
             },
@@ -84,8 +95,13 @@ async fn fetch_update(app:&tauri::AppHandle)->Result<Option<Update>,String>{
 async fn check(app:tauri::AppHandle,manual:bool)->Result<Status,String> {
     let state=app.state::<Updates>();let _operation=operation(&state.operation)?;
     change(&app,|s|{if manual||s.version.is_none(){s.phase="checking".into();}s.error.clear();});
+    let (own,upstream)=tokio::join!(fetch_update(&app),crate::upstream_updates::check());
+    change(&app,|s|match upstream {
+        Ok(value)=>s.upstream=value,
+        Err(_)=>{s.upstream.phase="error".into();s.upstream.error="No se pudieron consultar las novedades de Whispera-K. La actualización de tu Whispera sigue siendo independiente.".into();}
+    });
     let result=async {
-        let update=fetch_update(&app).await?;
+        let update=own?;
         change(&app,|s|{s.version=update.as_ref().map(|u|u.version.clone());s.notes=update.as_ref().and_then(|u|u.body.clone()).unwrap_or_default();s.phase=if update.is_some(){"available"}else{"current"}.into();s.downloaded=0;s.total=None;});
         *state.available.lock().map_err(|_|"Actualizador ocupado")?=update;
         let _=app.state::<crate::storage::Store>().event(if snapshot(&app).version.is_some(){"Actualizaciones: nueva versión detectada"}else{"Actualizaciones: consulta completada, sin versiones nuevas"});

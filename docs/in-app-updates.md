@@ -1,4 +1,19 @@
-# Actualizaciones desde Whispera (K)
+# Actualizaciones de Whispera y novedades de Whispera-K
+
+La app consulta dos fuentes independientes. SikJa/Whispera sigue siendo la unica
+fuente de instaladores, verificados con nuestra clave de firma. Whispera-K se
+consulta para mostrar publicaciones con cambios que todavia no integramos; no
+reemplaza automaticamente la app ni sus ajustes o logo Cristal.
+
+Para K se compara la ultima release estable contra el commit realmente integrado
+(`INTEGRATED_COMMIT` en `upstream_updates.rs`), no contra el numero de nuestra
+version. Asi dos releases con el mismo numero no ocultan cambios. Al integrar K,
+actualizar ese commit junto con el codigo y sus pruebas. Historias divergentes,
+fallos de red y limites de GitHub se muestran como consulta no verificada, sin
+bloquear la consulta o instalacion de SikJa. No usa tokens de usuario.
+
+Las novedades de K aparecen en Configuracion y no abren ventanas automaticamente.
+El boton de K abre exclusivamente su pagina de release; no descarga instaladores.
 
 Implementado desde 0.2.15 para Windows x64.
 

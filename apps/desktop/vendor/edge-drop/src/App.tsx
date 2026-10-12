@@ -12,7 +12,7 @@ import { useEffect, useRef } from 'react'
 import { Panel } from './components/Panel'
 import { useStore } from './store/appStore'
 import { edge } from './lib/edge'
-import { applyReduceMotion } from './lib/theme'
+import { applyReduceMotion, applyBackgroundColor } from './lib/theme'
 import { useEdgeHover } from './hooks/useEdgeHover'
 
 export default function App() {
@@ -312,6 +312,7 @@ export default function App() {
     const scale = settings.fontSizeScale ?? 1.0
     document.documentElement.style.setProperty('--font-scale', String(scale))
   }, [settings.reduceMotion, settings.fontSizeScale])
+  useEffect(() => { applyBackgroundColor(settings.backgroundColor) }, [settings.backgroundColor])
 
   if (!hydrated) {
     return <div className="root" />

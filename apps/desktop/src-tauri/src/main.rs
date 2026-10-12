@@ -12,6 +12,7 @@ mod audio;
 mod capture_history;
 mod capture_session;
 mod library;
+mod native_drag;
 mod library_media;
 mod video_transcript;
 mod screen_capture;
@@ -356,6 +357,8 @@ async fn open_import(app: tauri::AppHandle) -> Result<(), String> {
 }
 
 fn main() {
+    // A drag helper never opens the profile, registers shortcuts, or starts audio.
+    if let Some(code) = native_drag::helper_entry() { std::process::exit(code); }
     tauri::Builder::default()
         .plugin(tauri_plugin_autostart::Builder::new().app_name("Whispera").args(["--autostart"]).build())
         // Launching again must not turn the background dictation tool into a visible window.

@@ -103,6 +103,17 @@ try{
  await page.waitForFunction(()=>window.libraryPreferences.historyLimit===120);
  assert.equal(await page.evaluate(()=>window.libraryPreferences.autoDeleteHours),0);
  assert.equal(await page.evaluate(()=>window.libraryPreferences.transcribeVideo),true);
+ await page.getByRole('button',{name:'Elegir color',exact:true}).click();
+ await page.getByRole('button',{name:'Morado',exact:true}).click();
+ await page.waitForFunction(()=>window.libraryPreferences.backgroundColor==='#9024DC');
+ await page.getByRole('button',{name:'Blanco',exact:true}).click();
+ await page.waitForFunction(()=>window.libraryPreferences.backgroundColor==='#F3F3F3');
+ await page.getByRole('button',{name:'Personalizado',exact:true}).click();
+ await page.getByRole('textbox',{name:'Código HEX'}).fill('#12AB67');
+ await page.getByRole('textbox',{name:'Código HEX'}).press('Enter');
+ await page.waitForFunction(()=>window.libraryPreferences.backgroundColor?.toLowerCase()==='#12ab67');
+ assert.equal(await page.evaluate(()=>window.libraryPreferences.historyLimit),120);
+ await page.getByRole('button',{name:'Cerrar paleta'}).click();
  const patch=await page.evaluate(()=>window.calls.find(c=>c.command==='library_action'&&c.args.action==='settings').args.value);assert.ok(!('toggleHotkey' in patch));
  await page.getByRole('tab',{name:'Configuración',exact:true}).focus();await page.keyboard.press('ArrowLeft');
  assert.equal(await page.getByRole('tab',{name:'Biblioteca',exact:true}).getAttribute('aria-selected'),'true');

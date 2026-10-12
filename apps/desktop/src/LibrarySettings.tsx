@@ -5,10 +5,12 @@ import { native } from './client';
 import { SettingsSwitch } from './ResourceControls';
 import {useAutoSave,AutoSaveStatus} from './useAutoSave';
 import LibraryBrowser from './LibraryBrowser';
+import PalettePanel from './PalettePanel';
+import {selectionFromHex,selectionHex} from './palette';
 import './LibraryBrowser.css';
 
-type Preferences = { captureGlobal:boolean; incognito:boolean; historyLimit:number; autoDeleteHours:number; clearUnpinnedOnRestart:boolean; transcribeVideo:boolean; videoTranscriptAttachment:boolean };
-const defaults:Preferences = {captureGlobal:true,incognito:false,historyLimit:250,autoDeleteHours:48,clearUnpinnedOnRestart:false,transcribeVideo:true,videoTranscriptAttachment:true};
+type Preferences = { captureGlobal:boolean; incognito:boolean; historyLimit:number; autoDeleteHours:number; clearUnpinnedOnRestart:boolean; transcribeVideo:boolean; videoTranscriptAttachment:boolean; backgroundColor:string };
+const defaults:Preferences = {captureGlobal:true,incognito:false,historyLimit:250,autoDeleteHours:48,clearUnpinnedOnRestart:false,transcribeVideo:true,videoTranscriptAttachment:true,backgroundColor:'#000000'};
 export default function LibrarySettings() {
   const [tab,setTab]=useState<'browser'|'settings'>('browser');
   const [value,setValue]=useState(defaults);
@@ -38,6 +40,7 @@ export default function LibrarySettings() {
     <div id="library-panel-settings" role="tabpanel" aria-labelledby="library-tab-settings" hidden={tab!=='settings'}>
     {loadError&&<p className="notice" role="alert">{loadError} <button disabled={loading} onClick={()=>setLoadAttempt(attempt=>attempt+1)}>Reintentar lectura</button></p>}
     <fieldset disabled={!native||loading||!ready||busy} style={{border:0,padding:0,margin:0,minWidth:0}}>
+      <div className="form-row"><label>Color de fondo del portapapeles</label><PalettePanel title="Color de fondo del portapapeles" value={selectionFromHex(value.backgroundColor)} onChange={color=>changeValue(p=>({...p,backgroundColor:selectionHex(color)}))}/></div>
       {toggle('captureGlobal','Guardar lo copiado en otras aplicaciones','Textos, enlaces, imágenes y archivos. Se guarda localmente.')}
       {toggle('incognito','Pausar el historial','No guardar nuevos elementos, incluidas las capturas de Whispera.')}
       <div className="form-row"><label htmlFor="library-limit">Capacidad del historial<span>Los elementos fijados se conservan.</span></label><input id="library-limit" type="number" min={10} max={1000} step={10} value={value.historyLimit} onChange={e=>changeValue(p=>({...p,historyLimit:Number(e.target.value)}))}/></div>

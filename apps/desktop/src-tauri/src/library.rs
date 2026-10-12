@@ -95,6 +95,11 @@ fn update_settings(app: &tauri::AppHandle, patch: &Value) -> Result<Value, Strin
 }
 fn validate_preferences(patch: &Value) -> Result<(), String> {
     let object=patch.as_object().ok_or("Configuracion invalida")?;
+    if let Some(color)=object.get("backgroundColor") {
+        if !color.as_str().is_some_and(|value|value.len()==7 && value.starts_with('#') && value.as_bytes()[1..].iter().all(u8::is_ascii_hexdigit)) {
+            return Err("Color de fondo invalido".into());
+        }
+    }
     for name in ["captureGlobal","incognito","clearUnpinnedOnRestart","transcribeVideo","videoTranscriptAttachment"] {
         if object.get(name).is_some_and(|v|!v.is_boolean()) { return Err(format!("Opcion invalida: {name}")); }
     }
@@ -472,6 +477,10 @@ pub async fn library_drag(
     if window.label() != "library" && !window.label().starts_with("media-") {
         return Err("Arrastre solo desde Biblioteca".into());
     }
+    let permit = crate::native_drag::reserve()?;
+    if !crate::native_drag::button_down() { return Ok(()); }
+    let source = window.hwnd().map_err(|e| e.to_string())?.0 as usize as i64;
+    tauri::async_runtime::spawn_blocking(move || {
     let data = rows(&app.state::<Store>())?
         .into_iter()
         .find(|i| i["id"] == id)
@@ -485,21 +494,8 @@ pub async fn library_drag(
     let (files, _) = crate::video_transcript::package(&app.state::<Store>(), &files)?;
     let files = crate::video_transcript::share_files(&app, &files)?;
     let files: Vec<PathBuf> = files.into_iter().map(PathBuf::from).collect();
-    let w = window.clone();
-    let (send, receive) = tokio::sync::oneshot::channel();
-    window
-        .run_on_main_thread(move || {
-            let result = drag::start_drag(
-                &w,
-                drag::DragItem::Files(files),
-                drag::Image::Raw(preview),
-                |_, _| {},
-                Default::default(),
-            );
-            let _ = send.send(result.map_err(|e| e.to_string()));
-        })
-        .map_err(|e| e.to_string())?;
-    receive.await.map_err(|e| e.to_string())?
+    crate::native_drag::run(source, files, preview, permit)
+    }).await.map_err(|e| e.to_string())?
 }
 #[tauri::command]
 pub async fn library_pick(app: tauri::AppHandle) -> Result<(), String> {
@@ -526,7 +522,8 @@ mod tests {
     #[test]
     fn main_library_preferences_reject_invalid_limits_and_flags() {
         assert!(validate_preferences(&json!({"captureGlobal":true,"historyLimit":250,"autoDeleteHours":0})).is_ok());
-        for value in [json!({"historyLimit":0}),json!({"historyLimit":1001}),json!({"autoDeleteHours":-1}),json!({"transcribeVideo":"yes"})] { assert!(validate_preferences(&value).is_err()); }
+        for value in [json!({"historyLimit":0}),json!({"historyLimit":1001}),json!({"autoDeleteHours":-1}),json!({"transcribeVideo":"yes"}),json!({"backgroundColor":"red"}),json!({"backgroundColor":"#abcd"}),json!({"backgroundColor":null})] { assert!(validate_preferences(&value).is_err()); }
+        assert!(validate_preferences(&json!({"backgroundColor":"#9024DC"})).is_ok());
     }
     #[test]
     fn identical_capture_keeps_id_and_pin_but_updates_the_real_file() {

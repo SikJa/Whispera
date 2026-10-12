@@ -197,6 +197,7 @@ export interface Settings {
   hoverActivation?: boolean
   /** Font size scale multiplier (0.85 = Small, 1.00 = Normal, 1.15 = Large). Default: 1.0. */
   fontSizeScale?: number
+  backgroundColor?: string
   /** When true, automatically checks for and downloads app updates in background. Default: true. Legacy: kept in sync from updateMode for downgrade safety. */
   autoUpdates?: boolean
   /**

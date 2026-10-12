@@ -1,6 +1,6 @@
-# Whispera 0.2.1
+# Whispera 0.2.27
 
-Notas actuales en español e inglés: [Whispera 0.2.1](releases/v0.2.1.md).
+Notas actuales en español e inglés: [Whispera 0.2.27](releases/v0.2.27.md).
 
 ## Archivo: Whispera (K) 0.1.6
 

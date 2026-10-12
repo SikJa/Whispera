@@ -1,1 +1,1 @@
-Corregimos el recorte al cruzar de monitor y recuperamos las herramientas si se interrumpe el arrastre. Eliminamos la seccion General vacia. Conservamos tus atajos, diccionario y preferencias.
+Personaliza el fondo del portapapeles con la paleta de Whispera o un color HEX. El texto adapta su contraste. Mejoramos la estabilidad del arrastre de archivos y conservamos tus atajos, diccionario y preferencias.

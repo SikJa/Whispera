@@ -37,7 +37,7 @@ try{
       {id:'video',data:{kind:'files',paths:['C:\\fixture.mp4'],entries:[{name:'fixture.mp4',ext:'mp4',size:100,isImage:false}]}},
       {id:'file',data:{kind:'files',paths:['C:\\fixture.pdf'],entries:[{name:'fixture.pdf',ext:'pdf',size:100,isImage:false}]}}]
       .map(i=>({...i,capturedAt:now,hitCount:1,pinned:false}));
-    const settings={captureGlobal:true,tutorialCompleted:true,hoverActivation:false,language:'es',stickPosition:'left',soundEffects:false};
+    const settings={captureGlobal:true,tutorialCompleted:true,hoverActivation:false,language:'es',stickPosition:'left',soundEffects:false,...(localStorage.getItem('qa-library-background')?{backgroundColor:localStorage.getItem('qa-library-background')}:{})};
     window.__qa={calls:[],events:new Map(),settings,failSettings:false};
     window.__TAURI_INTERNALS__={convertFileSrc:path=>/\.mp4$/i.test(path)?'/fixture.mp4':pixel,transformCallback:fn=>fn,
       invoke:async(command,args={})=>{
@@ -48,7 +48,7 @@ try{
         if(command==='library_state')return args.revision===String(revision)?{unchanged:true}:{items:structuredClone(items),settings:{...settings},revision:String(revision),version:'0.1.6',isStoreBuild:false};
         if(command==='library_action'){
           if(args.action==='settings'&&window.__qa.failSettings)throw Error('Fallo simulado al guardar');
-          if(args.action==='settings')Object.assign(settings,args.value);
+          if(args.action==='settings'){Object.assign(settings,args.value);if(settings.backgroundColor)localStorage.setItem('qa-library-background',settings.backgroundColor);}
           if(args.action==='pin')items.find(i=>i.id===args.id).pinned=args.value;
           if(args.action==='delete')items.splice(items.findIndex(i=>i.id===args.id),1);
           revision++;return structuredClone(settings);
@@ -122,6 +122,27 @@ try{
   await page.waitForTimeout(150);
   assert.ok(await page.evaluate(()=>window.__qa.calls.some(c=>c.command==='open_updates')),'Shelf updates must open the real Whispera updater');
   assert.equal(await page.getByRole('button',{name:'Notificarme',exact:true}).count(),0,'No disconnected duplicate update preferences');
+  await page.getByRole('button',{name:'Apariencia',exact:true}).click();
+  await page.locator('.library-background-card .palette-trigger').click();
+  await page.getByRole('button',{name:'Morado',exact:true}).click();
+  await page.waitForFunction(()=>window.__qa.settings.backgroundColor==='#9024DC');
+  assert.equal(await page.locator('.blade').evaluate(el=>getComputedStyle(el).backgroundColor),'rgb(144, 36, 220)');
+  await page.waitForFunction(()=>window.__qa.calls.filter(c=>c.command==='recorder_region').at(-1)?.args.rects.some(r=>r.width>=300&&r.height>200));
+  await page.getByRole('button',{name:'Blanco',exact:true}).click();
+  await page.waitForFunction(()=>window.__qa.settings.backgroundColor==='#F3F3F3');
+  assert.equal(await page.locator('.setting-title').first().evaluate(el=>getComputedStyle(el).color),'rgb(23, 23, 23)','white background needs dark chrome/text');
+  await page.waitForFunction(()=>getComputedStyle(document.querySelector('.setting-card')).backgroundColor==='rgb(225, 225, 225)');
+  await page.waitForFunction(()=>getComputedStyle(document.querySelector('.header .icon-btn.active')).color==='rgb(23, 23, 23)');
+  await page.screenshot({path:'../../.local/library-background-white.png',omitBackground:true});
+  await page.getByRole('button',{name:'Personalizado',exact:true}).click();
+  await page.getByRole('textbox',{name:'Código HEX'}).fill('#12AB67');
+  await page.getByRole('textbox',{name:'Código HEX'}).press('Enter');
+  await page.waitForFunction(()=>window.__qa.settings.backgroundColor?.toLowerCase()==='#12ab67');
+  assert.equal(await page.evaluate(()=>window.__qa.settings.soundEffects),false,'color changes preserve unrelated preferences');
+  await page.getByRole('button',{name:'Cerrar paleta',exact:true}).click();
+  await page.reload();
+  await page.waitForFunction(()=>document.documentElement.dataset.libraryColor?.toLowerCase()==='#12ab67');
+  await page.locator('.header button[title="Configuración"]').click();
   await page.getByRole('button',{name:'Posición',exact:true}).click();
   await page.locator('.wh-edge-tabs').waitFor();
   assert.ok(await page.locator('.wh-edge-tabs button span').evaluateAll(labels=>labels.every(el=>el.scrollWidth<=el.clientWidth+1)));
@@ -148,6 +169,12 @@ try{
   assert.equal(await page.locator('.wh-edge-pill').evaluate(el=>getComputedStyle(el).transitionDuration),'0s');
   await page.getByRole('button',{name:'Borde izquierdo',exact:true}).click();
   await page.waitForFunction(()=>Boolean(document.querySelector('.blade-left')));
+  await page.getByRole('button',{name:'Apariencia',exact:true}).click();
+  await page.locator('.library-background-card .palette-trigger').click();
+  await page.getByRole('button',{name:'Negro',exact:true}).click();
+  await page.waitForFunction(()=>window.__qa.settings.backgroundColor==='#000000'&&!document.documentElement.dataset.libraryColor);
+  assert.equal(await page.locator('.blade').evaluate(el=>getComputedStyle(el).backgroundColor),'rgb(0, 0, 0)');
+  assert.equal(await page.evaluate(()=>document.documentElement.style.getPropertyValue('--bg-card')),'','black restores the original theme');
   assert.deepEqual(errors,[]);
-  console.log('PASS native adapter: hydration, filters, no demo controls, subitem copy, file drag IPC, pin, clipped geometry. OS clipboard/drag mocked; no visible Windows tests.');
+  console.log('PASS native adapter: hydration, filters, no demo controls, subitem copy, file drag IPC, pin, clipped geometry; background presets/custom, persistence, contrast and original black restoration. OS clipboard/drag mocked; no visible Windows tests.');
 }finally{await browser.close();await new Promise(r=>server.close(r));}

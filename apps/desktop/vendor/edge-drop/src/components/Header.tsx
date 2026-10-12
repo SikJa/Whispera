@@ -169,7 +169,7 @@ export function Header({ isHorizontal = false, itemCount, clearProps }: HeaderPr
               style={{
                 fontSize: 12,
                 fontWeight: 700,
-                color: '#ffffff',
+                color: 'var(--text-primary, #ffffff)',
                 letterSpacing: '0.04em',
                 textTransform: 'uppercase',
                 marginRight: 2
@@ -207,7 +207,7 @@ export function Header({ isHorizontal = false, itemCount, clearProps }: HeaderPr
               gridArea: '1 / 1 / 2 / 2',
               fontSize: 13,
               fontWeight: 600,
-              color: '#8e8e93',
+              color: 'var(--text-secondary, #8e8e93)',
               letterSpacing: '0.01em',
               paddingLeft: 0,
               whiteSpace: 'nowrap',
@@ -249,7 +249,7 @@ export function Header({ isHorizontal = false, itemCount, clearProps }: HeaderPr
               handleOpenChangelog()
             }}
             style={{
-              color: 'rgba(255, 255, 255, 0.75)',
+              color: 'var(--text-secondary, rgba(255, 255, 255, 0.75))',
               background: 'transparent',
               border: 'none',
               boxShadow: 'none',
@@ -307,7 +307,7 @@ export function Header({ isHorizontal = false, itemCount, clearProps }: HeaderPr
             }
           }}
           style={{
-            color: '#ffffff',
+            color: 'var(--text-primary, #ffffff)',
             background: 'transparent',
             border: 'none',
             boxShadow: 'none',

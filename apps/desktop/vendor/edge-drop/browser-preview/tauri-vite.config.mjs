@@ -1,5 +1,6 @@
 import { defineConfig } from 'vite';
 export default defineConfig({
+  resolve: { dedupe: ['react', 'react-dom'] },
   base: './', server: { host: '127.0.0.1', port: 5191, strictPort: true },
   plugins: [{ name: 'whispera-media', transform(code,id) {
     if (!id.includes('/src/components/') || !id.endsWith('.tsx')) return;

@@ -10,6 +10,11 @@ export const presets: { name: string; hex: string; base: BaseColor; custom?: boo
   { name: "Dorado", hex: "#E5B322", base: "black", custom: true },
 ];
 export const validHex = (value: unknown): value is string => typeof value === "string" && /^#[\da-f]{6}$/i.test(value);
+export function selectionFromHex(value: unknown): Selection {
+  if (!validHex(value)) return { base: "black" };
+  const preset = presets.find(p => p.hex.toLowerCase() === value.toLowerCase());
+  return preset && !preset.custom ? { base: preset.base } : { base: "black", hex: value };
+}
 export function loadSelection(): Selection {
   try {
     const value = JSON.parse(localStorage.getItem("whispera-folder-demo-color") || "null");

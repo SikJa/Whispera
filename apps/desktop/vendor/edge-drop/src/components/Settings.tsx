@@ -17,6 +17,9 @@ import { playDialTickSound, playToggleSound, playButtonClickSound } from '../lib
 import { useTranslation } from '../i18n'
 import '../styles/settings.css'
 import EdgePlacement from './EdgePlacement'
+import PalettePanel from '../../../../src/PalettePanel'
+import {selectionFromHex, selectionHex} from '../../../../src/palette'
+import {useAutoSave, AutoSaveStatus} from '../../../../src/useAutoSave'
 
 type SettingsTab = 'behaviour' | 'position' | 'appearance'
 
@@ -51,6 +54,14 @@ export function Settings({
     { id: 'appearance', label: t('tabs.appearance') },
   ]
   const persist = useStore((s) => s.patchSettings)
+  const [backgroundColor,setBackgroundColor]=useState(settings.backgroundColor??'#000000')
+  useEffect(()=>setBackgroundColor(settings.backgroundColor??'#000000'),[settings.backgroundColor])
+  const backgroundSave=useAutoSave<string>(color=>persist({backgroundColor:color}))
+  const backgroundPicker=(horizontal=false)=><div className={horizontal?'settings-shelf-card appearance-col library-background-card':'setting-card library-background-card'}>
+    <div className="setting-title">Color de fondo</div>
+    <PalettePanel title="Color de fondo del portapapeles" value={selectionFromHex(backgroundColor)} onChange={color=>{const hex=selectionHex(color);setBackgroundColor(hex);backgroundSave.queue(hex)}}/>
+    <AutoSaveStatus save={backgroundSave}/>
+  </div>
   const [settingsError, setSettingsError] = useState('')
   const patch = async (value: Parameters<typeof persist>[0]) => {
     setSettingsError('')
@@ -1473,6 +1484,7 @@ export function Settings({
           {/* ── TAB 3: APPEARANCE ── */}
           {horizontalTab === 'appearance' && (
             <>
+              {backgroundPicker(true)}
               {/* ── SUB-GROUP 1 DIVIDER: Copy Indicator ── */}
               <div className="shelf-section-divider">
                 <span className="shelf-section-divider-text">{t('appearance.copyIndicatorTitle') || 'COPY INDICATOR'}</span>
@@ -2232,6 +2244,7 @@ export function Settings({
                   exit={{ opacity: 0, scale: 0.98, y: -4 }}
                   transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
                 >
+                  {backgroundPicker()}
                   {/* ── GROUP: Copy Indicator ────────────────────────────── */}
                   <div className="setting-section-divider">
                     <span className="setting-section-divider-text">{t('appearance.copyIndicatorTitle') || 'COPY INDICATOR'}</span>

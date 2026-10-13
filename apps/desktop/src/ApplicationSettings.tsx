@@ -2,6 +2,8 @@ import {useEffect, useState} from 'react';
 import {invoke} from '@tauri-apps/api/core';
 import {native} from './client';
 import {SettingsSwitch} from './ResourceControls';
+import MacPermissions from './MacPermissions';
+import {systemName} from './platform';
 
 export default function ApplicationSettings() {
   const [enabled, setEnabled] = useState<boolean | null>(null);
@@ -23,7 +25,7 @@ export default function ApplicationSettings() {
     try { setEnabled(await invoke<boolean>('set_startup', {enabled: value})); setSaved(true); }
     catch (reason) {
       setError(`No se pudo guardar el inicio automático. ${String(reason)}`);
-      // A write may have succeeded before verification failed: read Windows again.
+      // A write may have succeeded before verification failed: read the provider again.
       try { setEnabled(await invoke<boolean>('startup_enabled')); } catch { setEnabled(null); }
     } finally { setBusy(false); }
   }
@@ -36,7 +38,8 @@ export default function ApplicationSettings() {
       <SettingsSwitch id="app-startup" label="Iniciar Whispera al encender la computadora" checked={enabled === true}
         disabled={!native || enabled === null || busy} onChange={value => void change(value)}/>
     </div>
-    <p role="status" aria-live="polite">{!native ? 'Esta opción está disponible en la aplicación instalada.' : busy ? 'Guardando…' : saved ? 'Guardado automáticamente.' : enabled === null && !error ? 'Consultando Windows…' : ''}</p>
+    <p role="status" aria-live="polite">{!native ? 'Esta opción está disponible en la aplicación instalada.' : busy ? 'Guardando…' : saved ? 'Guardado automáticamente.' : enabled === null && !error ? `Consultando ${systemName}…` : ''}</p>
     {error && <div role="alert"><p>{error}</p><button disabled={busy} onClick={() => {setError(''); setReload(value => value + 1);}}>Volver a consultar</button></div>}
+    <MacPermissions/>
   </>;
 }

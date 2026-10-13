@@ -159,11 +159,18 @@ pub(crate) fn raise_controls(app: &tauri::AppHandle) {
         for window in windows {
             // Tao skips set_always_on_top(true) when the flag is already true.
             // Reorder the actual HWND so the ink cannot cover the white border.
-            let result=window.hwnd().map_err(|e|e.to_string()).and_then(|hwnd|raise_native(windows::Win32::Foundation::HWND(hwnd.0)));
+            let result=raise_window(&window);
             if let Err(error)=result {let _=app_copy.state::<crate::storage::Store>().event(&format!("No se pudo mostrar el borde de captura: {error}"));}
         }
     });
 }
+pub(crate) fn raise_window(window: &tauri::WebviewWindow) -> Result<(), String> {
+    #[cfg(windows)]
+    { window.hwnd().map_err(|e| e.to_string()).and_then(|hwnd| raise_native(windows::Win32::Foundation::HWND(hwnd.0))) }
+    #[cfg(target_os = "macos")]
+    { crate::screen_capture::macos::window_action(window, 1, None) }
+}
+#[cfg(windows)]
 pub(crate) fn raise_native(hwnd:windows::Win32::Foundation::HWND)->Result<(),String> {
     use windows::Win32::UI::WindowsAndMessaging::{SetWindowPos,HWND_TOPMOST,SWP_NOMOVE,SWP_NOSIZE,SWP_NOACTIVATE,SWP_NOOWNERZORDER};
     unsafe {SetWindowPos(hwnd,Some(HWND_TOPMOST),0,0,0,0,SWP_NOMOVE|SWP_NOSIZE|SWP_NOACTIVATE|SWP_NOOWNERZORDER).map_err(|e|e.to_string())}
@@ -202,6 +209,7 @@ fn external_dock(region: Region, monitor: Region, width: u32, height: u32, gap: 
         x: fit_start(x, monitor.x, monitor.width, width, gap),
         y: fit_start(y, monitor.y, monitor.height, height, gap),
         width, height,
+        ..monitor
     }).min_by_key(|dock| (
         avoid.map_or(0, |other| intersection(*dock, other)),
         intersection(*dock, region),
@@ -268,12 +276,7 @@ fn place_controls(
     compact: bool,
 ) -> Result<(), String> {
     let dock = dock_bounds(ctx, region, monitor, window.label(), compact)?;
-    window
-        .set_size(tauri::PhysicalSize::new(dock.width, dock.height))
-        .map_err(|e| e.to_string())?;
-    window
-        .set_position(tauri::PhysicalPosition::new(dock.x, dock.y))
-        .map_err(|e| e.to_string())
+    screen::place_window(window, dock)
 }
 pub(crate) fn drag_controls(app:&tauri::AppHandle,source:&tauri::WebviewWindow,active:bool)->Result<(),String> {
     let ctx=context_for(app,source.label()).ok_or("Captura no disponible")?;
@@ -299,17 +302,22 @@ pub(crate) fn preview_controls(app:&tauri::AppHandle,source:&tauri::WebviewWindo
     for base in ["screen-tools","screen-hud"] {
         if let Some(window)=app.get_webview_window(&session::label(source.label(),base)) {
             let dock=dock_bounds(&ctx,region,monitor,window.label(),editor.compact.load(Ordering::SeqCst))?;
-            positions.push((window,dock.x,dock.y));
+            positions.push((window,dock));
         }
     }
     let app_copy=app.clone();let scope=source.label().to_string();let id=ctx.id;
     app.run_on_main_thread(move||{
         if context_for(&app_copy,&scope).is_none_or(|c|c.id!=id){return;}
-        let native=positions.iter().map(|(window,x,y)|window.hwnd().map(|h|(windows::Win32::Foundation::HWND(h.0),*x,*y))).collect::<Result<Vec<_>,_>>();
+        #[cfg(windows)]
+        let native=positions.iter().map(|(window,dock)|window.hwnd().map(|h|(windows::Win32::Foundation::HWND(h.0),dock.x,dock.y))).collect::<Result<Vec<_>,_>>();
+        #[cfg(windows)]
         let result=native.map_err(|e|e.to_string()).and_then(|windows|move_native_controls(&windows));
+        #[cfg(target_os = "macos")]
+        let result=positions.iter().try_for_each(|(window,dock)|crate::screen_capture::macos::place(window,*dock,false));
         if let Err(error)=result {let _=app_copy.state::<crate::storage::Store>().event(&format!("No se pudieron mover las herramientas de captura: {error}"));}
     }).map_err(|e|e.to_string())
 }
+#[cfg(windows)]
 fn move_native_controls(windows:&[(windows::Win32::Foundation::HWND,i32,i32)])->Result<(),String> {
     use windows::Win32::UI::WindowsAndMessaging::{BeginDeferWindowPos,DeferWindowPos,EndDeferWindowPos,SWP_NOSIZE,SWP_NOZORDER,SWP_NOACTIVATE,SWP_NOOWNERZORDER};
     if windows.is_empty(){return Ok(());}
@@ -321,6 +329,11 @@ fn move_native_controls(windows:&[(windows::Win32::Foundation::HWND,i32,i32)])->
         EndDeferWindowPos(batch).map_err(|e|e.to_string())
     }
 }
+#[cfg(target_os = "macos")]
+fn screenshot(_app: &tauri::AppHandle, region: Region, exclude_ink: bool) -> Result<Vec<u8>, String> {
+    crate::screen_capture::png_with_ink(region, !exclude_ink)
+}
+#[cfg(windows)]
 fn screenshot(app: &tauri::AppHandle, region: Region, exclude_ink: bool) -> Result<Vec<u8>, String> {
     // A hidden ink window may still be in DWM's close animation. Exclude it
     // only while sampling, then restore its affinity for video annotations.
@@ -334,6 +347,7 @@ fn screenshot(app: &tauri::AppHandle, region: Region, exclude_ink: bool) -> Resu
     }
     screenshot_ffmpeg(app,region)
 }
+#[cfg(windows)]
 fn screenshot_ffmpeg(app: &tauri::AppHandle, region: Region) -> Result<Vec<u8>, String> {
     let root = app
         .path()
@@ -455,6 +469,7 @@ pub(crate) fn open_with_image(
         y: position.y,
         width: size.width,
         height: size.height,
+        ..region
     };
     let hud_scale = fit_hud_scale(
         region,
@@ -490,10 +505,9 @@ pub(crate) fn open_with_image(
     *editor.context.lock().map_err(|_| "Editor ocupado")? = Some(ctx.clone());
     *editor.feedback.lock().map_err(|_| "Editor ocupado")? = serde_json::json!({});
     let ink = window(app, &session::label(source.label(),"screen-ink"), session::secondary(source.label()))?;
-    ink.set_position(tauri::PhysicalPosition::new(region.x, region.y))
-        .map_err(|e| e.to_string())?;
-    ink.set_size(tauri::PhysicalSize::new(region.width, region.height))
-        .map_err(|e| e.to_string())?;
+    #[cfg(target_os = "macos")]
+    crate::screen_capture::macos::window_action(&ink, if kind == "video" && !session::secondary(source.label()) { 4 } else { 5 }, None)?;
+    screen::place_window(&ink, region)?;
     ink.set_ignore_cursor_events(kind == "video")
         .map_err(|e| e.to_string())?;
     ink.set_focusable(kind != "video")
@@ -525,8 +539,7 @@ pub(crate) fn resize(app:&tauri::AppHandle,source:&tauri::WebviewWindow,id:&str,
     *editor.region.lock().map_err(|_|"Editor ocupado")?=Some(region);
     *editor.context.lock().map_err(|_|"Editor ocupado")?=Some(ctx.clone());
     let ink=app.get_webview_window(&session::label(source.label(),"screen-ink")).ok_or("Editor no disponible")?;
-    ink.set_position(tauri::PhysicalPosition::new(region.x,region.y)).map_err(|e|e.to_string())?;
-    ink.set_size(tauri::PhysicalSize::new(region.width,region.height)).map_err(|e|e.to_string())?;
+    screen::place_window(&ink, region)?;
     for label in ["screen-tools","screen-hud"] {
         if let Some(window)=app.get_webview_window(&session::label(source.label(),label)){place_controls(&window,&ctx,region,monitor,editor.compact.load(Ordering::SeqCst))?;}
     }
@@ -831,6 +844,7 @@ fn sample_region(area: Region, scale: f64, rect: Rect) -> Result<Region, String>
         y: area.y + y as i32,
         width,
         height,
+        ..area
     })
 }
 #[tauri::command]
@@ -858,9 +872,9 @@ mod tests {
     #[test]
     fn video_bar_does_not_cover_drawing_tools_for_narrow_regions() {
         for scale in [1., 1.25, 1.5, 2.] {
-            let monitor = Region { x: -800, y: -100, width: 800, height: 600 };
+            let monitor = Region { x: -800, y: -100, width: 800, height: 600, ..Default::default() };
             for (x,y) in [(-790,-90),(-410,170),(-100,400)] {
-                let region = Region { x, y, width: 64, height: 64 };
+                let region = Region { x, y, width: 64, height: 64, ..Default::default() };
                 let hud = hud_anchor(region, monitor, scale, 0.85).0;
                 let tools = tool_bounds(region, monitor, scale, false);
                 assert!(hud.x + hud.width as i32 <= tools.x
@@ -873,6 +887,8 @@ mod tests {
     }
     use super::*;
     #[test]
+    #[cfg(windows)]
+    #[ignore = "Creates native test windows; run explicitly on Windows"]
     fn live_controls_move_together_without_resizing_showing_or_taking_focus() {
         use windows::{core::w,Win32::{Foundation::HWND,UI::WindowsAndMessaging::{CreateWindowExW,DestroyWindow,GetForegroundWindow,GetWindowRect,IsWindowVisible,WS_POPUP,WS_EX_TOOLWINDOW}}};
         struct Owned(HWND);impl Drop for Owned{fn drop(&mut self){unsafe{let _=DestroyWindow(self.0);}}}
@@ -894,13 +910,13 @@ mod tests {
     #[test]
     fn closing_or_resizing_still_image_preserves_the_video_editor() {
         let video=Editor::default();let image=Editor::default();
-        let video_region=Region{x:40,y:50,width:320,height:200};
+        let video_region=Region{x:40,y:50,width:320,height:200,..Default::default() };
         *video.region.lock().unwrap()=Some(video_region);
         *video.feedback.lock().unwrap()=serde_json::json!({"tool":"pen","count":3});
         video.configured.store(true,Ordering::SeqCst);
-        *image.region.lock().unwrap()=Some(Region{x:100,y:80,width:180,height:120});
+        *image.region.lock().unwrap()=Some(Region{x:100,y:80,width:180,height:120,..Default::default() });
         *image.image.lock().unwrap()=vec![1,2,3];
-        *image.region.lock().unwrap()=Some(Region{x:-500,y:150,width:280,height:170});
+        *image.region.lock().unwrap()=Some(Region{x:-500,y:150,width:280,height:170,..Default::default() });
         image.clear();
         assert_eq!(*video.region.lock().unwrap(),Some(video_region));
         assert_eq!(*video.feedback.lock().unwrap(),serde_json::json!({"tool":"pen","count":3}));
@@ -908,6 +924,8 @@ mod tests {
         assert!(image.region.lock().unwrap().is_none());assert!(image.image.lock().unwrap().is_empty());
     }
     #[test]
+    #[cfg(windows)]
+    #[ignore = "Creates native test windows; run explicitly on Windows"]
     fn native_border_is_raised_even_when_both_windows_are_already_topmost() {
         use windows::{core::w,Win32::{Foundation::HWND,UI::WindowsAndMessaging::{CreateWindowExW,DestroyWindow,GetForegroundWindow,GetWindow,GetWindowRect,GW_HWNDPREV,WS_POPUP,WS_EX_TOOLWINDOW}}};
         struct Owned(HWND);impl Drop for Owned{fn drop(&mut self){unsafe{let _=DestroyWindow(self.0);}}}
@@ -943,7 +961,7 @@ mod tests {
                     y,
                     width,
                     height,
-                };
+                ..Default::default() };
                 for (rx, ry, rw, rh) in [
                     (x, y, width, height),
                     (x + 20, y + 20, 180, 140),
@@ -955,7 +973,7 @@ mod tests {
                         y: ry,
                         width: rw,
                         height: rh,
-                    };
+                    ..Default::default() };
                     let hud_scale = fit_hud_scale(region, monitor, scale, 0.85);
                     let hud_above = hud_anchor(region, monitor, scale, hud_scale).1;
                     let ctx = Context {
@@ -1000,8 +1018,8 @@ mod tests {
     }
     #[test]
     fn hud_stays_centered_below_when_there_is_room() {
-        let monitor = Region { x: 0, y: 0, width: 1920, height: 1080 };
-        let region = Region { x: 400, y: 200, width: 800, height: 500 };
+        let monitor = Region { x: 0, y: 0, width: 1920, height: 1080, ..Default::default() };
+        let region = Region { x: 400, y: 200, width: 800, height: 500, ..Default::default() };
         let hud = hud_anchor(region, monitor, 1., 0.85).0;
         assert_eq!(hud.x + hud.width as i32 / 2, region.x + region.width as i32 / 2);
         assert!(hud.y > region.y + region.height as i32);
@@ -1009,8 +1027,8 @@ mod tests {
     #[test]
     fn docks_use_free_space_instead_of_covering_left_edge_capture() {
         for scale in [1., 1.25, 1.5, 2.] {
-            let monitor = Region { x: -1920, y: -300, width: 1920, height: 1080 };
-            let region = Region { x: -1920, y: -300, width: 700, height: 1080 };
+            let monitor = Region { x: -1920, y: -300, width: 1920, height: 1080, ..Default::default() };
+            let region = Region { x: -1920, y: -300, width: 700, height: 1080, ..Default::default() };
             for compact in [false, true] {
                 let tools = tool_bounds(region, monitor, scale, compact);
                 let hud = hud_anchor(region, monitor, scale, 0.85).0;
@@ -1027,7 +1045,7 @@ mod tests {
             y: 0,
             width: 1200,
             height: 900,
-        };
+        ..Default::default() };
         assert_eq!(
             sample_region(
                 area,
@@ -1044,8 +1062,8 @@ mod tests {
                 x: -1890,
                 y: 15,
                 width: 150,
-                height: 90
-            }
+                height: 90,
+            ..Default::default() }
         );
         for x in [-1., f64::NAN, 800.] {
             assert!(sample_region(

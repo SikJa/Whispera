@@ -65,13 +65,17 @@ fn transcribe_track(store:&Store,root:&Path,binary:&Path,video:&Path)->Result<()
 
 // The source is the microphone PCM, never the mixed desktop soundtrack.
 pub fn prepare(binary: &Path, pcm: &Path, rate: u32, channels: u16) -> Result<(), String> {
-    use std::os::windows::process::CommandExt;
     let output = pcm
         .parent()
         .ok_or("Audio sin directorio")?
         .join("speech-%04d.wav");
-    let mut child = std::process::Command::new(binary)
-        .creation_flags(0x08000000)
+    let mut command = std::process::Command::new(binary);
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        command.creation_flags(0x08000000);
+    }
+    let mut child = command
         .args([
             "-hide_banner",
             "-loglevel",
@@ -233,21 +237,33 @@ fn run(app: &tauri::AppHandle, video: &Path) -> Result<(), String> {
         let (files, text) = package(&store, &[video.to_path_buf()])?;
         let shared_original = share_files(app, &[video.to_string_lossy().into_owned()])?;
         let files = share_files(app, &files)?;
-        let mut changed = false;
-        if let Ok(_clipboard) = clipboard_win::Clipboard::new_attempts(10) {
-            let mut current = Vec::<String>::new();
-            use clipboard_win::Getter;
-            if clipboard_win::formats::FileList
-                .read_clipboard(&mut current)
-                .is_ok()
-                && (current == vec![video.to_string_lossy().into_owned()] || current == shared_original)
-            {
-                write_open(&files, &text)?;
-                changed = true;
+        #[cfg(windows)]
+        {
+            let mut changed = false;
+            if let Ok(_clipboard) = clipboard_win::Clipboard::new_attempts(10) {
+                let mut current = Vec::<String>::new();
+                use clipboard_win::Getter;
+                if clipboard_win::formats::FileList
+                    .read_clipboard(&mut current)
+                    .is_ok()
+                    && (current == vec![video.to_string_lossy().into_owned()] || current == shared_original)
+                {
+                    write_open(&files, &text)?;
+                    changed = true;
+                }
+            }
+            if changed {
+                library::suppress_clipboard(app);
             }
         }
-        if changed {
-            library::suppress_clipboard(app);
+        #[cfg(target_os = "macos")]
+        {
+            validate_files(&files)?;
+            let expected = vec![vec![video.to_string_lossy().into_owned()], shared_original];
+            if let Some(sequence) = library::clipboard::write_files(&files, Some(&expected))? {
+                library::suppress_clipboard_sequence(app, Some(sequence));
+            }
+            let _ = text; // Text stays in the TXT attachment, not a competing pasteboard type.
         }
     }
     Ok(())
@@ -323,8 +339,13 @@ pub(crate) fn write_open(files: &[String], _text: &str) -> Result<(), String> {
     validate_files(files)?;
     // set_file_list preserves existing formats by default. Replace the previous
     // clipboard item first so paste targets cannot pick an unrelated PNG or HTML.
-    clipboard_win::raw::empty().map_err(|e| e.to_string())?;
-    clipboard_win::raw::set_file_list(files).map_err(|e| e.to_string())?;
+    #[cfg(windows)]
+    {
+        clipboard_win::raw::empty().map_err(|e| e.to_string())?;
+        clipboard_win::raw::set_file_list(files).map_err(|e| e.to_string())?;
+    }
+    #[cfg(target_os = "macos")]
+    { library::clipboard::write_files(files, None)?; }
     // File paste targets may prefer CF_UNICODETEXT over CF_HDROP. Keep the
     // transcript in the TXT attachment; explicit "copy text" remains separate.
     Ok(())
@@ -338,15 +359,27 @@ fn validate_files(files: &[String]) -> Result<(), String> {
 pub fn copy_files(app: &tauri::AppHandle, paths: &[PathBuf]) -> Result<(), String> {
     let (files, text) = package(&app.state::<Store>(), paths)?;
     let files = share_files(app, &files)?;
+    copy_shared_files(app, &files, &text)
+}
+fn copy_shared_files(app: &tauri::AppHandle, files: &[String], text: &str) -> Result<(), String> {
+    #[cfg(windows)]
     {
         let _clipboard = clipboard_win::Clipboard::new_attempts(20).map_err(|e| e.to_string())?;
-        write_open(&files, &text)?;
+        write_open(files, text)?;
     }
+    #[cfg(windows)]
     library::suppress_clipboard(app);
+    #[cfg(target_os = "macos")]
+    {
+        validate_files(files)?;
+        let sequence = library::clipboard::write_files(files, None)?;
+        library::suppress_clipboard_sequence(app, sequence);
+        let _ = text;
+    }
     Ok(())
 }
-// MSIX apps can see a virtualized AppData tree. Export outside AppData so
-// clipboard and native drag recipients resolve the same physical files.
+// Export durable, physical files for clipboard and external drag recipients.
+// This also avoids MSIX AppData virtualization on Windows. macOS uses Movies.
 pub(crate) fn share_files(app: &tauri::AppHandle, files: &[String]) -> Result<Vec<String>, String> {
     let root = app.path().video_dir().map_err(|e| e.to_string())?
         .join("Whispera").join("Compartir");
@@ -390,15 +423,17 @@ pub fn copy_selection(app:&tauri::AppHandle,path:&Path)->Result<(),String>{
         if sidecar.is_file(){files.push(sidecar.to_string_lossy().into_owned());text=result.text;}
     }}
     let files=share_files(app,&files)?;
-    {let _clipboard=clipboard_win::Clipboard::new_attempts(20).map_err(|e|e.to_string())?;write_open(&files,&text)?;}
-    library::suppress_clipboard(app);Ok(())
+    copy_shared_files(app,&files,&text)
 }
 #[tauri::command]
-pub fn video_transcript_action(
+pub async fn video_transcript_action(
     app: tauri::AppHandle,
     path: String,
     action: String,
 ) -> Result<Transcript, String> {
+    tauri::async_runtime::spawn_blocking(move || transcript_action(app, path, action)).await.map_err(|e| e.to_string())?
+}
+fn transcript_action(app: tauri::AppHandle, path: String, action: String) -> Result<Transcript, String> {
     let store = app.state::<Store>();
     let path = PathBuf::from(path);
     let _guard = GATE.lock().map_err(|_| "Transcripciones ocupadas")?;
@@ -467,6 +502,7 @@ mod tests {
         fs::remove_dir_all(root).unwrap();
     }
     #[test]
+    #[cfg(windows)]
     #[ignore = "Run alone: uses a private Windows window station, never the interactive clipboard"]
     fn private_station_clipboard_replaces_stale_formats() {
         use std::ffi::c_void;
@@ -532,7 +568,7 @@ mod tests {
         assert!(validate_files(&[root.to_string_lossy().into_owned()]).is_err());
         assert!(validate_files(&[file.clone(), root.join("missing.txt").to_string_lossy().into_owned()]).is_err());
         fs::remove_file(video).unwrap();
-        // This path fails before any Windows clipboard API is called.
+        // This path fails before any system clipboard API is called.
         assert!(write_open(&[file], "text").is_err());
         fs::remove_dir_all(root).unwrap();
     }
@@ -683,8 +719,9 @@ mod tests {
         let root = root();
         let pcm = root.join("microphone.pcm");
         fs::write(&pcm, vec![0u8; 96000]).unwrap();
-        let binary =
-            Path::new(env!("CARGO_MANIFEST_DIR")).join("../node_modules/ffmpeg-static/ffmpeg.exe");
+        let binary = Path::new(env!("CARGO_MANIFEST_DIR")).join(if cfg!(windows) {
+            "../node_modules/ffmpeg-static/ffmpeg.exe"
+        } else { "../node_modules/ffmpeg-static/ffmpeg" });
         prepare(&binary, &pcm, 48000, 1).unwrap();
         let wave = root.join("speech-0000.wav");
         let reader = hound::WavReader::open(wave).unwrap();
@@ -696,7 +733,7 @@ mod tests {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, windows))]
 mod trim_live_tests {
     use super::*;
     #[test]

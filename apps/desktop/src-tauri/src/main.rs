@@ -1,7 +1,9 @@
 #![cfg_attr(target_os = "windows", windows_subsystem = "windows")]
 mod replay;
-#[cfg(test)]
+#[cfg(all(test, windows))]
 mod audit_tests;
+mod platform;
+mod permissions;
 mod replay_audio;
 mod encoder_job;
 mod video_trim;
@@ -43,24 +45,7 @@ use tauri_plugin_clipboard_manager::ClipboardExt;
 
 #[tauri::command]
 fn open_groq_console() -> Result<(), String> {
-    use windows::{
-        core::w,
-        Win32::UI::{Shell::ShellExecuteW, WindowsAndMessaging::SW_SHOWNORMAL},
-    };
-    let result = unsafe {
-        ShellExecuteW(
-            None,
-            w!("open"),
-            w!("https://console.groq.com/keys"),
-            None,
-            None,
-            SW_SHOWNORMAL,
-        )
-    };
-    if result.0 as isize <= 32 {
-        return Err("No se pudo abrir el navegador".into());
-    }
-    Ok(())
+    platform::open_url("https://console.groq.com/keys")
 }
 
 #[tauri::command]
@@ -136,7 +121,7 @@ fn save_api_key(key: String) -> Result<(), String> {
     }
     groq::entry()?
         .set_password(key)
-        .map_err(|_| "Windows no pudo guardar la credencial".into())
+        .map_err(|_| "El sistema no pudo guardar la credencial de forma segura".into())
 }
 #[tauri::command]
 async fn transcribe_file(
@@ -294,6 +279,7 @@ fn open_settings(app: tauri::AppHandle) -> Result<(), String> {
     w.show().map_err(|e| e.to_string())?;
     let window = w.clone();
     w.run_on_main_thread(move || {
+        #[cfg(windows)]
         if let Ok(handle) = window.hwnd() {
             // Restore even if an external hide left the toolkit visibility flag stale.
             unsafe {
@@ -460,6 +446,10 @@ fn main() {
                 .build(),
         )
         .setup(|app| {
+            #[cfg(target_os = "macos")]
+            app.set_activation_policy(tauri::ActivationPolicy::Accessory);
+            #[cfg(target_os = "macos")]
+            startup::initialize(app.handle()).map_err(std::io::Error::other)?;
             // Set the live window and tray icons explicitly as well as the EXE resource.
             // Windows can otherwise keep the previous icon when the app is upgraded in place.
             if let Some(window) = app.get_webview_window("main") {
@@ -619,6 +609,7 @@ fn main() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            permissions::platform_permissions, permissions::platform_request_permission,
             replay::replay_preferences, replay::replay_status, replay::replay_create_folder, replay::replay_save_preferences, replay::replay_save,
             video_trim::video_trim_open, video_trim::video_trim_context, video_trim::video_trim_close, video_trim::video_trim_save,
             updates::updater_status, updates::updater_check, updates::updater_install, updates::updater_open_upstream,

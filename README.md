@@ -20,6 +20,10 @@
 
 Para pasar desde Whispera-K o una versión anterior de SikJa sin actualizador, instalá esta versión una vez usando el botón. Conserva tu perfil y configura la firma propia de SikJa para futuras actualizaciones.
 
+**macOS (beta):** estamos portando Whispera para Apple Silicon e Intel, conservando
+Cristal, Groq y la interfaz. Consultá [instalación, permisos y validación pendiente](docs/MACOS.md).
+La beta no está notarizada por Apple y no reemplaza la versión estable de Windows.
+
 ---
 
 <p align="center">

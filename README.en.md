@@ -18,6 +18,10 @@
 
 ---
 
+**macOS (beta):** Whispera is being ported to Apple Silicon and Intel, preserving
+Cristal, Groq and the shared interface. See [installation, permissions and validation status](docs/MACOS.md).
+The beta is not Apple-notarized and does not replace the stable Windows release.
+
 <p align="center">
   <img src="docs/screenshots/recorder-active.png" width="360" alt="Floating recorder in action" />
   &emsp;

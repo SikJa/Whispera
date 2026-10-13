@@ -1,6 +1,6 @@
 use crate::storage::Store;
 use serde::{Deserialize, Serialize};
-use std::{fs, path::Path, process::Command, sync::Mutex};
+use std::{fs, path::Path, sync::Mutex};
 use tauri::{Manager, State};
 use tauri_plugin_clipboard_manager::ClipboardExt;
 
@@ -65,11 +65,7 @@ pub async fn screen_recent_copy(app: tauri::AppHandle, id: String) -> Result<(),
 #[tauri::command]
 pub fn screen_recent_reveal(store: State<Store>, id: String) -> Result<(), String> {
     let entry = find(&store, &id)?;
-    Command::new("explorer.exe")
-        .arg(format!("/select,{}", entry.path))
-        .spawn()
-        .map_err(|e| e.to_string())?;
-    Ok(())
+    crate::platform::reveal_path(Path::new(&entry.path))
 }
 #[cfg(test)]
 mod tests {

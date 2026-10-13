@@ -1,14 +1,21 @@
 //! One-shot, lossless desktop capture without a subprocess or temporary file.
 use crate::screen::Region;
+#[path = "macos/capture_geometry.rs"]
+pub(crate) mod capture_geometry;
 use image::{
     codecs::png::{CompressionType, FilterType, PngEncoder},
     ImageEncoder,
 };
+#[cfg(target_os = "macos")]
+#[path = "macos/capture.rs"]
+pub(crate) mod macos;
+#[cfg(windows)]
 use windows::Win32::Graphics::Gdi::{
     BitBlt, CreateCompatibleBitmap, CreateCompatibleDC, DeleteDC, DeleteObject, GetDC, GetDIBits,
     ReleaseDC, SelectObject, BITMAPINFO, BITMAPINFOHEADER, BI_RGB, CAPTUREBLT, DIB_RGB_COLORS,
     HBITMAP, HDC, HGDIOBJ, SRCCOPY,
 };
+#[cfg(windows)]
 use windows::Win32::{
     Foundation::HWND,
     UI::WindowsAndMessaging::{
@@ -17,10 +24,12 @@ use windows::Win32::{
     },
 };
 
+#[cfg(windows)]
 pub struct InkExclusion {
     hwnd: HWND,
     previous: u32,
 }
+#[cfg(windows)]
 impl InkExclusion {
     pub fn new(hwnd: HWND) -> Result<Self, String> {
         let mut previous = 0;
@@ -31,6 +40,7 @@ impl InkExclusion {
         Ok(Self { hwnd, previous })
     }
 }
+#[cfg(windows)]
 impl Drop for InkExclusion {
     fn drop(&mut self) {
         unsafe {
@@ -39,12 +49,14 @@ impl Drop for InkExclusion {
     }
 }
 
+#[cfg(windows)]
 struct CaptureDc {
     screen: HDC,
     memory: HDC,
     bitmap: HBITMAP,
     previous: Option<HGDIOBJ>,
 }
+#[cfg(windows)]
 impl Drop for CaptureDc {
     fn drop(&mut self) {
         unsafe {
@@ -173,6 +185,7 @@ impl FrozenFrame {
         encode_png(&bytes, region)
     }
 }
+#[cfg(windows)]
 pub fn freeze(region: Region) -> Result<FrozenFrame, String> {
     let mut bytes = vec![0; buffer_len(region.width, region.height)?];
     unsafe {
@@ -242,6 +255,16 @@ pub fn freeze(region: Region) -> Result<FrozenFrame, String> {
     }
     Ok(FrozenFrame { region, bgra: bytes })
 }
+#[cfg(target_os = "macos")]
+pub fn freeze(region: Region) -> Result<FrozenFrame, String> {
+    Ok(FrozenFrame { region, bgra: macos::snapshot(region, false)? })
+}
+#[cfg(target_os = "macos")]
+pub fn png_with_ink(region: Region, ink: bool) -> Result<Vec<u8>, String> {
+    let mut bytes = macos::snapshot(region, ink)?;
+    opaque_rgba(&mut bytes);
+    encode_png(&bytes, region)
+}
 pub fn png(region: Region) -> Result<Vec<u8>, String> {
     let mut frame = freeze(region)?;
     opaque_rgba(&mut frame.bgra);
@@ -267,15 +290,15 @@ mod tests {
         let rgba = vec![255u8; 80 * 60 * 4];
         let mut input = Vec::new();
         PngEncoder::new(&mut input).write_image(&rgba, 80, 60, image::ExtendedColorType::Rgba8).unwrap();
-        let monitor = Region { x: -80, y: -60, width: 80, height: 60 };
-        let crop = crop_png(&input, monitor, Region { x: -60, y: -50, width: 20, height: 15 }).unwrap();
+        let monitor = Region { x: -80, y: -60, width: 80, height: 60, ..Default::default() };
+        let crop = crop_png(&input, monitor, Region { x: -60, y: -50, width: 20, height: 15, ..Default::default() }).unwrap();
         assert_eq!(image::load_from_memory(&crop).unwrap().into_rgba8().dimensions(), (20, 15));
-        assert!(crop_png(&input, monitor, Region { x: -90, y: -50, width: 20, height: 15 }).is_err());
-        assert!(crop_png(&input, monitor, Region { x: -10, y: -10, width: 20, height: 15 }).is_err());
+        assert!(crop_png(&input, monitor, Region { x: -90, y: -50, width: 20, height: 15, ..Default::default() }).is_err());
+        assert!(crop_png(&input, monitor, Region { x: -10, y: -10, width: 20, height: 15, ..Default::default() }).is_err());
     }
     #[test]
     fn raw_frozen_frame_preserves_pixel_order_and_crop_exactly() {
-        let region = Region { x: -3, y: -2, width: 3, height: 2 };
+        let region = Region { x: -3, y: -2, width: 3, height: 2, ..Default::default() };
         let bgra = vec![1,2,3,0, 4,5,6,0, 7,8,9,0, 10,11,12,0, 13,14,15,0, 16,17,18,0];
         let frame = FrozenFrame { region, bgra };
         let bmp = frame.preview_bmp();
@@ -283,14 +306,15 @@ mod tests {
         assert_eq!(bmp.len(), 54 + 24);
         assert_eq!(i32::from_le_bytes(bmp[22..26].try_into().unwrap()), -2);
         assert_eq!(&bmp[54..58], &[1,2,3,0]);
-        let png = frame.crop_png(Region { x: -2, y: -1, width: 2, height: 1 }).unwrap();
+        let png = frame.crop_png(Region { x: -2, y: -1, width: 2, height: 1, ..Default::default() }).unwrap();
         let decoded = image::load_from_memory(&png).unwrap().into_rgba8();
         assert_eq!(decoded.as_raw(), &[15,14,13,255, 18,17,16,255]);
-        assert!(frame.crop_png(Region { x: -4, y: -1, width: 2, height: 1 }).is_err());
-        assert!(frame.crop_png(Region { x: -2, y: -1, width: 3, height: 1 }).is_err());
-        assert!(frame.crop_png(Region { x: -2, y: -1, width: 0, height: 1 }).is_err());
+        assert!(frame.crop_png(Region { x: -4, y: -1, width: 2, height: 1, ..Default::default() }).is_err());
+        assert!(frame.crop_png(Region { x: -2, y: -1, width: 3, height: 1, ..Default::default() }).is_err());
+        assert!(frame.crop_png(Region { x: -2, y: -1, width: 0, height: 1, ..Default::default() }).is_err());
     }
     #[test]
+    #[cfg(windows)]
     #[ignore = "Measures native desktop freezing and preview preparation on the local monitor"]
     fn native_selection_preview_latency() {
         use windows::Win32::UI::WindowsAndMessaging::{GetSystemMetrics, SM_CXSCREEN, SM_CYSCREEN};

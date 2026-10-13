@@ -383,11 +383,7 @@ pub async fn reveal_recording(id: String, app: tauri::AppHandle) -> Result<(), S
         }
         let dir = audio::session_dir(&engine.recorder.root, &id)?;
         audio::materialize(&dir, 16_000_000)?;
-        std::process::Command::new("explorer.exe")
-            .arg(dir)
-            .spawn()
-            .map_err(|e| e.to_string())?;
-        Ok(())
+        crate::platform::open_directory(&dir)
     })
     .await
     .map_err(|e| e.to_string())?

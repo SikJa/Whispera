@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>LSUIElement</key><true/>
+  <key>NSMicrophoneUsageDescription</key>
+  <string>Whispera uses the microphone for dictation and the audio of your screen recordings. Audio is sent to Groq only when you transcribe it.</string>
+  <key>NSScreenCaptureUsageDescription</key>
+  <string>Whispera captures the screen and system audio only for screenshots, screen recording and replay that you enable.</string>
+  <key>NSAudioCaptureUsageDescription</key>
+  <string>Whispera records system audio when you select it for screen recordings or replay.</string>
+</dict></plist>

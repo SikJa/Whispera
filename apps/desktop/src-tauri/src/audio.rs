@@ -203,6 +203,7 @@ fn send_samples<T: Copy>(
     input.send(mono);
 }
 fn begin(root: &Path) -> Result<Capture, String> {
+    crate::permissions::ensure_microphone()?;
     let device = cpal::default_host()
         .default_input_device()
         .ok_or("No hay microfono disponible")?;
@@ -265,7 +266,7 @@ fn begin(root: &Path) -> Result<Capture, String> {
                 None,
             ),
             _ => return Err(
-                "Formato del microfono no compatible. Selecciona PCM 16 bits o float32 en Windows."
+                "Formato del microfono no compatible. Selecciona PCM 16 bits o float32 en el sistema."
                     .into(),
             ),
         }
@@ -335,7 +336,7 @@ impl Capture {
             }
             if self.samples == 0 {
                 return Err(
-                    "El microfono no entrego audio. Revisa los permisos de Windows.".into(),
+                    "El microfono no entrego audio. Revisa los permisos del sistema.".into(),
                 );
             }
             Ok(self.dir.file_name().unwrap().to_string_lossy().into_owned())

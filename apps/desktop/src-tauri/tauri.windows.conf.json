@@ -1,0 +1,10 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "bundle": {
+    "resources": {
+      "../node_modules/ffmpeg-static/ffmpeg.exe": "bin/ffmpeg.exe",
+      "../node_modules/ffmpeg-static/ffmpeg.exe.LICENSE": "bin/ffmpeg.LICENSE",
+      "../node_modules/ffmpeg-static/ffmpeg.exe.README": "bin/ffmpeg.README"
+    }
+  }
+}

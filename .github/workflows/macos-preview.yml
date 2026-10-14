@@ -53,6 +53,10 @@ jobs:
       - name: Native logic tests (no capture or microphone)
         working-directory: apps/desktop/src-tauri
         run: cargo test --locked -- --test-threads=1
+      - name: Install headless WebKit
+        run: npx playwright install webkit
+      - name: Validate Mac interface in WebKit
+        run: WHISPERA_TEST_BROWSER=webkit node verify-macos-ui.mjs
       - name: Build ad-hoc signed app and DMG
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}

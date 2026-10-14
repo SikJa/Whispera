@@ -91,6 +91,9 @@ checks Mach-O architectures, FFmpeg, bundle metadata and ad-hoc signatures.
 Local headless UI tests mute audio and mock native IPC. Rust unit tests use fixtures;
 permission prompts, actual recording, native dragging and automatic paste must not
 be simulated as successful hardware tests.
+The macOS jobs also run the shared interface in headless WebKit and start the
+bundled app for a short startup smoke check on the runner. These checks exercise
+the browser engine, dynamic linking and app initialization, not real-device recording.
 
 ## References / Referencias
 

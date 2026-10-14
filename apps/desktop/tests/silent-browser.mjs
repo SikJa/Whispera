@@ -1,7 +1,8 @@
-import { chromium } from 'playwright';
+import { chromium, webkit } from 'playwright';
 
 export async function launchSilentBrowser() {
-  const browser = await chromium.launch({headless:true,args:['--mute-audio']});
+  const engine = process.env.WHISPERA_TEST_BROWSER === 'webkit' ? webkit : chromium;
+  const browser = await engine.launch({headless:true,args:engine === chromium ? ['--mute-audio'] : []});
   const newPage = browser.newPage.bind(browser);
   browser.newPage = async (...args) => {
     const page = await newPage(...args);

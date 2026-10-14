@@ -31,6 +31,20 @@ private var whisperaWindowCloseObserver: NSObjectProtocol?
 private var whisperaWindowVisibilityObservers: [NSObjectProtocol] = []
 private var whisperaWindowPollInterval: TimeInterval = 0
 
+private func whisperaWindowStopTracking() {
+    whisperaWindowTimer?.invalidate()
+    whisperaWindowTimer = nil
+    whisperaWindowPollInterval = 0
+    if let monitor = whisperaWindowLocalMonitor { NSEvent.removeMonitor(monitor) }
+    if let monitor = whisperaWindowGlobalMonitor { NSEvent.removeMonitor(monitor) }
+    whisperaWindowLocalMonitor = nil
+    whisperaWindowGlobalMonitor = nil
+    for observer in whisperaWindowVisibilityObservers { NotificationCenter.default.removeObserver(observer) }
+    whisperaWindowVisibilityObservers.removeAll()
+    if let observer = whisperaWindowCloseObserver { NotificationCenter.default.removeObserver(observer) }
+    whisperaWindowCloseObserver = nil
+}
+
 private func whisperaWindowRefreshTimer() {
     let visible = whisperaWindowRegions.values.contains { $0.window?.isVisible == true }
     let interval: TimeInterval = visible ? 1.0 / 30.0 : 1.0
@@ -48,7 +62,8 @@ private func whisperaWindowUpdateRegions() {
         if state.window == nil { whisperaWindowRegions.removeValue(forKey: number) }
         else { state.update() }
     }
-    if !whisperaWindowRegions.isEmpty { whisperaWindowRefreshTimer() }
+    if whisperaWindowRegions.isEmpty { whisperaWindowStopTracking() }
+    else { whisperaWindowRefreshTimer() }
 }
 
 private func whisperaWindowInstallTracking() {
@@ -69,7 +84,8 @@ private func whisperaWindowInstallTracking() {
     }
     // Events handle input immediately. The visibility-aware fallback also covers
     // Spaces changes and stationary pointers without keeping the hidden tray busy.
-    for name in [NSWindow.didExposeNotification, NSWindow.didMoveNotification, NSWindow.didResizeNotification,
+    for name in [NSWindow.didExposeNotification, NSWindow.didBecomeKeyNotification,
+                 NSWindow.didMoveNotification, NSWindow.didResizeNotification,
                  NSWindow.didMiniaturizeNotification, NSWindow.didDeminiaturizeNotification,
                  NSApplication.didHideNotification, NSApplication.didUnhideNotification] {
         whisperaWindowVisibilityObservers.append(NotificationCenter.default.addObserver(forName: name,
@@ -81,17 +97,7 @@ private func whisperaWindowInstallTracking() {
                                                                          object: nil, queue: .main) { note in
         if let window = note.object as? NSWindow { whisperaWindowRegions.removeValue(forKey: window.windowNumber) }
         guard whisperaWindowRegions.isEmpty else { return }
-        whisperaWindowTimer?.invalidate()
-        whisperaWindowTimer = nil
-        whisperaWindowPollInterval = 0
-        if let monitor = whisperaWindowLocalMonitor { NSEvent.removeMonitor(monitor) }
-        if let monitor = whisperaWindowGlobalMonitor { NSEvent.removeMonitor(monitor) }
-        whisperaWindowLocalMonitor = nil
-        whisperaWindowGlobalMonitor = nil
-        for observer in whisperaWindowVisibilityObservers { NotificationCenter.default.removeObserver(observer) }
-        whisperaWindowVisibilityObservers.removeAll()
-        if let observer = whisperaWindowCloseObserver { NotificationCenter.default.removeObserver(observer) }
-        whisperaWindowCloseObserver = nil
+        whisperaWindowStopTracking()
     }
 }
 
@@ -137,7 +143,7 @@ func whisperaWindowSetRegions(_ raw: UnsafeMutableRawPointer?, _ rectangles: Uns
     state.paths = paths
     whisperaWindowRegions[window.windowNumber] = state
     whisperaWindowInstallTracking()
-    state.update()
+    whisperaWindowUpdateRegions()
     return 0
 }
 

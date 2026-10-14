@@ -12,7 +12,7 @@ custom-protocol = ["tauri/custom-protocol"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = ["tray-icon", "image-png", "protocol-asset"] }
+tauri = { version = "2", features = ["tray-icon", "image-png", "protocol-asset", "macos-private-api"] }
 tauri-plugin-dialog = "2"
 tauri-plugin-clipboard-manager = "2"
 tauri-plugin-single-instance = "2"
@@ -42,7 +42,6 @@ windows = { version = "0.61", features = ["Win32_Media_Audio", "Win32_Media_Audi
 
 [target.'cfg(target_os = "macos")'.dependencies]
 keyring = { version = "3", features = ["apple-native"] }
-tauri = { version = "2", features = ["macos-private-api"] }
 
 [dev-dependencies]
 tauri = { version = "2", features = ["test"] }

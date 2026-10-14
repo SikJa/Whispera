@@ -1489,7 +1489,7 @@ fn record(
         "-pixel_format", "bgra", "-video_size", &format!("{}x{}", region.width, region.height),
         "-framerate", "30", "-i", "pipe:0", "-an", "-vf",
         &format!("pad=ceil(iw/2)*2:ceil(ih/2)*2,scale={}:{}:force_original_aspect_ratio=decrease:force_divisible_by=2,pad={}:{}:(ow-iw)/2:(oh-ih)/2,setsar=1", output_size.0, output_size.1, output_size.0, output_size.1),
-        "-c:v", "h264_videotoolbox", "-allow_sw", "0", "-b:v", "12M", "-pix_fmt", "yuv420p", "-bf", "0", "-flush_packets", "1"]);
+        "-c:v", "h264_videotoolbox", "-allow_sw", "1", "-b:v", "12M", "-pix_fmt", "yuv420p", "-bf", "0", "-flush_packets", "1"]);
     capture_command.arg(&video)
         .stdin(Stdio::piped())
         .stderr(Stdio::from(log));

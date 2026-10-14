@@ -215,6 +215,20 @@ pub fn start(app:&tauri::AppHandle){
 mod tests {
     use super::*;
     #[test]
+    #[ignore = "CI: verifies a built updater archive without launching or installing it"]
+    fn built_archive_has_a_valid_repository_signature() {
+        use base64::Engine;
+        let archive=std::env::var("WHISPERA_VERIFY_ARCHIVE").expect("Set WHISPERA_VERIFY_ARCHIVE to the built archive");
+        let bytes=std::fs::read(&archive).unwrap();
+        let encoded=std::fs::read_to_string(format!("{archive}.sig")).unwrap();
+        let config:serde_json::Value=serde_json::from_str(include_str!("../tauri.conf.json")).unwrap();
+        let decode=|text:&str|String::from_utf8(base64::engine::general_purpose::STANDARD.decode(text.trim()).unwrap()).unwrap();
+        let key=minisign_verify::PublicKey::decode(&decode(config["plugins"]["updater"]["pubkey"].as_str().unwrap())).unwrap();
+        let signature=minisign_verify::Signature::decode(&decode(&encoded)).unwrap();
+        key.verify(&bytes,&signature,false).expect("Archive must be signed by SikJa/Whispera");
+        assert!(bytes.len()>1_000_000,"A release archive must contain the complete app");
+    }
+    #[test]
     #[ignore = "Downloads and verifies the public GitHub installer; never installs it"]
     fn live_github_recovery_download_verifies_signature(){
         let config:serde_json::Value=serde_json::from_str(include_str!("../tauri.conf.json")).unwrap();

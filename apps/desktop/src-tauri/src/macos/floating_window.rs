@@ -1,5 +1,11 @@
 use super::HitRect;
-use std::{ffi::c_void, sync::mpsc, time::Duration};
+use std::{
+    ffi::c_void,
+    sync::mpsc,
+    time::{Duration, Instant},
+};
+
+const MAIN_TIMEOUT: Duration = Duration::from_secs(2);
 
 unsafe extern "C" {
     fn whispera_window_apply(window: *mut c_void) -> i32;
@@ -13,8 +19,13 @@ fn on_window(
 ) -> Result<(), String> {
     let copy = window.clone();
     let (send, receive) = mpsc::sync_channel(1);
+    let deadline = Instant::now() + MAIN_TIMEOUT;
     window
         .run_on_main_thread(move || {
+            if Instant::now() >= deadline {
+                let _ = send.send(Err("La ventana de macOS no respondio".into()));
+                return;
+            }
             let result = copy.ns_window().map_err(|e| e.to_string()).and_then(|raw| {
                 if operation(raw) == 0 {
                     Ok(())
@@ -26,7 +37,7 @@ fn on_window(
         })
         .map_err(|e| e.to_string())?;
     receive
-        .recv_timeout(Duration::from_secs(2))
+        .recv_timeout(deadline.saturating_duration_since(Instant::now()))
         .map_err(|_| "La ventana de macOS no respondio".to_string())?
 }
 
@@ -48,11 +59,16 @@ pub(super) fn region(window: tauri::WebviewWindow, rects: Vec<HitRect>) -> Resul
 /// Optional setup hook: the existing Tauri tray remains the status-bar owner.
 pub fn set_menu_bar_mode(app: &tauri::AppHandle, enabled: bool) -> Result<(), String> {
     let (send, receive) = mpsc::sync_channel(1);
+    let deadline = Instant::now() + MAIN_TIMEOUT;
     app.run_on_main_thread(move || {
+        if Instant::now() >= deadline {
+            let _ = send.send(-1);
+            return;
+        }
         let _ = send.send(unsafe { whispera_window_menu_bar_mode(i32::from(enabled)) });
     })
     .map_err(|e| e.to_string())?;
-    match receive.recv_timeout(Duration::from_secs(2)) {
+    match receive.recv_timeout(deadline.saturating_duration_since(Instant::now())) {
         Ok(0) => Ok(()),
         _ => Err("macOS no pudo cambiar el modo de barra de menus".into()),
     }

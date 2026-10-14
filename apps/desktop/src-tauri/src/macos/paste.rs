@@ -63,6 +63,7 @@ fn error(status: i32) -> String {
         7 => "macOS no permite enviar teclas. Revisa el permiso de Accesibilidad de Whispera; el contenido sigue copiado.",
         8 => "El destino es un campo protegido o no admite texto editable accesible. El contenido sigue copiado.",
         9 => "Hay otro pegado en curso. El contenido sigue copiado.",
+        11 => "El pegado debe ejecutarse fuera del hilo principal. El contenido sigue copiado.",
         _ => "macOS no pudo comprobar el destino de pegado. El contenido sigue copiado.",
     }.into()
 }
@@ -74,5 +75,6 @@ mod tests {
         assert!(super::error(1).contains("Accesibilidad"));
         assert!(super::error(6).contains("portapapeles cambio"));
         assert!(super::error(5).contains("no se pego en otro campo"));
+        assert!(super::error(11).contains("fuera del hilo principal"));
     }
 }

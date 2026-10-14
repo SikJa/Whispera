@@ -4,7 +4,8 @@ use crate::screen::Region;
 use serde::Serialize;
 use std::{
     ffi::{c_char, c_void, CStr, CString},
-    io::Write,
+    io,
+    os::fd::AsRawFd,
     process::ChildStdin,
     sync::{atomic::{AtomicBool, Ordering}, Arc, Mutex},
     thread::JoinHandle,
@@ -17,6 +18,7 @@ unsafe extern "C" {
     fn whispera_capture_start(config: *const c_char, callback: Callback, context: *mut c_void,
         error: *mut c_char, capacity: usize) -> *mut c_void;
     fn whispera_capture_stop(handle: *mut c_void);
+    fn whispera_capture_nonblocking(descriptor: i32) -> i32;
     fn whispera_capture_display(window: *mut c_void, x: i32, y: i32, width: u32, height: u32, out: *mut f64) -> i32;
     fn whispera_capture_window(window: *mut c_void, action: i32, x: f64, y: f64, width: f64, height: f64);
 }
@@ -36,14 +38,24 @@ pub fn monitor_region(monitor: &tauri::Monitor) -> Result<Region, String> {
     Ok(region)
 }
 pub fn bind(window: &tauri::WebviewWindow, mut region: Region) -> Result<Region, String> {
-    region.display = Some(display(window.ns_window().map_err(|e| e.to_string())?, region)?);
+    let (tx, rx) = std::sync::mpsc::sync_channel(1);
+    let target = window.clone();
+    window.run_on_main_thread(move || {
+        let result = target.ns_window().map_err(|e| e.to_string()).and_then(|native| display(native, region));
+        let _ = tx.send(result);
+    }).map_err(|e| e.to_string())?;
+    region.display = Some(rx.recv_timeout(Duration::from_secs(5)).map_err(|_| "La pantalla no respondio a tiempo")??);
     Ok(region)
 }
 pub fn window_action(window: &tauri::WebviewWindow, action: i32, rect: Option<crate::screen::Rect>) -> Result<(), String> {
-    let native = window.ns_window().map_err(|e| e.to_string())? as usize;
+    let target = window.clone();
     let rect = rect.unwrap_or(crate::screen::Rect { x: 0., y: 0., width: 0., height: 0. });
-    window.run_on_main_thread(move || unsafe {
-        whispera_capture_window(native as *mut c_void, action, rect.x, rect.y, rect.width, rect.height);
+    window.run_on_main_thread(move || {
+        // Resolve here: a queued task must not retain a raw pointer to a window
+        // that may have been destroyed since the caller requested the action.
+        if let Ok(native) = target.ns_window() {
+            unsafe { whispera_capture_window(native, action, rect.x, rect.y, rect.width, rect.height); }
+        }
     }).map_err(|e| e.to_string())
 }
 pub fn place(window: &tauri::WebviewWindow, region: Region, resize: bool) -> Result<(), String> {
@@ -81,16 +93,23 @@ unsafe extern "C" fn receive(context: *mut c_void, kind: i32, bytes: *const u8, 
     let context = unsafe { &*(context as *const Context) };
     if len > 256 * 1024 * 1024 { return; }
     let data = unsafe { std::slice::from_raw_parts(bytes, len) };
+    // A consumer panic must not unwind through the Swift/C ABI.
+    if std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| receive_data(context, kind, data, age))).is_err() {
+        if let Ok(mut error) = context.error.lock() { *error = "Fallo el receptor de captura".into(); }
+    }
+}
+fn receive_data(context: &Context, kind: i32, data: &[u8], age: f64) {
     match kind {
-        0 if len == context.expected => {
+        0 if data.len() == context.expected => {
             if let Ok(mut frame) = context.frame.lock() { *frame = Some(Arc::new(data.to_vec())); }
         }
         1 => {
             if let Some(callback) = &context.audio {
-                let values = data.chunks_exact(4).map(|v| {
-                    let value = f32::from_ne_bytes(v.try_into().unwrap());
-                    if value.is_finite() { (value.clamp(-1., 1.) * 32767.).round() as i16 } else { 0 }
-                }).collect();
+                let Some(values) = super::capture_geometry::stereo_pcm(data) else {
+                    if let Ok(mut error) = context.error.lock() { *error = "El audio llego con un cuadro estereo incompleto".into(); }
+                    return;
+                };
+                if values.is_empty() { return; }
                 let age = if age.is_finite() { age.clamp(0., 60.) } else { 0. };
                 let now = Instant::now();
                 callback(now.checked_sub(Duration::from_secs_f64(age)).unwrap_or(now), values);
@@ -157,6 +176,9 @@ pub struct Video {
 }
 impl Video {
     pub fn start(region: Region, size: (u32, u32), mut input: ChildStdin) -> Result<Self, String> {
+        if unsafe { whispera_capture_nonblocking(input.as_raw_fd()) } != 0 {
+            return Err(format!("No se pudo preparar el pipe de video: {}", io::Error::last_os_error()));
+        }
         let native = Native::new(config(region, size, "video", true)?, None)?;
         native.first_frame()?;
         let frames = native.context.frame.clone();
@@ -170,9 +192,13 @@ impl Video {
             while !worker_stop.load(Ordering::Acquire) {
                 let frame = frames.lock().ok().and_then(|frame| frame.clone());
                 if let Some(frame) = frame {
-                    if let Err(e) = input.write_all(&frame) {
-                        if let Ok(mut error) = worker_error.lock() { *error = format!("FFmpeg cerro el video: {e}"); }
-                        break;
+                    match super::capture_geometry::write_frame(&mut input, &frame, &worker_stop, Duration::from_secs(2)) {
+                        Ok(true) => {}
+                        Ok(false) => break,
+                        Err(e) => {
+                            if let Ok(mut error) = worker_error.lock() { *error = format!("FFmpeg cerro el video: {e}"); }
+                            break;
+                        }
                     }
                     count += 1;
                 }
@@ -201,9 +227,9 @@ impl Video {
 }
 impl Drop for Video {
     fn drop(&mut self) {
-        // The owning encoder must be killed/waited before joining a blocked pipe writer.
+        // Nonblocking writes have a deadline even if the encoder stops reading.
         self.stop();
-        if self.writer.as_ref().is_some_and(|writer| writer.is_finished()) { self.join(); }
+        self.join();
     }
 }
 
@@ -224,5 +250,29 @@ mod tests {
         let b = Region { display: Some(Display { id: 2, x: 1440, y: 0, scale: 1. }), ..a };
         assert_eq!(config(a, (100, 100), "snapshot", false).unwrap().x, 800.);
         assert_eq!(config(b, (100, 100), "snapshot", false).unwrap().x, 160.);
+    }
+    fn context(audio: Option<AudioCallback>) -> Context {
+        Context { frame: Arc::new(Mutex::new(None)), error: Arc::new(Mutex::new(String::new())), expected: 4, audio }
+    }
+    #[test]
+    fn ffi_copies_frame_bytes_before_swift_reuses_the_buffer() {
+        let mut context = context(None);
+        let mut bytes = [1, 2, 3, 4];
+        unsafe { receive((&mut context as *mut Context).cast(), 0, bytes.as_ptr(), bytes.len(), 0.); }
+        bytes.fill(0);
+        assert_eq!(context.frame.lock().unwrap().as_deref().unwrap().as_slice(), &[1, 2, 3, 4]);
+    }
+    #[test]
+    fn consumer_panic_cannot_cross_the_capture_ffi() {
+        let mut context = context(Some(Box::new(|_, _| panic!("fixture consumer panic"))));
+        let bytes = [0; 8];
+        unsafe { receive((&mut context as *mut Context).cast(), 1, bytes.as_ptr(), bytes.len(), 0.); }
+        assert_eq!(*context.error.lock().unwrap(), "Fallo el receptor de captura");
+    }
+    #[test]
+    fn malformed_audio_is_an_error_without_calling_the_consumer() {
+        let context = context(Some(Box::new(|_, _| panic!("must not deliver half a stereo frame"))));
+        receive_data(&context, 1, &[0; 4], 0.);
+        assert_eq!(*context.error.lock().unwrap(), "El audio llego con un cuadro estereo incompleto");
     }
 }

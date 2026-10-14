@@ -760,28 +760,21 @@ mod tests {
         };
         let (input, rx, faults) = test_input(48000 * 30);
         input.send(vec![123; 480]);
-        let mut capture = Capture {
-            stream: None,
-            rx,
-            input,
-            faults,
-            sync,
-            file,
-            dir: dir.clone(),
-            rate: 48000,
-            samples: 0,
-            synced: Instant::now() - Duration::from_secs(2),
-            paused: Arc::new(AtomicBool::new(false)),
-        };
+        let capture_dir = dir.clone();
         let (done_tx, done_rx) = mpsc::channel();
         let drain = std::thread::spawn(move || {
+            // CPAL streams are thread-affine on macOS, even when this fixture has none.
+            let mut capture = Capture {
+                stream: None, rx, input, faults, sync, file, dir: capture_dir,
+                rate: 48000, samples: 0, synced: Instant::now() - Duration::from_secs(2),
+                paused: Arc::new(AtomicBool::new(false)),
+            };
             let result = capture.drain(&Arc::new(Mutex::new(RecordingState::default())));
             done_tx.send(result.map(|_| capture.samples)).unwrap();
-            capture
         });
         let result = done_rx.recv_timeout(Duration::from_secs(2));
         release_tx.send(()).unwrap();
-        drop(drain.join().unwrap());
+        drain.join().unwrap();
         assert_eq!(result.unwrap().unwrap(), 480);
         fs::remove_dir_all(dir).unwrap();
     }

@@ -5,6 +5,7 @@ import { native } from './client';
 import HotkeyInput from './HotkeyInput';
 import { finishHotkeyCapture } from './hotkey-capture';
 import {useAutoSave,AutoSaveStatus} from './useAutoSave';
+import { commandKey, systemName } from './platform';
 
 export type CapturePreferences = { audio: 'none' | 'system' | 'microphone' | 'both'; hotkey: string; image_hotkey: string; frame_color: string; image_auto_copy: boolean };
 export const defaultCapturePreferences: CapturePreferences = { audio:'none',hotkey:'Control+Shift+F9',image_hotkey:'Control+Shift+F10',frame_color:'#ffffff',image_auto_copy:false };
@@ -47,7 +48,7 @@ export function VideoAudioSettings({value,disabled,onChange}:{value:CapturePrefe
     <div className="audio-mode-grid" role="group" aria-label="Sonido del video">
       {([['none','Sin audio','Solo la imagen',VolumeX],['microphone','Micrófono','Tu voz',Mic],['system','Computadora','Sonido del sistema',Monitor],['both','Ambos','Tu voz y la computadora',AudioLines]] as const).map(([mode,label,hint,Icon])=><button key={mode} type="button" className="audio-mode" aria-pressed={value===mode} disabled={disabled} onClick={()=>onChange(mode)}><Icon size={19}/><strong>{label}</strong><small>{hint}</small></button>)}
     </div>
-    <div className="capture-device-info" role="status"><div><span>Micrófono de Windows</span><strong>{devices?.microphone??(devices?'No se detectó un micrófono':'Detectando…')}</strong>{(value==='system'||value==='both')&&<><span>Salida de audio</span><strong>{devices?.system??'No se detectó una salida'}</strong></>}</div><button type="button" title="Actualizar dispositivos" aria-label="Actualizar dispositivos" disabled={!native||disabled||loading} onClick={()=>void refresh()}><RefreshCw size={16}/></button></div>
+    <div className="capture-device-info" role="status"><div><span>Micrófono de {systemName}</span><strong>{devices?.microphone??(devices?'No se detectó un micrófono':'Detectando…')}</strong>{(value==='system'||value==='both')&&<><span>Salida de audio</span><strong>{devices?.system??'No se detectó una salida'}</strong></>}</div><button type="button" title="Actualizar dispositivos" aria-label="Actualizar dispositivos" disabled={!native||disabled||loading} onClick={()=>void refresh()}><RefreshCw size={16}/></button></div>
     {error&&<p role="alert" className="notice">{error}</p>}
   </div>;
 }
@@ -63,7 +64,7 @@ export function CaptureHistory() {
     const refresh=()=>{if(!native){setLoading(false);return;}void invoke<Recent[]>('screen_recent').then(data=>{if(alive)setRows(data);}).catch(e=>{if(alive)setMessage(String(e));}).finally(()=>{if(alive)setLoading(false);});};
     refresh();window.addEventListener('focus',refresh);return()=>{alive=false;window.removeEventListener('focus',refresh);};
   },[]);
-  const run=async(command:string,id:string)=>{setBusy(true);setMessage('');try{await invoke(command,{id});if(command==='screen_recent_copy')setMessage('Copiado. Pegalo con Ctrl+V.');}catch(e){setMessage(String(e));}finally{setBusy(false);}};
+  const run=async(command:string,id:string)=>{setBusy(true);setMessage('');try{await invoke(command,{id});if(command==='screen_recent_copy')setMessage(`Copiado. Pegalo con ${commandKey}+V.`);}catch(e){setMessage(String(e));}finally{setBusy(false);}};
   return <section aria-label="Historial de capturas"><p className="muted-note">Las últimas 12 imágenes y videos, listos para volver a copiar.</p>
     {loading?<p role="status">Cargando capturas…</p>:rows.length?<div className="capture-recent-list">{rows.map(item=><div key={item.id} className="capture-recent-row"><span className="capture-file-kind">{item.kind==='image'?'PNG':'MP4'}</span><div><strong>{item.kind==='image'?'Captura de imagen':'Grabación de pantalla'}</strong><time>{new Date(item.created_at).toLocaleString('es-AR')}</time></div><button disabled={busy} onClick={()=>void run('screen_recent_copy',item.id)}>Copiar</button><button disabled={busy} title="Mostrar archivo" aria-label="Mostrar archivo" onClick={()=>void run('screen_recent_reveal',item.id)}>↗</button></div>)}</div>:<div className="empty-state"><Camera size={26}/><h2>Sin capturas todavía</h2><p>Las imágenes y videos que termines aparecen acá.</p></div>}
     {message&&<p className="notice" role="status">{message}</p>}

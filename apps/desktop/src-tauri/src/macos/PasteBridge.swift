@@ -170,7 +170,10 @@ private func whisperaPasteActivate(_ destination: WhisperaPasteDestination) {
 
 @_cdecl("whispera_paste_focus")
 func whisperaPasteFocus(_ token: UInt64, _ restore: Int32) -> Int32 {
-    autoreleasepool {
+    guard !Thread.isMainThread else { return 11 }
+    guard whisperaPasteOperationLock.try() else { return 9 }
+    defer { whisperaPasteOperationLock.unlock() }
+    return autoreleasepool {
         guard AXIsProcessTrusted() else { return 1 }
         guard let destination = whisperaPasteLookup(token), whisperaPasteStillValid(destination) else { return 3 }
         if restore != 0 { whisperaPasteActivate(destination) }
@@ -185,6 +188,7 @@ private func whisperaPasteModifiersDown() -> Bool {
 
 @_cdecl("whispera_paste_restore")
 func whisperaPasteRestore(_ token: UInt64, _ expected: UnsafePointer<UInt8>?, _ length: Int, _ checkText: Int32) -> Int32 {
+    guard !Thread.isMainThread else { return 11 }
     guard whisperaPasteOperationLock.try() else { return 9 }
     defer { whisperaPasteOperationLock.unlock() }
     return autoreleasepool {
@@ -193,6 +197,11 @@ func whisperaPasteRestore(_ token: UInt64, _ expected: UnsafePointer<UInt8>?, _ 
         guard length >= 0, length <= 16 * 1024 * 1024, checkText == 0 || expected != nil else { return 10 }
         let text: String? = checkText != 0 ? String(bytes: UnsafeBufferPointer(start: expected, count: length), encoding: .utf8) : nil
         if checkText != 0 && text == nil { return 10 }
+        // Pin files/images too: clipboard ownership may change while modifiers or focus settle.
+        let board = NSPasteboard.general
+        let revision = board.changeCount
+        if let text, board.string(forType: .string) != text { return 6 }
+        guard board.changeCount == revision else { return 6 }
         guard let destination = whisperaPasteLookup(token), whisperaPasteStillValid(destination) else { return 3 }
         if checkText != 0 && !destination.editable { return 8 }
         let releasedBy = ProcessInfo.processInfo.systemUptime + 2
@@ -207,9 +216,7 @@ func whisperaPasteRestore(_ token: UInt64, _ expected: UnsafePointer<UInt8>?, _ 
             Thread.sleep(forTimeInterval: 0.06)
             if !whisperaPasteStillValid(destination) { return 3 }
             if !whisperaPasteModifiersDown() && whisperaPasteFocused(destination) {
-                let board = NSPasteboard.general
-                let revision = board.changeCount
-                if let text, board.string(forType: .string) != text { return 6 }
+                guard board.changeCount == revision else { return 6 }
                 guard let source = CGEventSource(stateID: .privateState),
                       let down = CGEvent(keyboardEventSource: source, virtualKey: 9, keyDown: true),
                       let up = CGEvent(keyboardEventSource: source, virtualKey: 9, keyDown: false) else { return 7 }

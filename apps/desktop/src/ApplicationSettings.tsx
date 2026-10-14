@@ -3,7 +3,7 @@ import {invoke} from '@tauri-apps/api/core';
 import {native} from './client';
 import {SettingsSwitch} from './ResourceControls';
 import MacPermissions from './MacPermissions';
-import {systemName} from './platform';
+import {isMac, systemName} from './platform';
 
 export default function ApplicationSettings() {
   const [enabled, setEnabled] = useState<boolean | null>(null);
@@ -33,7 +33,7 @@ export default function ApplicationSettings() {
     <h3>Inicio de la aplicación</h3>
     <div className="form-row">
       <label htmlFor="app-startup">Iniciar Whispera al encender la computadora
-        <span>Se abre oculto en la bandeja, listo para usar tus atajos.</span>
+        <span>{isMac ? 'Se abre en la barra de menús, listo para usar tus atajos.' : 'Se abre oculto en la bandeja, listo para usar tus atajos.'}</span>
       </label>
       <SettingsSwitch id="app-startup" label="Iniciar Whispera al encender la computadora" checked={enabled === true}
         disabled={!native || enabled === null || busy} onChange={value => void change(value)}/>

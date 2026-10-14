@@ -5,6 +5,7 @@ import {join, resolve} from 'node:path';
 import {createHash} from 'node:crypto';
 
 assert.equal(process.platform, 'darwin', 'Run bundle verification on macOS');
+assert.equal(process.env.WHISPERA_SIGNATURE_VERIFIED, '1', 'Verify updater signatures before the bundle');
 const arch = process.argv[2];
 assert.ok(['aarch64', 'x86_64'].includes(arch), 'Expected aarch64 or x86_64');
 const bundle = resolve('src-tauri/target/release/bundle');
@@ -23,6 +24,9 @@ const ffmpeg = join(app, 'Contents/Resources/bin/ffmpeg');
 assert.ok(existsSync(ffmpeg));
 assert.ok(run('/usr/bin/lipo', ['-archs', ffmpeg]).split(' ').includes(binaryArch));
 assert.match(run(ffmpeg, ['-version']), /ffmpeg version/);
+const startup=execFileSync(executable, ['--ci-smoke'], {encoding:'utf8', timeout:30000,
+  env:{...process.env, WHISPERA_CI_SMOKE:'1'}});
+assert.match(startup, /WHISPERA_CI_READY/, 'The bundled native app must start and exit cleanly on the macOS runner');
 for (const file of ['LICENSE', 'THIRD_PARTY_NOTICES.md', 'bin/ffmpeg.LICENSE', 'vendor/LICENSE']) {
   assert.ok(existsSync(join(app, 'Contents/Resources', file)), `Missing ${file}`);
 }
@@ -32,7 +36,8 @@ assert.ok(readFileSync(join(bundle, 'macos', `${archive}.sig`), 'utf8').trim().l
 const dmg = readdirSync(join(bundle, 'dmg')).find(name => name.endsWith('.dmg'));
 assert.ok(dmg, 'Missing DMG');
 const files = [join(bundle, 'dmg', dmg), join(bundle, 'macos', archive)];
-const report = {version: plist.CFBundleShortVersionString, arch, signature: 'ad-hoc', notarized: false,
+const report = {version: plist.CFBundleShortVersionString, arch, source: process.env.GITHUB_SHA,
+  signature: 'ad-hoc', updaterSignatureVerified: true, startupVerified: true, notarized: false,
   hardwareValidated: false, files: files.map(path => ({name: path.split('/').at(-1),
     sha256: createHash('sha256').update(readFileSync(path)).digest('hex')}))};
 writeFileSync(join(bundle, 'macos/verification.json'), JSON.stringify(report, null, 2) + '\n');

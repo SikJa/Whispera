@@ -23,7 +23,8 @@ private func whisperaAudioUInt(_ device: AudioObjectID, _ property: AudioObjectP
     var address = property
     var value: UInt32 = 0
     var size = UInt32(MemoryLayout<UInt32>.size)
-    guard AudioObjectGetPropertyData(device, &address, 0, nil, &size, &value) == noErr else { throw WhisperaAudioFailure.hardware }
+    guard AudioObjectGetPropertyData(device, &address, 0, nil, &size, &value) == noErr,
+          size == MemoryLayout<UInt32>.size else { throw WhisperaAudioFailure.hardware }
     return value
 }
 
@@ -31,23 +32,29 @@ private func whisperaAudioDevices() throws -> [AudioDeviceID] {
     var address = whisperaAudioAddress(kAudioHardwarePropertyDevices, kAudioObjectPropertyScopeGlobal)
     var size: UInt32 = 0
     guard AudioObjectGetPropertyDataSize(AudioObjectID(kAudioObjectSystemObject), &address, 0, nil, &size) == noErr,
-          size <= 128 * MemoryLayout<AudioDeviceID>.size else { throw WhisperaAudioFailure.hardware }
+          size <= 128 * MemoryLayout<AudioDeviceID>.stride,
+          Int(size) % MemoryLayout<AudioDeviceID>.stride == 0 else { throw WhisperaAudioFailure.hardware }
     if size == 0 { return [] }
-    var devices = [AudioDeviceID](repeating: 0, count: Int(size) / MemoryLayout<AudioDeviceID>.size)
+    let capacity = size
+    var devices = [AudioDeviceID](repeating: 0, count: Int(size) / MemoryLayout<AudioDeviceID>.stride)
     let status = devices.withUnsafeMutableBytes { bytes in
         AudioObjectGetPropertyData(AudioObjectID(kAudioObjectSystemObject), &address, 0, nil, &size, bytes.baseAddress!)
     }
-    guard status == noErr else { throw WhisperaAudioFailure.hardware }
-    return Array(devices.prefix(Int(size) / MemoryLayout<AudioDeviceID>.size))
+    guard status == noErr, size <= capacity,
+          Int(size) % MemoryLayout<AudioDeviceID>.stride == 0 else { throw WhisperaAudioFailure.hardware }
+    return Array(devices.prefix(Int(size) / MemoryLayout<AudioDeviceID>.stride))
 }
 
 private func whisperaAudioUID(_ device: AudioDeviceID) throws -> String {
     var address = whisperaAudioAddress(kAudioDevicePropertyDeviceUID, kAudioObjectPropertyScopeGlobal)
-    var value: CFString?
-    var size = UInt32(MemoryLayout<CFString?>.size)
+    // HAL returns an owned CFStringRef through a C out-pointer, not Swift ARC storage.
+    var value: Unmanaged<CFString>?
+    var size = UInt32(MemoryLayout<Unmanaged<CFString>?>.size)
     guard AudioObjectGetPropertyData(device, &address, 0, nil, &size, &value) == noErr,
-          let value, !(value as String).isEmpty else { throw WhisperaAudioFailure.hardware }
-    return value as String
+          let value else { throw WhisperaAudioFailure.hardware }
+    let uid = value.takeRetainedValue() as String
+    guard size == MemoryLayout<Unmanaged<CFString>?>.size, !uid.isEmpty else { throw WhisperaAudioFailure.hardware }
+    return uid
 }
 
 private func whisperaAudioChannelCount(_ device: AudioDeviceID) throws -> UInt32 {
@@ -60,13 +67,22 @@ private func whisperaAudioChannelCount(_ device: AudioDeviceID) throws -> UInt32
     var size: UInt32 = 0
     guard AudioObjectGetPropertyDataSize(device, &address, 0, nil, &size) == noErr,
           size >= MemoryLayout<AudioBufferList>.size, size <= 65536 else { throw WhisperaAudioFailure.hardware }
+    let capacity = size
     let memory = UnsafeMutableRawPointer.allocate(byteCount: Int(size), alignment: MemoryLayout<AudioBufferList>.alignment)
     defer { memory.deallocate() }
     memory.initializeMemory(as: UInt8.self, repeating: 0, count: Int(size))
-    guard AudioObjectGetPropertyData(device, &address, 0, nil, &size, memory) == noErr else { throw WhisperaAudioFailure.hardware }
-    let list = UnsafeMutableAudioBufferListPointer(memory.assumingMemoryBound(to: AudioBufferList.self))
-    let count = list.reduce(UInt32(0)) { $0 + $1.mNumberChannels }
-    guard count <= 256 else { throw WhisperaAudioFailure.unsupported }
+    guard AudioObjectGetPropertyData(device, &address, 0, nil, &size, memory) == noErr,
+          size >= MemoryLayout<AudioBufferList>.size, size <= capacity,
+          let offset = MemoryLayout<AudioBufferList>.offset(of: \.mBuffers) else { throw WhisperaAudioFailure.hardware }
+    let header = memory.bindMemory(to: AudioBufferList.self, capacity: 1)
+    // Validate the flexible array before its count can drive pointer traversal.
+    guard Int(header.pointee.mNumberBuffers) <= (Int(size) - offset) / MemoryLayout<AudioBuffer>.stride else { throw WhisperaAudioFailure.hardware }
+    let list = UnsafeMutableAudioBufferListPointer(header)
+    var count: UInt32 = 0
+    for buffer in list {
+        guard buffer.mNumberChannels <= 256 - count else { throw WhisperaAudioFailure.unsupported }
+        count += buffer.mNumberChannels
+    }
     return count
 }
 
@@ -86,6 +102,7 @@ private func whisperaAudioReadControl(_ device: AudioDeviceID, _ kind: String, _
     var value: Float32 = 0
     var size = UInt32(MemoryLayout<Float32>.size)
     guard AudioObjectGetPropertyData(device, &address, 0, nil, &size, &value) == noErr,
+          size == MemoryLayout<Float32>.size,
           value.isFinite, value >= 0, value <= 1 else { throw WhisperaAudioFailure.hardware }
     return WhisperaAudioControl(kind: kind, channel: channel, value: Double(value))
 }

@@ -746,7 +746,18 @@ fn main() {
         })
         .build(tauri::generate_context!())
         .expect("No se pudo iniciar Whispera Preview")
-        .run(|_, event| match event {
+        .run(|app, event| match event {
+            #[cfg(target_os = "macos")]
+            tauri::RunEvent::Ready if std::env::var("GITHUB_ACTIONS").as_deref()==Ok("true")
+                && std::env::var("WHISPERA_CI_SMOKE").as_deref()==Ok("1")
+                && std::env::args().any(|arg|arg=="--ci-smoke") => {
+                let app=app.clone();
+                std::thread::spawn(move||{
+                    std::thread::sleep(std::time::Duration::from_secs(5));
+                    println!("WHISPERA_CI_READY");
+                    app.exit(0);
+                });
+            }
             tauri::RunEvent::ExitRequested { code, api, .. } => {
                 if lifecycle::prevent_implicit_exit(code) {
                     api.prevent_exit();

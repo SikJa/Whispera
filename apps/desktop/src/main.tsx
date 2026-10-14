@@ -34,6 +34,7 @@ import GroqKeyGuide from './GroqKeyGuide';
 import { ShortcutSettings, CaptureHistory } from './CaptureSettings';
 import LibrarySettings from './LibrarySettings';
 import ApplicationSettings from './ApplicationSettings';
+import { credentialStore, isMac } from './platform';
 
 const routes = [
   { id: "transcription", name: "Transcripción", icon: AudioLines, group: "Preferencias" },
@@ -141,7 +142,7 @@ function SettingsApp({sidebarExpanded}:{sidebarExpanded:boolean}) {
           <h3>Voz e idioma</h3>
           <div className="form-row"><label htmlFor="model">Modelo</label><select id="model" value={data.settings.model} onChange={e => patch({ model: e.target.value })}><option value="whisper-large-v3-turbo">Whisper Large v3 Turbo</option><option value="whisper-large-v3">Whisper Large v3</option></select></div>
           <div className="form-row"><label htmlFor="language">Idioma del audio</label><select id="language" value={data.settings.language} onChange={e => patch({ language: e.target.value })}><option value="es">Español</option><option value="en">English</option><option value="pt">Português</option><option value="auto">Detectar automáticamente</option></select></div>
-          <h3>Conexión</h3><div className="key-line"><label htmlFor="key">Clave API de Groq <span>Almacenada en Windows</span></label><div><input id="key" type="password" autoComplete="off" value={key} placeholder={data.keyConfigured ? "••••••••••••••••" : "gsk_…"} onChange={e => setKey(e.target.value)} onBlur={()=>{if(key.trim()&&api.native)void run(async()=>{await api.saveKey(key);setKey("");},"Clave guardada automáticamente en Windows");}} /></div></div>
+          <h3>Conexión</h3><div className="key-line"><label htmlFor="key">Clave API de Groq <span>Almacenada en {credentialStore}</span></label><div><input id="key" type="password" autoComplete="off" value={key} placeholder={data.keyConfigured ? "••••••••••••••••" : "gsk_…"} onChange={e => setKey(e.target.value)} onBlur={()=>{if(key.trim()&&api.native)void run(async()=>{await api.saveKey(key);setKey("");},`Clave guardada automáticamente en ${credentialStore}`);}} /></div></div>
           
           <GroqKeyGuide />
 
@@ -168,7 +169,7 @@ function SettingsApp({sidebarExpanded}:{sidebarExpanded:boolean}) {
             <div className="form-row"><label htmlFor="recorder-scale">Tamaño de carpeta <span>{Math.round(data.settings.recorderScale*100)}%</span></label><div className="size-control"><input id="recorder-scale" type="range" min=".6" max="1.25" step=".05" value={data.settings.recorderScale} aria-valuetext={`${Math.round(data.settings.recorderScale*100)} %`} style={{'--range-progress':`${Math.max(0,Math.min(100,(data.settings.recorderScale-.6)/.65*100))}%`} as React.CSSProperties} onChange={e=>patch({recorderScale:Number(e.target.value)})}/><div className="size-control-limits"><span>Mín. 60 %</span><span>Máx. 125 %</span></div></div></div>
             <div className="form-row"><label htmlFor="placement">Posición de controles</label><select id="placement" value={data.settings.placement} onChange={e => patch({ placement: e.target.value as api.Settings["placement"] })}><option value="right">Derecha</option><option value="left">Izquierda</option><option value="top">Arriba</option><option value="bottom">Abajo</option></select></div>
             <h3>Indicadores</h3><div className="form-row"><label>Capturas y video<span>Cámara de cine · fondo transparente</span></label><div className="appearance-indicators"><IndicatorArtwork kind="camera"/></div></div>
-            <h3>Icono de bandeja · Cristal</h3><div className="tray-samples"><span><img src="/cristal/16x16.png" width="16" height="16" alt="Icono 16 píxeles" />16 px</span><span><img src="/cristal/24x24.png" width="24" height="24" alt="Icono 24 píxeles" />24 px</span><span><img src="/cristal/32x32.png" width="32" height="32" alt="Icono 32 píxeles" />32 px</span></div>
+            <h3>{isMac ? 'Icono de barra de menús · Cristal' : 'Icono de bandeja · Cristal'}</h3><div className="tray-samples"><span><img src="/cristal/16x16.png" width="16" height="16" alt="Icono 16 píxeles" />16 px</span><span><img src="/cristal/24x24.png" width="24" height="24" alt="Icono 24 píxeles" />24 px</span><span><img src="/cristal/32x32.png" width="32" height="32" alt="Icono 32 píxeles" />32 px</span></div>
         </>}
 
         {route === "hotkey" && <ShortcutSettings voice={data.settings.hotkey} onSaved={()=>void refresh()}/>}

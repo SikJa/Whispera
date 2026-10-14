@@ -1,0 +1,13 @@
+import assert from 'node:assert/strict';
+import {previewManifest} from './publish-macos-preview.mjs';
+const version = '0.3.0-beta.1';
+const entries = ['aarch64', 'x86_64'].map(arch => ({arch, name: `Whispera_${version}_${arch}.app.tar.gz`, signature: 'fixture-signature-not-a-real-key'.repeat(3)}));
+const result = previewManifest(version, entries, 'macOS preview');
+assert.deepEqual(Object.keys(result.platforms).sort(), ['darwin-aarch64', 'darwin-x86_64']);
+assert.equal(result.platforms['darwin-aarch64'].url, `https://github.com/SikJa/Whispera/releases/download/v${version}/Whispera_${version}_aarch64.app.tar.gz`);
+assert.throws(() => previewManifest('0.3.0', entries, ''));
+assert.throws(() => previewManifest(version, [entries[0]], ''));
+assert.throws(() => previewManifest(version, [entries[0], entries[0]], ''));
+assert.throws(() => previewManifest(version, [entries[0], {...entries[1], name: '../../unsafe.tar.gz'}], ''));
+assert.throws(() => previewManifest(version, [entries[0], {...entries[1], signature: ''}], ''));
+console.log('PASS: macOS preview manifest requires both architectures, signatures and versioned repository URLs. No publication performed.');

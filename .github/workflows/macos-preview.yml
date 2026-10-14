@@ -1,7 +1,7 @@
 name: macOS preview validation
 on:
   push:
-    branches: [feat/macos-port]
+    branches: [feat/macos-port, main]
   pull_request:
     paths: ['apps/desktop/**', '.github/workflows/macos-preview.yml', 'scripts/verify-macos-bundle.mjs']
   workflow_dispatch:
@@ -43,6 +43,8 @@ jobs:
           cache-on-failure: true
       - name: Check source privacy
         run: node ../../scripts/check-source.mjs
+      - name: Validate preview manifests
+        run: node ../../scripts/verify-macos-release.mjs
       - run: npm ci
       - run: npm ci --ignore-scripts
         working-directory: apps/desktop/vendor/edge-drop
@@ -56,7 +58,12 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ''
         run: npm run tauri build -- --bundles app,dmg --ci
+      - name: Verify updater archive against the repository public key
+        working-directory: apps/desktop/src-tauri
+        run: WHISPERA_VERIFY_ARCHIVE="$PWD/target/release/bundle/macos/Whispera.app.tar.gz" cargo test --locked updates::tests::built_archive_has_a_valid_repository_signature -- --ignored --exact
       - name: Verify bundle, architectures, resources and signatures
+        env:
+          WHISPERA_SIGNATURE_VERIFIED: '1'
         run: node ../../scripts/verify-macos-bundle.mjs ${{ matrix.arch }}
       - uses: actions/upload-artifact@v4
         with:

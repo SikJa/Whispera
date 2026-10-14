@@ -12,6 +12,7 @@ import { showWhenReady } from './screen-ready';
 import CaptureFrame from './CaptureFrame';
 import IndicatorArtwork from './IndicatorArtwork';
 import type {CaptureContext} from './EditableCaptureFrame';
+import { commandKey, isMac } from './platform';
 
 type Context = CaptureContext;
 type Action = { action: string; value?: string };
@@ -30,6 +31,7 @@ function preferences() {
 }
 function shortcut(e: KeyboardEvent): Action | undefined {
   if ((e.target as HTMLElement).closest('input,textarea,select,[contenteditable="true"]')) return;
+  if (e.metaKey && !isMac) return;
   const key = e.key.toLowerCase();
   if (e.ctrlKey || e.metaKey) {
     if (key === 'z') return { action: e.shiftKey ? 'redo' : 'undo' };
@@ -276,8 +278,8 @@ function useEditorControls(context:Context) {
 function ImageActions({context}:{context:Context}) {
   const {feedback,send,notice}=useEditorControls(context);
   return <div className="capture-image-actions" aria-label="Acciones de captura"><IndicatorArtwork kind="camera" compact/>
-    <button className="capture-copy" disabled={feedback.busy} title="Copiar (Ctrl+C)" onClick={()=>void send({action:'copy'})}><Copy size={17}/>Copiar</button>
-    <button disabled={feedback.busy} title="Guardar PNG (Ctrl+S)" aria-label="Guardar imagen" onClick={()=>void send({action:'save'})}><Save size={18}/></button>
+    <button className="capture-copy" disabled={feedback.busy} title={`Copiar (${commandKey}+C)`} onClick={()=>void send({action:'copy'})}><Copy size={17}/>Copiar</button>
+    <button disabled={feedback.busy} title={`Guardar PNG (${commandKey}+S)`} aria-label="Guardar imagen" onClick={()=>void send({action:'save'})}><Save size={18}/></button>
     <button disabled={feedback.busy} title="Imprimir" aria-label="Imprimir imagen" onClick={()=>void send({action:'print'})}><Printer size={18}/></button>
     <button disabled={feedback.busy} title="Volver a seleccionar" aria-label="Volver a seleccionar" onClick={()=>void send({action:'reselect'})}><RotateCcw size={18}/></button>
     {notice}

@@ -15,7 +15,7 @@ el foco y el arrastre funcionen en todas las aplicaciones reales.
 
 ## Install / Instalar
 
-1. Download the DMG matching your Mac: `aarch64` for Apple Silicon or `x64` for Intel.
+1. Download the DMG matching your Mac: `aarch64` for Apple Silicon or `x86_64` for Intel.
 2. Open the DMG and move Whispera to **Applications** before launching it.
 3. Open Whispera from Applications. It lives in the **menu bar**, not permanently in the Dock.
 4. Enter your own Groq key. Keys are stored in **macOS Keychain**, not in the repo.
@@ -64,6 +64,8 @@ manual validation on a real Mac**, including both Retina and mixed-DPI monitors.
 Capturing protected/DRM windows is not guaranteed. Secure text fields can reject
 Accessibility or paste. A destination app may reject a file type or multi-file
 drop; supplying an MP4 plus transcript does not force a chat app to accept both.
+Replay requires a working hardware H.264 encoder; it stays disabled when no compatible
+encoder is available, avoiding continuous software encoding in the background.
 
 ## Build / Compilar
 

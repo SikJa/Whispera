@@ -1,7 +1,9 @@
 use serde::Deserialize;
+#[cfg(target_os = "windows")]
 use windows::Win32::Graphics::Gdi::{
     CombineRgn, CreateRectRgn, CreateRoundRectRgn, DeleteObject, SetWindowRgn, RGN_OR,
 };
+#[cfg(target_os = "windows")]
 use windows::Win32::{
     Foundation::{HWND, LPARAM, LRESULT, WPARAM},
     Graphics::Dwm::{DwmSetWindowAttribute, DWMWA_NCRENDERING_POLICY, DWMWA_SYSTEMBACKDROP_TYPE},
@@ -22,10 +24,17 @@ pub struct HitRect {
 
 #[tauri::command]
 pub fn recorder_region(window: tauri::WebviewWindow, rects: Vec<HitRect>) -> Result<(), String> {
-    if !(["recorder", "library"].contains(&window.label()) || window.label().starts_with("media-")) || rects.is_empty() || rects.len() > 32 {
+    if !(["recorder", "library"].contains(&window.label()) || window.label().starts_with("media-"))
+        || rects.is_empty()
+        || rects.len() > 32
+    {
         return Err("Region no valida".into());
     }
-    let bound = if window.label() == "library" { 16384. } else { 2000. };
+    let bound = if window.label() == "library" {
+        16384.
+    } else {
+        2000.
+    };
     if rects.iter().any(|r| {
         [r.x, r.y, r.width, r.height].iter().any(|v| !v.is_finite())
             || r.width <= 0.
@@ -37,39 +46,44 @@ pub fn recorder_region(window: tauri::WebviewWindow, rects: Vec<HitRect>) -> Res
     }) {
         return Err("Coordenadas invalidas".into());
     }
-    let clone = window.clone();
-    window
-        .run_on_main_thread(move || {
-            let Ok(raw) = clone.hwnd() else {
-                return;
-            };
-            let dpi = clone.scale_factor().unwrap_or(1.);
-            unsafe {
-                let region = CreateRectRgn(0, 0, 0, 0);
-                if region.0.is_null() {
+    #[cfg(target_os = "macos")]
+    return macos::region(window, rects);
+    #[cfg(target_os = "windows")]
+    {
+        let clone = window.clone();
+        window
+            .run_on_main_thread(move || {
+                let Ok(raw) = clone.hwnd() else {
                     return;
-                }
-                for r in rects {
-                    let part = CreateRoundRectRgn(
-                        ((r.x - 5.) * dpi).floor() as i32,
-                        ((r.y - 5.) * dpi).floor() as i32,
-                        ((r.x + r.width + 5.) * dpi).ceil() as i32,
-                        ((r.y + r.height + 5.) * dpi).ceil() as i32,
-                        (12. * dpi) as i32,
-                        (12. * dpi) as i32,
-                    );
-                    if !part.0.is_null() {
-                        let _ = CombineRgn(Some(region), Some(region), Some(part), RGN_OR);
-                        let _ = DeleteObject(part.into());
+                };
+                let dpi = clone.scale_factor().unwrap_or(1.);
+                unsafe {
+                    let region = CreateRectRgn(0, 0, 0, 0);
+                    if region.0.is_null() {
+                        return;
+                    }
+                    for r in rects {
+                        let part = CreateRoundRectRgn(
+                            ((r.x - 5.) * dpi).floor() as i32,
+                            ((r.y - 5.) * dpi).floor() as i32,
+                            ((r.x + r.width + 5.) * dpi).ceil() as i32,
+                            ((r.y + r.height + 5.) * dpi).ceil() as i32,
+                            (12. * dpi) as i32,
+                            (12. * dpi) as i32,
+                        );
+                        if !part.0.is_null() {
+                            let _ = CombineRgn(Some(region), Some(region), Some(part), RGN_OR);
+                            let _ = DeleteObject(part.into());
+                        }
+                    }
+                    // Windows owns the region only after successful SetWindowRgn.
+                    if SetWindowRgn(HWND(raw.0), Some(region), true) == 0 {
+                        let _ = DeleteObject(region.into());
                     }
                 }
-                // Windows owns the region only after successful SetWindowRgn.
-                if SetWindowRgn(HWND(raw.0), Some(region), true) == 0 {
-                    let _ = DeleteObject(region.into());
-                }
-            }
-        })
-        .map_err(|e| e.to_string())
+            })
+            .map_err(|e| e.to_string())
+    }
 }
 #[tauri::command]
 pub fn recorder_size(window: tauri::WebviewWindow, scale: f64) -> Result<(), String> {
@@ -81,6 +95,7 @@ pub fn recorder_size(window: tauri::WebviewWindow, scale: f64) -> Result<(), Str
         .map_err(|e| e.to_string())
 }
 
+#[cfg(any(target_os = "windows", test))]
 fn popup_styles(style: u32, extended: u32) -> (u32, u32) {
     // Same popup contract as _aplicar_sin_bordes_win32 in the original app.
     // Preserve WebView2's compositor flags instead of adding WS_EX_LAYERED.
@@ -89,8 +104,10 @@ fn popup_styles(style: u32, extended: u32) -> (u32, u32) {
     (style, extended)
 }
 
+#[cfg(target_os = "windows")]
 const SUBCLASS_ID: usize = 0x57535052;
 
+#[cfg(target_os = "windows")]
 unsafe extern "system" fn guard_popup(
     hwnd: HWND,
     message: u32,
@@ -124,6 +141,7 @@ unsafe extern "system" fn guard_popup(
     result
 }
 
+#[cfg(target_os = "windows")]
 pub fn apply(window: &tauri::WebviewWindow) -> Result<(), String> {
     let window_copy = window.clone();
     let (send, receive) = std::sync::mpsc::sync_channel(1);
@@ -140,6 +158,7 @@ pub fn apply(window: &tauri::WebviewWindow) -> Result<(), String> {
     receive.recv().map_err(|e| e.to_string())?
 }
 
+#[cfg(target_os = "windows")]
 fn apply_native(hwnd: HWND) -> Result<(), String> {
     unsafe {
         if !SetWindowSubclass(hwnd, Some(guard_popup), SUBCLASS_ID, 0).as_bool() {
@@ -178,6 +197,12 @@ fn apply_native(hwnd: HWND) -> Result<(), String> {
     }
     Ok(())
 }
+
+#[cfg(target_os = "macos")]
+#[path = "macos/floating_window.rs"]
+mod macos;
+#[cfg(target_os = "macos")]
+pub use macos::{apply, set_menu_bar_mode};
 
 #[cfg(test)]
 mod tests {

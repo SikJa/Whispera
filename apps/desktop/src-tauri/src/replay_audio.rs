@@ -5,7 +5,10 @@ use std::{collections::VecDeque,sync::{Arc,Mutex},time::{Duration,Instant}};
 struct Block { end:Instant, samples:Vec<i16> }
 struct History { blocks:VecDeque<Block>, error:String }
 pub struct Audio {
+    #[cfg(windows)]
     _stream:cpal::Stream,
+    #[cfg(target_os="macos")]
+    _stream:crate::screen_capture::macos::AudioStream,
     history:Arc<Mutex<History>>,
     pub rate:u32,
     pub channels:u16,
@@ -20,6 +23,7 @@ fn push<T:Copy>(data:&[T],convert:impl Fn(T)->f32,history:&Mutex<History>,keep:D
     }
 }
 impl Audio {
+    #[cfg(windows)]
     pub fn new(system:bool,seconds:u32)->Result<Self,String>{
         let host=cpal::default_host();
         let device=if system{host.default_output_device()}else{host.default_input_device()}.ok_or("No hay dispositivo de audio disponible")?;
@@ -39,8 +43,25 @@ impl Audio {
         stream.play().map_err(|e|e.to_string())?;
         Ok(Self{_stream:stream,history,rate:cfg.sample_rate.0,channels:cfg.channels})
     }
-    pub fn error(&self)->String{self.history.lock().map(|history|history.error.clone()).unwrap_or_else(|_|"Audio ocupado".into())}
+    #[cfg(target_os="macos")]
+    pub fn new(system:bool,seconds:u32)->Result<Self,String>{
+        let history=Arc::new(Mutex::new(History{blocks:VecDeque::new(),error:String::new()}));
+        let target=history.clone();let keep=Duration::from_secs(seconds as u64+4);
+        let stream=crate::screen_capture::macos::AudioStream::new(system,Box::new(move |end,samples|{
+            if let Ok(mut history)=target.lock(){
+                history.blocks.push_back(Block{end,samples});
+                while history.blocks.front().is_some_and(|block|end.saturating_duration_since(block.end)>keep){history.blocks.pop_front();}
+            }
+        }))?;
+        Ok(Self{_stream:stream,history,rate:48000,channels:2})
+    }
+    pub fn error(&self)->String{
+        #[cfg(target_os="macos")]
+        if let Err(error)=self._stream.error(){return error;}
+        self.history.lock().map(|history|history.error.clone()).unwrap_or_else(|_|"Audio ocupado".into())
+    }
     pub fn snapshot(&self,start:Instant,end:Instant)->Result<Snapshot,String>{
+        let error=self.error();if !error.is_empty(){return Err(error);}
         let history=self.history.lock().map_err(|_|"Audio ocupado")?;
         if !history.error.is_empty(){return Err(history.error.clone());}
         let frames=(end.saturating_duration_since(start).as_secs_f64()*self.rate as f64).round() as usize;

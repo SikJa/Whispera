@@ -27,6 +27,12 @@ export function setVersion(version){
   writeFileSync(lock,changed);
 }
 export function prepare(){
+  const base=JSON.parse(readFileSync('apps/desktop/src-tauri/tauri.conf.json','utf8')).version;
+  if(/^\d+\.\d+\.\d+-(?:beta|rc)\.\d+$/.test(base)){
+    if(process.env.GITHUB_OUTPUT)appendFileSync(process.env.GITHUB_OUTPUT,'skip=true\n');
+    console.log(`La versión ${base} usa el canal de prueba; no se publica como actualización estable.`);
+    return;
+  }
   const repo=process.env.GITHUB_REPOSITORY||'SikJa/Whispera';
   const sha=process.env.GITHUB_SHA||execFileSync('git',['rev-parse','HEAD'],{encoding:'utf8'}).trim();
   const lines=execFileSync('gh',['api',`repos/${repo}/releases`,'--paginate','--jq','.[] | {tag: .tag_name, prerelease, draft, body} | @json'],{encoding:'utf8'}).trim();
@@ -35,7 +41,6 @@ export function prepare(){
   const marker=`Source: ${sha}`;
   const existing=releases.find(r=>!r.prerelease&&!r.draft&&r.body?.includes(marker));
   if(existing){if(process.env.GITHUB_OUTPUT)appendFileSync(process.env.GITHUB_OUTPUT,'skip=true\n');return;}
-  const base=JSON.parse(readFileSync('apps/desktop/src-tauri/tauri.conf.json','utf8')).version;
   const stable=releases.filter(r=>!r.prerelease).map(r=>r.tag);
   const version=nextVersion(base,stable);
   setVersion(version);mkdirSync('.local',{recursive:true});

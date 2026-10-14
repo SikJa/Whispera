@@ -2,7 +2,8 @@ import { useEffect, useRef, useState, type KeyboardEvent } from 'react';
 import { captureHotkey, eventHotkey, formatHotkey, modifiers } from './hotkey-capture';
 import './hotkey-input.css';
 
-export default function HotkeyInput({id,value,onChange,disabled=false}:{id:string;value:string;onChange:(value:string)=>void;disabled?:boolean}) {
+export default function HotkeyInput({id,value,onChange,disabled=false,lang='es'}:{id:string;value:string;onChange:(value:string)=>void;disabled?:boolean;lang?:'es'|'en'}) {
+  const t=(es:string,en:string)=>lang==='es'?es:en;
   const input=useRef<HTMLInputElement>(null), original=useRef(value), engaged=useRef(false), ready=useRef(false);
   const candidate=useRef<string|undefined>(undefined);
   const [listening,setListening]=useState(false),[held,setHeld]=useState(''),[error,setError]=useState('');
@@ -27,11 +28,11 @@ export default function HotkeyInput({id,value,onChange,disabled=false}:{id:strin
   };
   return <div className="hotkey-field" data-listening={listening}>
     <input ref={input} id={id} type="text" readOnly disabled={disabled} autoComplete="off" spellCheck={false}
-      value={held||formatHotkey(value)} placeholder="Presioná una combinación" aria-describedby={`${id}-hint`} aria-invalid={!!error}
+      value={held||formatHotkey(value)} placeholder={t('Presioná una combinación','Press a shortcut')} aria-describedby={`${id}-hint`} aria-invalid={!!error}
       onFocus={()=>{
         original.current=value;engaged.current=true;ready.current=false;setError('');
         void captureHotkey(true).then(()=>{if(engaged.current){ready.current=true;setListening(true);}}).catch(e=>{if(engaged.current)setError(String(e));});
       }} onBlur={release} onKeyDown={keyDown} onKeyUp={e=>{if(ready.current&&!candidate.current&&(e.code==='PrintScreen'||e.key==='PrintScreen'))candidate.current=eventHotkey(e.nativeEvent);if(candidate.current&&!['Control','Alt','Shift','Meta'].includes(e.key)){const key=candidate.current;candidate.current=undefined;input.current?.blur();onChange(key);}setHeld('');}}/>
-    <span id={`${id}-hint`} role="status">{error||(listening?'Presioná las teclas · Esc para cancelar':'Hacé clic y presioná tu atajo')}</span>
+    <span id={`${id}-hint`} role="status">{error||(listening?t('Presioná las teclas · Esc para cancelar','Press keys · Esc to cancel'):t('Hacé clic y presioná tu atajo','Click and press your shortcut'))}</span>
   </div>;
 }

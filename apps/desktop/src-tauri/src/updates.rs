@@ -60,10 +60,7 @@ pub fn updater_status(app:tauri::AppHandle)->Status {snapshot(&app)}
 pub fn updater_open_upstream(app:tauri::AppHandle)->Result<(),String>{
     let url=snapshot(&app).upstream.url;
     if !crate::upstream_updates::trusted_release(&url){return Err("Buscá las novedades de Whispera-K primero".into());}
-    use windows::{core::{w,HSTRING},Win32::UI::{Shell::ShellExecuteW,WindowsAndMessaging::SW_SHOWNORMAL}};
-    let result=unsafe{ShellExecuteW(None,w!("open"),&HSTRING::from(url),None,None,SW_SHOWNORMAL)};
-    if result.0 as isize<=32{return Err("No se pudo abrir el navegador".into());}
-    Ok(())
+    crate::platform::open_url(&url)
 }
 
 #[tauri::command]
@@ -72,15 +69,18 @@ pub async fn updater_check(app:tauri::AppHandle)->Result<Status,String> {
 }
 async fn fetch_update(app:&tauri::AppHandle)->Result<Option<Update>,String>{
     let preferred=app.state::<Updates>().recovery_route.load(Ordering::Relaxed);
-    let exe=std::env::current_exe().map_err(|e|e.to_string())?;
-    let directory=exe.parent().ok_or("No se pudo localizar la aplicación")?;
     let mut last=String::new();
     for recovery in [preferred,!preferred]{
         let routes=if recovery{match crate::update_transport::recovery_routes().await{Ok(routes)=>routes,Err(e)=>{last=e;continue;}}}else{vec![]};
         let exit_app=app.clone();
         let builder=app.updater_builder().timeout(Duration::from_secs(20))
-            .installer_arg(format!("/D={}",directory.display()))
             .on_before_exit(move||crate::engine::shutdown(&exit_app));
+        #[cfg(windows)]
+        let builder={
+            let exe=std::env::current_exe().map_err(|e|e.to_string())?;
+            let directory=exe.parent().ok_or("No se pudo localizar la aplicación")?;
+            builder.installer_arg(format!("/D={}",directory.display()))
+        };
         match crate::update_transport::configure(builder,routes).build().map_err(|e|e.to_string())?.check().await{
             Ok(update)=>{
                 if let Some(ref u)=update{if !trusted(u.download_url.as_str()){return Err("La actualización no proviene de SikJa/Whispera".into());}}
@@ -166,7 +166,11 @@ pub async fn updater_install(app:tauri::AppHandle,window:tauri::WebviewWindow)->
             handle.state::<crate::storage::Store>().0.lock().map_err(|_|"Configuración ocupada")?.backup(rusqlite::DatabaseName::Main,&backup,None).map_err(|e|format!("No se pudo respaldar la configuración: {e}"))?;
             change(&handle,|s|{s.phase="installing".into();s.downloaded=bytes.len() as u64;s.total=Some(bytes.len() as u64);});
             crate::replay::stop(&handle);
-            update.install(bytes).map_err(|e|format!("No se pudo iniciar la instalación: {e}"))
+            update.install(bytes).map_err(|e|format!("No se pudo iniciar la instalación: {e}"))?;
+            #[cfg(target_os="macos")]
+            { crate::engine::shutdown(&handle); handle.restart(); }
+            #[cfg(not(target_os="macos"))]
+            Ok(())
         }).await.map_err(|e|e.to_string())?
     }.await;
     if let Err(ref e)=result {change(&app,|s|{s.phase="available".into();s.error=e.clone();});}
@@ -211,6 +215,20 @@ pub fn start(app:&tauri::AppHandle){
 mod tests {
     use super::*;
     #[test]
+    #[ignore = "CI: verifies a built updater archive without launching or installing it"]
+    fn built_archive_has_a_valid_repository_signature() {
+        use base64::Engine;
+        let archive=std::env::var("WHISPERA_VERIFY_ARCHIVE").expect("Set WHISPERA_VERIFY_ARCHIVE to the built archive");
+        let bytes=std::fs::read(&archive).unwrap();
+        let encoded=std::fs::read_to_string(format!("{archive}.sig")).unwrap();
+        let config:serde_json::Value=serde_json::from_str(include_str!("../tauri.conf.json")).unwrap();
+        let decode=|text:&str|String::from_utf8(base64::engine::general_purpose::STANDARD.decode(text.trim()).unwrap()).unwrap();
+        let key=minisign_verify::PublicKey::decode(&decode(config["plugins"]["updater"]["pubkey"].as_str().unwrap())).unwrap();
+        let signature=minisign_verify::Signature::decode(&decode(&encoded)).unwrap();
+        key.verify(&bytes,&signature,false).expect("Archive must be signed by SikJa/Whispera");
+        assert!(bytes.len()>1_000_000,"A release archive must contain the complete app");
+    }
+    #[test]
     #[ignore = "Downloads and verifies the public GitHub installer; never installs it"]
     fn live_github_recovery_download_verifies_signature(){
         let config:serde_json::Value=serde_json::from_str(include_str!("../tauri.conf.json")).unwrap();
@@ -243,7 +261,8 @@ mod tests {
                     let mut socket=socket.unwrap();socket.set_read_timeout(Some(Duration::from_secs(10))).unwrap();
                     let mut request=[0;4096];let n=socket.read(&mut request).unwrap();
                     let manifest=String::from_utf8_lossy(&request[..n]).starts_with("GET /latest.json ");
-                    let mut bytes=if manifest {serde_json::to_vec(&serde_json::json!({"version":"9999.0.0","platforms":{"windows-x86_64":{"url":format!("http://{address}/payload"),"signature":include_str!("../tests/updater/payload.txt.sig").trim()}}})).unwrap()}else{PAYLOAD.to_vec()};
+                    let target=format!("{}-{}",if cfg!(target_os="macos"){"darwin"}else{"windows"},std::env::consts::ARCH);
+                    let mut bytes=if manifest {serde_json::to_vec(&serde_json::json!({"version":"9999.0.0","platforms":{target:{"url":format!("http://{address}/payload"),"signature":include_str!("../tests/updater/payload.txt.sig").trim()}}})).unwrap()}else{PAYLOAD.to_vec()};
                     if corrupt&&!manifest{bytes[0]^=1;}
                     write!(socket,"HTTP/1.1 200 OK\r\nContent-Length: {}\r\nContent-Type: {}\r\nConnection: close\r\n\r\n",bytes.len(),if manifest{"application/json"}else{"application/octet-stream"}).unwrap();
                     socket.write_all(&bytes).unwrap();

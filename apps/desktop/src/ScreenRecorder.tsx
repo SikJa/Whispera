@@ -13,6 +13,7 @@ import {useAutoSave,AutoSaveStatus} from './useAutoSave';
 import EditableCaptureFrame,{type CaptureContext} from './EditableCaptureFrame';
 import { SettingsSwitch } from './ResourceControls';
 import { type CapturePreferences as Preferences, defaultCapturePreferences, VideoAudioSettings } from './CaptureSettings';
+import { commandKey, isMac, systemName } from './platform';
 
 type Appearance = Pick<Settings,'color'|'pattern'|'recorderScale'> & {frameColor:string};
 type Status = { phase: string; seconds: number; path: string; error: string; copied: boolean };
@@ -70,8 +71,8 @@ export function ScreenSelection({kind='video',frameColor='#ffffff',snapshot,onPr
   useEffect(() => {
     const listener = (e: KeyboardEvent) => {
       if (e.key === 'Escape') void cancel();
-      if(e.ctrlKey && e.key.toLowerCase()==='z'){e.preventDefault();anchor.current=undefined;setOrigin(undefined);setEnd(undefined);}
-      if(e.ctrlKey && e.key.toLowerCase()==='a'){
+      if((e.ctrlKey || (isMac && e.metaKey)) && e.key.toLowerCase()==='z'){e.preventDefault();anchor.current=undefined;setOrigin(undefined);setEnd(undefined);}
+      if((e.ctrlKey || (isMac && e.metaKey)) && e.key.toLowerCase()==='a'){
         e.preventDefault();void beginCapture({x:0,y:0,width:innerWidth,height:innerHeight});
       }
     };
@@ -96,7 +97,7 @@ export function ScreenSelection({kind='video',frameColor='#ffffff',snapshot,onPr
     if (rect.width < 16 || rect.height < 16) { setError('Seleccioná un área más grande.'); return; }
     await beginCapture(rect);
   }} onPointerCancel={interruptSelection} onLostPointerCapture={interruptSelection}>
-    <div className="screen-selection-help" role="status">{busy ? 'Preparando…' : error || (kind==='image'?'Seleccioná el área para capturar.':'Seleccioná el área. Al soltar empieza a grabar.')} <kbd>Ctrl+A: pantalla completa</kbd><kbd>Esc: salir</kbd></div>
+    <div className="screen-selection-help" role="status">{busy ? 'Preparando…' : error || (kind==='image'?'Seleccioná el área para capturar.':'Seleccioná el área. Al soltar empieza a grabar.')} <kbd>{commandKey}+A: pantalla completa</kbd><kbd>Esc: salir</kbd></div>
     {rect && <CaptureFrame className="screen-selection-rect" width={rect.width} height={rect.height} color={frameColor} style={{left:rect.x,top:rect.y}}/>}
   </div>;
 }
@@ -128,7 +129,7 @@ export default function ScreenRecorder() {
     if (!native) return;
     let alive = true;
     setPreferencesReady(false);setPreferencesError('');
-    Promise.all([invoke<Preferences>('screen_preferences'),invoke<boolean>('windows_capture_shortcuts')]).then(([p,keys]) => {
+    Promise.all([invoke<Preferences>('screen_preferences'),isMac?Promise.resolve(false):invoke<boolean>('windows_capture_shortcuts')]).then(([p,keys]) => {
       if(alive){setPreferences({...defaultCapturePreferences,...p});setWindowsShortcuts(keys);setPreferencesReady(true);}
     }).catch(e => { if (alive) setPreferencesError(String(e)); });
     let timer:ReturnType<typeof setTimeout>;
@@ -151,11 +152,11 @@ export default function ScreenRecorder() {
       <h3>Audio predeterminado</h3>
       <VideoAudioSettings value={preferences.audio} disabled={occupied||busy} onChange={audio=>changePreferences({...preferences,audio})}/>
       <h3>Capturas de imagen</h3>
-      <div className="form-row"><label htmlFor="windows-capture-shortcuts">Impr Pant para Whispera<span>Mientras Whispera está abierto, las capturas de Windows pasan a Ctrl + Alt + Shift + F12.</span></label><SettingsSwitch id="windows-capture-shortcuts" label="Impr Pant para Whispera" checked={windowsShortcuts} disabled={!native||occupied||busy} onChange={enabled=>void run(async()=>{await invoke('save_windows_capture_shortcuts',{enabled});setWindowsShortcuts(enabled);},'Atajos de captura guardados.')}/></div>
+      {!isMac && <div className="form-row"><label htmlFor="windows-capture-shortcuts">Impr Pant para Whispera<span>Mientras Whispera está abierto, las capturas de Windows pasan a Ctrl + Alt + Shift + F12.</span></label><SettingsSwitch id="windows-capture-shortcuts" label="Impr Pant para Whispera" checked={windowsShortcuts} disabled={!native||occupied||busy} onChange={enabled=>void run(async()=>{await invoke('save_windows_capture_shortcuts',{enabled});setWindowsShortcuts(enabled);},'Atajos de captura guardados.')}/></div>}
       <div className="form-row"><label htmlFor="image-auto-copy">Copiar al soltar la selección<span>Va directo al portapapeles, sin abrir el editor.</span></label><SettingsSwitch id="image-auto-copy" label="Copiar al soltar la selección" checked={preferences.image_auto_copy} disabled={occupied||busy} onChange={image_auto_copy=>changePreferences({...preferences,image_auto_copy})}/></div>
       <div className="form-row"><label htmlFor="screen-frame-color">Color del recuadro<span>Para capturas y video. Blanco por defecto.</span></label><input id="screen-frame-color" type="color" value={preferences.frame_color} disabled={occupied||busy} onChange={e=>changePreferences({...preferences,frame_color:e.target.value})}/></div>
       <AutoSaveStatus save={autosave}/>
-      <p className="muted-note">Seleccioná el área y grabá. Al detener, el video queda en el portapapeles para pegar con Ctrl+V en aplicaciones que admitan archivos. Se conserva una copia temporal en esta computadora.</p>
+      <p className="muted-note">Seleccioná el área y grabá. Al detener, el video queda en el portapapeles para pegar con {commandKey}+V en aplicaciones que admitan archivos. Se conserva una copia temporal en esta computadora.</p>
     </>
     <div className="screen-record-actions">
       <button disabled={!native || busy || occupied} onClick={() => void run(() => invoke('screen_select'))}>Seleccionar área y grabar</button>
@@ -164,11 +165,11 @@ export default function ScreenRecorder() {
       {status.phase === 'selecting' && <p role="status">Seleccioná el área. Escape cancela.</p>}
       {status.phase === 'saving' && <p role="status">Preparando video para pegar…</p>}
     </div>
-    <p className="capture-shortcuts">Deshacer <kbd>Ctrl+Z</kbd> · Rehacer <kbd>Ctrl+Shift+Z</kbd> · Alinear trazos <kbd>Shift</kbd></p>
+    <p className="capture-shortcuts">Deshacer <kbd>{commandKey}+Z</kbd> · Rehacer <kbd>{commandKey}+Shift+Z</kbd> · Alinear trazos <kbd>Shift</kbd></p>
 
-    {status.path && !occupied && <div className="screen-result"><p>{status.copied ? 'Video copiado. Pegalo con Ctrl+V.' : 'Video disponible. Podés volver a copiarlo.'}</p><button onClick={() => void run(() => invoke('screen_copy'), 'Video copiado para pegar.')}>Copiar video</button><button onClick={() => void run(() => invoke('screen_reveal'))}>Ver archivo temporal</button></div>}
+    {status.path && !occupied && <div className="screen-result"><p>{status.copied ? `Video copiado. Pegalo con ${commandKey}+V.` : 'Video disponible. Podés volver a copiarlo.'}</p><button onClick={() => void run(() => invoke('screen_copy'), 'Video copiado para pegar.')}>Copiar video</button><button onClick={() => void run(() => invoke('screen_reveal'))}>Ver archivo temporal</button></div>}
     {(message || status.error) && <p role="status" className="notice">{message || status.error}</p>}
     <ReplaySettings/>
-    {!native && <p>La captura de pantalla requiere la aplicación de Windows.</p>}
+    {!native && <p>La captura de pantalla requiere la aplicación de {systemName}.</p>}
   </section>;
 }

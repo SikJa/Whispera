@@ -6,7 +6,6 @@ use serde::{Deserialize, Serialize};
 use std::{
     fs::{self, File},
     io::Write,
-    os::windows::process::CommandExt,
     path::{Path, PathBuf},
     process::{Child, Command, Stdio},
     sync::{
@@ -16,6 +15,8 @@ use std::{
     time::{Duration, Instant},
 };
 use tauri::{Manager, State};
+#[cfg(windows)]
+use std::os::windows::process::CommandExt;
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Preferences {
@@ -123,12 +124,14 @@ pub struct Rect {
     pub width: f64,
     pub height: f64,
 }
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub(crate) struct Region {
     pub x: i32,
     pub y: i32,
     pub width: u32,
     pub height: u32,
+    #[cfg(target_os = "macos")]
+    pub display: Option<crate::screen_capture::macos::Display>,
 }
 fn region(
     rect: Rect,
@@ -163,16 +166,18 @@ fn region(
         y: position.y + y as i32,
         width,
         height,
+        ..Default::default()
     })
 }
 pub(crate) fn ffmpeg(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+    let name = if cfg!(target_os = "macos") { "ffmpeg" } else { "ffmpeg.exe" };
     let path = if cfg!(debug_assertions) {
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../node_modules/ffmpeg-static/ffmpeg.exe")
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../node_modules/ffmpeg-static").join(name)
     } else {
         app.path()
             .resource_dir()
             .map_err(|e| e.to_string())?
-            .join("bin/ffmpeg.exe")
+            .join("bin").join(name)
     };
     if !path.is_file() {
         return Err("Falta el motor de video. Ejecuta npm ci antes de compilar.".into());
@@ -181,8 +186,19 @@ pub(crate) fn ffmpeg(app: &tauri::AppHandle) -> Result<PathBuf, String> {
 }
 pub(crate) fn command(binary: &Path) -> Command {
     let mut cmd = Command::new(binary);
-    cmd.creation_flags(0x08000000).stdout(Stdio::null());
+    #[cfg(windows)]
+    cmd.creation_flags(0x08000000);
+    cmd.stdout(Stdio::null());
     cmd
+}
+pub(crate) fn place_window(window: &tauri::WebviewWindow, region: Region) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    { crate::screen_capture::macos::place(window, region, true) }
+    #[cfg(windows)]
+    {
+        window.set_position(tauri::PhysicalPosition::new(region.x, region.y)).map_err(|e| e.to_string())?;
+        window.set_size(tauri::PhysicalSize::new(region.width, region.height)).map_err(|e| e.to_string())
+    }
 }
 fn hide_selectors(app: &tauri::AppHandle, screen: &Screen) {
     screen.frozen_generation.fetch_add(1,Ordering::SeqCst);
@@ -236,6 +252,12 @@ pub async fn screen_escape(app: tauri::AppHandle) -> Result<(), String> {
         .await
         .map_err(|e| e.to_string())?
 }
+#[cfg(target_os = "macos")]
+pub(crate) fn protect(window: &tauri::WebviewWindow) -> Result<(), String> {
+    window.set_content_protected(true).map_err(|e| e.to_string())?;
+    crate::screen_capture::macos::window_action(window, 0, None)
+}
+#[cfg(windows)]
 pub(crate) fn protect(window: &tauri::WebviewWindow) -> Result<(), String> {
     window
         .set_content_protected(true)
@@ -413,11 +435,15 @@ fn select_locked(app: &tauri::AppHandle, screen: &Screen, kind: &str) -> Result<
     // Freeze before activation can dismiss a menu in the target app.
     let mut snapshots = std::collections::HashMap::new();
     if kind == "image" {
+        #[cfg(windows)]
         let _exclude = if !screen.secondary {app.get_webview_window("screen-ink")} else {None}
             .map(|w| w.hwnd().map_err(|e| e.to_string()).and_then(|h| crate::screen_capture::InkExclusion::new(windows::Win32::Foundation::HWND(h.0))))
             .transpose()?;
         for (index, monitor) in monitors.iter().enumerate() {
-            let region = Region { x: monitor.position().x, y: monitor.position().y, width: monitor.size().width, height: monitor.size().height };
+            #[cfg(windows)]
+            let region = Region { x: monitor.position().x, y: monitor.position().y, width: monitor.size().width, height: monitor.size().height, ..Default::default() };
+            #[cfg(target_os = "macos")]
+            let region = crate::screen_capture::macos::monitor_region(monitor)?;
             snapshots.insert(format!("{}select-{index}",if screen.secondary {"image-"}else{"screen-"}), crate::screen_capture::freeze(region)?);
         }
     }
@@ -441,20 +467,30 @@ fn select_locked(app: &tauri::AppHandle, screen: &Screen, kind: &str) -> Result<
                 .set_ignore_cursor_events(false)
                 .map_err(|e| e.to_string())?;
             protect(&window)?;
+            #[cfg(windows)]
+            {
             window
                 .set_position(*monitor.position())
                 .map_err(|e| e.to_string())?;
             window
                 .set_size(*monitor.size())
                 .map_err(|e| e.to_string())?;
+            }
+            #[cfg(target_os = "macos")]
+            place_window(&window, crate::screen_capture::macos::monitor_region(monitor)?)?;
             session::emit_window(&window,"screen-reset", kind)
                 .map_err(|e| e.to_string())?;
             if kind=="image" {
                 let frozen=selector_window(app,&label.replace("-select-","-freeze-"))?;
                 frozen.set_focusable(false).map_err(|e|e.to_string())?;
                 frozen.set_ignore_cursor_events(false).map_err(|e|e.to_string())?;
-                frozen.set_position(*monitor.position()).map_err(|e|e.to_string())?;
-                frozen.set_size(*monitor.size()).map_err(|e|e.to_string())?;
+                #[cfg(windows)]
+                {
+                    frozen.set_position(*monitor.position()).map_err(|e|e.to_string())?;
+                    frozen.set_size(*monitor.size()).map_err(|e|e.to_string())?;
+                }
+                #[cfg(target_os = "macos")]
+                place_window(&frozen, crate::screen_capture::macos::monitor_region(monitor)?)?;
                 protect(&frozen)?;
                 session::emit_window(&frozen,"screen-frozen-reset",screen.frozen_generation.load(Ordering::SeqCst)).map_err(|e|e.to_string())?;
             }
@@ -509,6 +545,11 @@ pub async fn screen_select(app: tauri::AppHandle) -> Result<(), String> {
         .await
         .map_err(|e| e.to_string())?
 }
+#[cfg(target_os = "macos")]
+pub(crate) fn set_frame_region(window: &tauri::WebviewWindow, rect: Option<Rect>) -> Result<(), String> {
+    crate::screen_capture::macos::window_action(window, if rect.is_some() { 3 } else { 2 }, rect)
+}
+#[cfg(windows)]
 pub(crate) fn set_frame_region(window: &tauri::WebviewWindow, rect: Option<Rect>) -> Result<(), String> {
     let clone=window.clone();
     window.run_on_main_thread(move || unsafe {
@@ -548,6 +589,8 @@ pub fn screen_frame_preview(app:tauri::AppHandle,window:tauri::WebviewWindow,id:
     let ctx=crate::screen_editor::context_for(&app,window.label()).ok_or("Captura no disponible")?;
     if ctx.id!=id||ctx.source_label!=window.label(){return Err("La captura ya termino".into());}
     let next=region(rect,ctx.scale,window.inner_position().map_err(|e|e.to_string())?,window.inner_size().map_err(|e|e.to_string())?)?;
+    #[cfg(target_os = "macos")]
+    let next=crate::screen_capture::macos::bind(&window,next)?;
     // Preview docks only: image bytes and the recording region are committed on release.
     crate::screen_editor::preview_controls(&app,&window,next)
 }
@@ -558,6 +601,8 @@ pub async fn screen_resize_region(app: tauri::AppHandle, window: tauri::WebviewW
         let ctx=crate::screen_editor::context_for(&app,window.label()).ok_or("Captura no disponible")?;
         if ctx.id!=id||ctx.source_label!=window.label(){return Err("La captura ya termino".into());}
         let next=region(rect,ctx.scale,window.inner_position().map_err(|e|e.to_string())?,window.inner_size().map_err(|e|e.to_string())?)?;
+        #[cfg(target_os = "macos")]
+        let next=crate::screen_capture::macos::bind(&window,next)?;
         let phase=screen.state.lock().map_err(|_|"Estado ocupado")?.phase.clone();
         let bytes=if ctx.kind=="image" {
             if phase!="editing"{return Err("La captura ya termino".into());}
@@ -626,7 +671,7 @@ pub fn screen_frozen_ready(app:tauri::AppHandle,window:tauri::WebviewWindow,gene
     let frozen=window.clone();let app_copy=app.clone();
     app.run_on_main_thread(move||{
         if frozen_generation(&session::screen(&app_copy,frozen.label()))!=Some(generation){return;}
-        if let Ok(hwnd)=frozen.hwnd(){let _=crate::screen_editor::raise_native(windows::Win32::Foundation::HWND(hwnd.0));}
+        let _=crate::screen_editor::raise_window(&frozen);
     }).map_err(|e|e.to_string())?;
     crate::screen_editor::raise_controls(&app);
     Ok(true)
@@ -654,11 +699,7 @@ pub fn screen_overlay_ready(
     {
         window.show().map_err(|e| e.to_string())?;
         // Reassert z-order after showing a reused selector, including over our own settings.
-        unsafe {
-            use windows::Win32::UI::WindowsAndMessaging::{SetWindowPos, HWND_TOPMOST, SWP_NOMOVE, SWP_NOSIZE, SWP_NOACTIVATE};
-            SetWindowPos(windows::Win32::Foundation::HWND(window.hwnd().map_err(|e| e.to_string())?.0), Some(HWND_TOPMOST), 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE)
-                .map_err(|e| e.to_string())?;
-        }
+        crate::screen_editor::raise_window(&window)?;
         if window.label() == session::label(window.label(),"screen-select-0") {
             window.set_focus().map_err(|e| e.to_string())?;
             if let Some(started) = screen.selection_started.lock().map_err(|_| "Captura ocupada")?.take() {
@@ -723,6 +764,8 @@ pub async fn screen_start(
             window.inner_position().map_err(|e| e.to_string())?,
             window.inner_size().map_err(|e| e.to_string())?,
         )?;
+        #[cfg(target_os = "macos")]
+        let region = crate::screen_capture::macos::bind(&window, region)?;
         let kind = screen.kind.lock().map_err(|_| "Estado ocupado")?.clone();
         for (label, other) in app.webview_windows() {
             if label.starts_with(if screen.secondary {"image-select-"} else {"screen-select-"}) && label != window.label() {
@@ -961,6 +1004,7 @@ pub(crate) fn copy_file(path: &Path) -> Result<(), String> {
     if !path.is_file() {
         return Err("El video temporal ya no existe".into());
     }
+    #[cfg(windows)]
     let _clipboard = clipboard_win::Clipboard::new_attempts(20)
         .map_err(|e| format!("No se pudo abrir el portapapeles: {e}"))?;
     crate::video_transcript::write_open(&[path.to_string_lossy().into_owned()], "")
@@ -987,15 +1031,21 @@ pub fn screen_reveal(screen: State<Screen>) -> Result<(), String> {
     if path.is_empty() || !Path::new(&path).is_file() {
         return Err("El video temporal no esta disponible".into());
     }
+    #[cfg(windows)]
     Command::new("explorer.exe")
         .arg(format!("/select,{path}"))
         .spawn()
         .map_err(|e| e.to_string())?;
+    #[cfg(target_os = "macos")]
+    Command::new("/usr/bin/open").args(["-R", &path]).spawn().map_err(|e| e.to_string())?;
     Ok(())
 }
 
 struct AudioTrack {
+    #[cfg(windows)]
     _stream: cpal::Stream,
+    #[cfg(target_os = "macos")]
+    _stream: Option<crate::screen_capture::macos::AudioStream>,
     rx: mpsc::Receiver<(Instant, Vec<i16>)>,
     file: File,
     path: PathBuf,
@@ -1022,6 +1072,7 @@ fn samples<T: Copy>(
     }
 }
 impl AudioTrack {
+    #[cfg(windows)]
     fn new(system: bool, dir: &Path) -> Result<Self, String> {
         let host = cpal::default_host();
         let device = if system {
@@ -1094,6 +1145,20 @@ impl AudioTrack {
             scratch: Vec::with_capacity(8192),
         })
     }
+    #[cfg(target_os = "macos")]
+    fn new(system: bool, dir: &Path) -> Result<Self, String> {
+        let (tx, rx) = mpsc::sync_channel(256);
+        let fault = Arc::new(Mutex::new(String::new()));
+        let callback_fault = fault.clone();
+        let stream = crate::screen_capture::macos::AudioStream::new(system, Box::new(move |time, values| {
+            if tx.try_send((time, values)).is_err() {
+                if let Ok(mut error) = callback_fault.lock() { *error = "El audio no pudo escribirse a tiempo".into(); }
+            }
+        }))?;
+        let path = dir.join(if system { "system.pcm" } else { "microphone.pcm" });
+        let file = File::create(&path).map_err(|e| e.to_string())?;
+        Ok(Self { _stream: Some(stream), rx, file, path, rate: 48000, channels: 2, written: 0, fault, scratch: Vec::with_capacity(8192) })
+    }
     fn silence(&mut self, samples: u64) -> Result<(), String> {
         let zeros = [0u8; 8192];
         let mut bytes = samples * 2;
@@ -1108,26 +1173,30 @@ impl AudioTrack {
         Ok(())
     }
     fn drain(&mut self, start: Instant) -> Result<(), String> {
+        #[cfg(target_os = "macos")]
+        if let Some(stream) = &self._stream { stream.error()?; }
         let error = self.fault.lock().map_err(|_| "Audio ocupado")?.clone();
         if !error.is_empty() {
             return Err(error);
         }
         while let Ok((time, values)) = self.rx.try_recv() {
+            if time <= start { continue; }
             let end_frame =
                 (time.saturating_duration_since(start).as_secs_f64() * self.rate as f64) as u64;
-            let begin = end_frame.saturating_sub(values.len() as u64 / self.channels as u64)
-                * self.channels as u64;
-            if begin > self.written {
-                self.silence(begin - self.written)?;
-            }
-            pcm_bytes(&values,&mut self.scratch);
+            let (silence, skip) = crate::screen_capture::capture_geometry::pcm_span(end_frame, values.len(), self.channels, self.written);
+            if silence > 0 { self.silence(silence)?; }
+            let values = &values[skip..];
+            pcm_bytes(values,&mut self.scratch);
             self.file.write_all(&self.scratch).map_err(|e| e.to_string())?;
             self.written += values.len() as u64;
         }
         Ok(())
     }
     fn finish(&mut self, start: Instant, seconds: f64) -> Result<(), String> {
+        #[cfg(windows)]
         self._stream.pause().map_err(|e| e.to_string())?;
+        #[cfg(target_os = "macos")]
+        { self._stream.take(); }
         self.drain(start)?;
         let target = (seconds * self.rate as f64).round() as u64 * self.channels as u64;
         if target > self.written {
@@ -1275,8 +1344,8 @@ fn capture(
                 .collect::<String>();
             let list = dir.join("segments.txt");
             fs::write(&list, manifest).map_err(|e| e.to_string())?;
-            let mut child = command(&binary)
-                .args([
+            let mut join = command(&binary);
+            join.args([
                     "-hide_banner",
                     "-loglevel",
                     "error",
@@ -1293,10 +1362,9 @@ fn capture(
                 .stdin(Stdio::null())
                 .stderr(Stdio::from(
                     File::create(dir.join("join.log")).map_err(|e| e.to_string())?,
-                ))
-                .spawn()
-                .map_err(|e| e.to_string())?;
-            wait_encoder(&mut child)?;
+                ));
+            let mut encoder = crate::encoder_job::Encoder::spawn(&mut join)?;
+            wait_encoder(&mut encoder.child)?;
             if fs::metadata(&output).map_err(|e| e.to_string())?.len() == 0 {
                 return Err("El video quedo vacio".into());
             }
@@ -1375,8 +1443,9 @@ fn record(
     }
     let video = dir.join("video.mkv");
     let log = File::create(dir.join("capture.log")).map_err(|e| e.to_string())?;
-    let mut child = command(&binary)
-        .args([
+    let mut capture_command = command(&binary);
+    #[cfg(windows)]
+    capture_command.args([
             "-hide_banner",
             "-loglevel",
             "error",
@@ -1414,16 +1483,30 @@ fn record(
             "yuv420p",
             "-flush_packets",
             "1",
-        ])
-        .arg(&video)
+        ]);
+    #[cfg(target_os = "macos")]
+    capture_command.args(["-hide_banner", "-loglevel", "error", "-y", "-f", "rawvideo",
+        "-pixel_format", "bgra", "-video_size", &format!("{}x{}", region.width, region.height),
+        "-framerate", "30", "-i", "pipe:0", "-an", "-vf",
+        &format!("pad=ceil(iw/2)*2:ceil(ih/2)*2,scale={}:{}:force_original_aspect_ratio=decrease:force_divisible_by=2,pad={}:{}:(ow-iw)/2:(oh-ih)/2,setsar=1", output_size.0, output_size.1, output_size.0, output_size.1),
+        "-c:v", "h264_videotoolbox", "-allow_sw", "1", "-b:v", "12M", "-pix_fmt", "yuv420p", "-bf", "0", "-flush_packets", "1"]);
+    capture_command.arg(&video)
         .stdin(Stdio::piped())
-        .stderr(Stdio::from(log))
-        .spawn()
-        .map_err(|e| e.to_string())?;
+        .stderr(Stdio::from(log));
+    let mut encoder = crate::encoder_job::Encoder::spawn(&mut capture_command)?;
+    let child = &mut encoder.child;
+    #[cfg(target_os = "macos")]
+    let mut native_video = crate::screen_capture::macos::Video::start(region, (region.width, region.height),
+        child.stdin.take().ok_or("No se pudo abrir el codificador")?)?;
+    #[cfg(windows)]
     let started = Instant::now();
+    #[cfg(target_os = "macos")]
+    let started = native_video.started;
     // Wait for FFmpeg to actually create output, rather than reporting a successful spawn.
     let startup = (|| -> Result<(), String> {
         loop {
+            #[cfg(target_os = "macos")]
+            native_video.error()?;
             if child.try_wait().map_err(|e| e.to_string())?.is_some() {
                 return Err(format!(
                     "No se pudo capturar la pantalla. Revisa {}",
@@ -1470,6 +1553,8 @@ fn record(
             error = Some("La captura se interrumpio. Se conservaron los originales.".to_string());
             break;
         }
+        #[cfg(target_os = "macos")]
+        if let Err(e) = native_video.error() { error = Some(e); break; }
         for track in &mut tracks {
             if let Err(e) = track.drain(started) {
                 error = Some(e);
@@ -1500,10 +1585,16 @@ fn record(
     if reason == CaptureControl::Cancel {
         let _ = child.kill();
         let _ = child.wait();
+        #[cfg(target_os = "macos")]
+        { native_video.stop(); native_video.join(); }
         drop(tracks);
         return Ok((None, reason, seconds));
     }
-    let finalized = finish_process(&mut child);
+    #[cfg(target_os = "macos")]
+    native_video.stop();
+    let finalized = finish_process(child);
+    #[cfg(target_os = "macos")]
+    native_video.join();
     for track in &mut tracks {
         track.finish(started, seconds)?;
     }
@@ -1556,7 +1647,8 @@ fn record(
         .stderr(Stdio::from(
             File::create(dir.join("encode.log")).map_err(|e| e.to_string())?,
         ));
-    let mut mux_child = mux.spawn().map_err(|e| e.to_string())?;
+    let mut mux_encoder = crate::encoder_job::Encoder::spawn(&mut mux)?;
+    let mux_child = &mut mux_encoder.child;
     let deadline = Instant::now() + Duration::from_secs(120);
     loop {
         if let Some(exit) = mux_child.try_wait().map_err(|e| e.to_string())? {
@@ -1632,6 +1724,7 @@ mod tests {
         fs::remove_file(outside.join("keep.txt")).unwrap();fs::remove_dir(outside).unwrap();
     }
     #[test]
+    #[cfg(windows)]
     fn cancelled_cleanup_handles_windows_virtualized_app_cache() {
         // Own fresh UUID only: never inspect or delete another user's recording.
         let root=PathBuf::from(std::env::var_os("LOCALAPPDATA").unwrap()).join("app.whispera.desktop.preview/screen-recordings");
@@ -1708,12 +1801,13 @@ mod tests {
         }
     }
     #[test]
+    #[cfg(windows)]
     #[ignore = "Records two tiny desktop regions without audio; run explicitly on Windows"]
     fn native_reframe_keeps_resolution_and_decodes_joined_video() {
         let binary=PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../node_modules/ffmpeg-static/ffmpeg.exe");
         let root=PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target/screen-smoke").join(uuid::Uuid::new_v4().to_string());
         fs::create_dir_all(&root).unwrap();
-        let regions=[Region{x:0,y:0,width:129,height:131},Region{x:20,y:20,width:160,height:90}];
+        let regions=[Region{x:0,y:0,width:129,height:131,..Default::default() },Region{x:20,y:20,width:160,height:90,..Default::default() }];
         let mut elapsed=0.;
         for (index,area) in regions.into_iter().enumerate() {
             let dir=root.join(format!("part-{index:04}"));fs::create_dir_all(&dir).unwrap();
@@ -1743,6 +1837,7 @@ mod tests {
         let resolved=root.canonicalize().unwrap();let allowed=PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target/screen-smoke").canonicalize().unwrap();assert!(resolved.starts_with(allowed));fs::remove_dir_all(resolved).unwrap();
     }
     #[test]
+    #[cfg(windows)]
     #[ignore = "Records a tiny desktop region and optional default audio devices; run explicitly on Windows"]
     fn native_capture_smoke_all_audio_modes() {
         let binary = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -1769,7 +1864,7 @@ mod tests {
                         y: 0,
                         width: 129,
                         height: 131,
-                    },
+                    ..Default::default() },
                     (130,132),
                     prefs,
                     binary_clone,
@@ -1847,8 +1942,8 @@ mod tests {
                 x: -1905,
                 y: 30,
                 width: 152,
-                height: 120
-            }
+                height: 120,
+            ..Default::default() }
         );
     }
     #[test]

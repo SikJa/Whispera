@@ -1,4 +1,5 @@
 use crate::storage::Settings;
+#[cfg(target_os = "windows")]
 use windows::{
     core::PCWSTR,
     Win32::Media::Audio::{PlaySoundW, SND_MEMORY, SND_NODEFAULT, SND_SYNC},
@@ -33,11 +34,21 @@ pub fn play(settings: &Settings, stop: bool) {
         let Ok(data) = quiet_wav(data) else {
             return;
         };
+        #[cfg(target_os = "windows")]
         let _ = PlaySoundW(
             PCWSTR(data.as_ptr().cast()),
             None,
             SND_MEMORY | SND_SYNC | SND_NODEFAULT,
         );
+        #[cfg(target_os = "macos")]
+        {
+            unsafe extern "C" {
+                fn whispera_sound_play(bytes: *const u8, length: usize) -> i32;
+            }
+            if whispera_sound_play(data.as_ptr(), data.len()) != 0 {
+                eprintln!("Whispera: macOS no pudo reproducir el sonido seleccionado");
+            }
+        }
     });
 }
 fn quiet_wav(data: &[u8]) -> Result<Vec<u8>, String> {

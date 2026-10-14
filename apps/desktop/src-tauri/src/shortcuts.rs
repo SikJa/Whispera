@@ -6,6 +6,10 @@ use std::sync::{
 use tauri::Manager;
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut};
 
+#[cfg(any(target_os = "macos", test))]
+#[path = "macos/shortcuts.rs"]
+mod macos;
+
 #[derive(Default)]
 pub struct Capture {
     pub active: AtomicBool,
@@ -40,10 +44,19 @@ pub fn capture(app: &tauri::AppHandle, active: bool) -> Result<(), String> {
     let store = app.state::<crate::storage::Store>();
     let settings: crate::storage::Settings = store.get("settings")?;
     let screen: crate::screen::Preferences = store.get("screen_preferences").unwrap_or_default();
-    let values:Vec<_> = [settings.hotkey, screen.hotkey, screen.image_hotkey, crate::library::hotkey(app),crate::replay::hotkey(app)].into_iter().filter(|key|!key.is_empty()).collect();
+    let values: Vec<_> = [
+        settings.hotkey,
+        screen.hotkey,
+        screen.image_hotkey,
+        crate::library::hotkey(app),
+        crate::replay::hotkey(app),
+    ]
+    .into_iter()
+    .filter(|key| !key.is_empty())
+    .collect();
     state.active.store(true, Ordering::SeqCst);
     if active {
-        // Windows consumes registered shortcuts before a focused input sees them.
+        // Native global shortcuts are consumed before a focused input sees them.
         // Temporarily release only Whispera's keys, including the current combo.
         for value in &values {
             let result = parse(value).and_then(|key| {
@@ -100,6 +113,14 @@ pub fn parse(value: &str) -> Result<Shortcut, String> {
             .map_err(|_| "Atajo invalido. Ejemplo: Control+Shift+Space".into());
     }
     let character = value.chars().next().unwrap();
+    #[cfg(target_os = "macos")]
+    return macos::parse_character(character);
+    #[cfg(target_os = "windows")]
+    parse_windows_character(character)
+}
+
+#[cfg(target_os = "windows")]
+fn parse_windows_character(character: char) -> Result<Shortcut, String> {
     let code = unsafe { windows::Win32::UI::Input::KeyboardAndMouse::VkKeyScanW(character as u16) };
     if code == -1 {
         return Err("Esa tecla no existe en la distribucion de Windows".into());
@@ -176,10 +197,19 @@ pub async fn save_all_shortcuts(
         if crate::screen::busy(&app) || crate::health::busy(&engine.recorder.snapshot().phase) {
             return Err("Termina la grabacion antes de cambiar los atajos".into());
         }
-        let next = [parse(&voice)?, parse(&video)?, parse(&image)?, parse(&library)?];
-        let replay_key=crate::replay::hotkey(&app);
-        if (!replay_key.is_empty() && next.contains(&parse(&replay_key)?)) || next.contains(&parse("Escape")?)
-            || next.iter().enumerate().any(|(i, key)| next[..i].contains(key))
+        let next = [
+            parse(&voice)?,
+            parse(&video)?,
+            parse(&image)?,
+            parse(&library)?,
+        ];
+        let replay_key = crate::replay::hotkey(&app);
+        if (!replay_key.is_empty() && next.contains(&parse(&replay_key)?))
+            || next.contains(&parse("Escape")?)
+            || next
+                .iter()
+                .enumerate()
+                .any(|(i, key)| next[..i].contains(key))
         {
             return Err("Elegi cuatro atajos distintos. Escape se reserva para salir.".into());
         }
@@ -187,7 +217,9 @@ pub async fn save_all_shortcuts(
         let mut settings: crate::storage::Settings = store.get("settings")?;
         let mut preferences: crate::screen::Preferences = store.get("screen_preferences")?;
         let mut library_preferences = crate::library::settings(&store)?;
-        if !library_preferences.is_object() { library_preferences = serde_json::json!({}); }
+        if !library_preferences.is_object() {
+            library_preferences = serde_json::json!({});
+        }
         let old = [
             parse(&settings.hotkey)?,
             parse(&preferences.hotkey)?,

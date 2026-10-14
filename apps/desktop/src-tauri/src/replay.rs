@@ -1,7 +1,9 @@
 //! Opt-in, bounded, hardware-encoded replay of the primary monitor.
 use crate::{encoder_job::Encoder,replay_audio,storage::Store};
 use serde::{Deserialize,Serialize};
-use std::{fs,io::{BufRead,BufReader,Read},os::windows::process::CommandExt,path::{Path,PathBuf},process::{Command,Stdio},sync::{Arc,Mutex,mpsc,atomic::{AtomicBool,AtomicU64,Ordering}},time::{Duration,Instant}};
+use std::{fs,io::{BufRead,BufReader,Read},path::{Path,PathBuf},process::{Command,Stdio},sync::{Arc,Mutex,mpsc,atomic::{AtomicBool,AtomicU64,Ordering}},time::{Duration,Instant}};
+#[cfg(windows)]
+use std::os::windows::process::CommandExt;
 use tauri::{Emitter,Manager};
 
 #[derive(Clone,Serialize,Deserialize,PartialEq)]
@@ -94,7 +96,10 @@ fn start(app:&tauri::AppHandle,value:Preferences)->Result<(),String>{
     if app.state::<Replay>().worker.lock().map_err(|_|"Repetición ocupada")?.is_some(){return Ok(());}
     let binary=crate::screen::ffmpeg(app)?;
     let monitor=app.primary_monitor().map_err(|e|e.to_string())?.ok_or("No hay pantalla principal")?;
-    let screen=Screen{x:monitor.position().x,y:monitor.position().y,width:monitor.size().width,height:monitor.size().height,name:monitor.name().cloned().unwrap_or_default()};
+    let screen=Screen{x:monitor.position().x,y:monitor.position().y,width:monitor.size().width,height:monitor.size().height,name:monitor.name().cloned().unwrap_or_default(),
+        #[cfg(target_os="macos")]
+        region:crate::screen_capture::macos::monitor_region(&monitor)?,
+    };
     let (tx,rx)=mpsc::channel();let app_worker=app.clone();
     change(app,|s|{s.phase="starting".into();s.error.clear();s.available_seconds=0.;});
     let thread=std::thread::spawn(move||{
@@ -120,8 +125,14 @@ pub fn save(app:&tauri::AppHandle)->Result<(),String>{
 #[tauri::command]
 pub fn replay_save(app:tauri::AppHandle,window:tauri::WebviewWindow)->Result<(),String>{settings_window(&window)?;save(&app)}
 pub fn report_error(app:&tauri::AppHandle,error:String){change(app,|s|s.error=error);}
-pub(crate) fn command(binary:&Path)->Command{let mut command=Command::new(binary);command.creation_flags(0x08000000);command}
+pub(crate) fn command(binary:&Path)->Command{
+    let mut command=Command::new(binary);
+    #[cfg(windows)]
+    command.creation_flags(0x08000000);
+    command
+}
 pub(crate) fn encoder_args(encoder:&str)->Vec<&'static str>{match encoder{
+    "h264_videotoolbox"=>vec!["-c:v","h264_videotoolbox","-allow_sw","0","-b:v","5M","-maxrate","8M","-bufsize","8M"],
     "h264_nvenc"=>vec!["-c:v","h264_nvenc","-forced-idr","1","-preset","p4","-rc","vbr","-cq","20","-b:v","5M","-maxrate","8M","-bufsize","8M"],
     "h264_amf"=>vec!["-c:v","h264_amf","-quality","speed","-rc","cqp","-qp_i","20","-qp_p","22"],
     "h264_qsv"=>vec!["-c:v","h264_qsv","-forced_idr","1","-preset","veryfast","-global_quality","22"],
@@ -130,7 +141,11 @@ pub(crate) fn encoder_args(encoder:&str)->Vec<&'static str>{match encoder{
 pub(crate) fn hardware_encoder(binary:&Path)->Result<String,String>{
     static ENCODER:Mutex<Option<String>>=Mutex::new(None);
     let mut cached=ENCODER.lock().map_err(|_|"Codificador ocupado")?;if let Some(value)=cached.as_ref(){return Ok(value.clone());}
-    for name in ["h264_nvenc","h264_amf","h264_qsv"]{
+    #[cfg(windows)]
+    let candidates=["h264_nvenc","h264_amf","h264_qsv"];
+    #[cfg(target_os="macos")]
+    let candidates=["h264_videotoolbox"];
+    for name in candidates{
         let mut cmd=command(binary);cmd.args(["-hide_banner","-loglevel","error","-f","lavfi","-i","color=size=128x128:rate=30","-t","0.1","-an"]).args(encoder_args(name)).args(["-f","null","-"]).stdout(Stdio::null()).stderr(Stdio::null());
         if run_command(&mut cmd,Duration::from_secs(4)).is_ok(){*cached=Some(name.into());return Ok(name.into());}
     }
@@ -149,7 +164,13 @@ pub(crate) fn run_command(command:&mut Command,timeout:Duration)->Result<(),Stri
     loop{if let Some(exit)=process.child.try_wait().map_err(|e|e.to_string())?{return if exit.success(){Ok(())}else{Err("No se pudo preparar el video".into())};}
         if start.elapsed()>timeout{return Err("El video tardó demasiado en prepararse".into());}std::thread::sleep(Duration::from_millis(25));}
 }
-struct Screen{x:i32,y:i32,width:u32,height:u32,name:String}
+struct Screen{x:i32,y:i32,width:u32,height:u32,name:String,
+    #[cfg(target_os="macos")]
+    region:crate::screen::Region,
+}
+#[cfg(target_os="macos")]
+fn dda_index(_name:&str)->Option<u32>{None}
+#[cfg(windows)]
 fn dda_index(name:&str)->Option<u32>{
     use windows::Win32::Graphics::Dxgi::{CreateDXGIFactory1,IDXGIFactory1};
     unsafe{let factory:IDXGIFactory1=CreateDXGIFactory1().ok()?;let adapter=factory.EnumAdapters1(0).ok()?;
@@ -160,11 +181,14 @@ fn dda_index(name:&str)->Option<u32>{
 fn dimensions(width:u32,height:u32)->(u32,u32){let scale=(1920./width.max(1) as f64).min(1080./height.max(1) as f64).min(1.);((width as f64*scale) as u32/2*2,(height as f64*scale) as u32/2*2)}
 fn capture_command(binary:&Path,screen:&Screen,encoder:&str,dir:&Path,dda:Option<u32>)->Result<Command,String>{
     let mut cmd=command(binary);cmd.args(["-hide_banner","-loglevel","error","-y"]);
+    #[cfg(windows)]
     if let Some(index)=dda{cmd.args(["-f","lavfi","-i"]).arg(format!("ddagrab=output_idx={index}:framerate=30:draw_mouse=1"));}
     else{cmd.args(["-f","gdigrab","-framerate","30","-probesize","32","-analyzeduration","0","-draw_mouse","1","-offset_x"]).arg(screen.x.to_string()).arg("-offset_y").arg(screen.y.to_string()).arg("-video_size").arg(format!("{}x{}",screen.width,screen.height)).args(["-i","desktop"]);}
     let (width,height)=dimensions(screen.width,screen.height);
+    #[cfg(target_os="macos")]
+    cmd.args(["-f","rawvideo","-pixel_format","bgra","-video_size",&format!("{width}x{height}"),"-framerate","30","-i","pipe:0"]);
     let filter=format!("{}scale={width}:{height},format=nv12,setpts=PTS-STARTPTS",if dda.is_some(){"hwdownload,format=bgra,"}else{""});
-    cmd.args(["-vf",&filter,"-an"]).args(encoder_args(encoder)).args(["-g","30","-bf","0","-force_key_frames","expr:gte(t,n_forced*1)","-f","segment","-segment_time","1","-segment_format","mpegts","-reset_timestamps","1","-segment_list_type","csv","-segment_list_size","610","-segment_list"]).arg(dir.join("index.csv")).args(["-progress","pipe:1","-stats_period","0.25"]).arg(dir.join("part-%09d.ts")).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::from(fs::File::create(dir.join("capture.log")).map_err(|e|e.to_string())?));Ok(cmd)
+    cmd.args(["-vf",&filter,"-an"]).args(encoder_args(encoder)).args(["-g","30","-bf","0","-force_key_frames","expr:gte(t,n_forced*1)","-f","segment","-segment_time","1","-segment_format","mpegts","-reset_timestamps","1","-segment_list_type","csv","-segment_list_size","610","-segment_list"]).arg(dir.join("index.csv")).args(["-progress","pipe:1","-stats_period","0.25"]).arg(dir.join("part-%09d.ts")).stdin(if cfg!(target_os="macos"){Stdio::piped()}else{Stdio::null()}).stdout(Stdio::piped()).stderr(Stdio::from(fs::File::create(dir.join("capture.log")).map_err(|e|e.to_string())?));Ok(cmd)
 }
 struct Temporary{path:PathBuf}
 impl Drop for Temporary{fn drop(&mut self){let _=fs::remove_dir_all(&self.path);}}
@@ -181,11 +205,15 @@ fn record(app:&tauri::AppHandle,prefs:&Preferences,binary:&Path,screen:Screen,rx
     let encoder=hardware_encoder(binary)?;let temp=temp_dir(Path::new(&prefs.folder))?;
     let mut tracks=Vec::new();if ["system","both"].contains(&prefs.audio.as_str()){tracks.push(replay_audio::Audio::new(true,prefs.seconds)?);}if ["microphone","both"].contains(&prefs.audio.as_str()){tracks.push(replay_audio::Audio::new(false,prefs.seconds)?);}
     let mut process=Encoder::spawn(&mut capture_command(binary,&screen,&encoder,&temp.path,dda_index(&screen.name))?)?;
+    #[cfg(target_os="macos")]
+    let mut native_video=crate::screen_capture::macos::Video::start(screen.region,dimensions(screen.width,screen.height),process.child.stdin.take().ok_or("No se pudo abrir el buffer")?)?;
     let started=Instant::now();let elapsed=Arc::new(AtomicU64::new(0));let progress=elapsed.clone();
     let stdout=process.child.stdout.take().ok_or("No se pudo leer el buffer")?;
     let reader=std::thread::spawn(move||{for line in BufReader::new(stdout).lines().map_while(Result::ok){if let Some(value)=line.strip_prefix("out_time_us="){if let Ok(value)=value.parse::<u64>(){progress.store(value,Ordering::Relaxed);}}}});
     let mut last_prune=Instant::now();let mut first_time=None;
     let result=(||{loop{
+        #[cfg(target_os="macos")]
+        native_video.error()?;
         if process.child.try_wait().map_err(|e|e.to_string())?.is_some(){return Err("La captura en segundo plano se detuvo. Revisá el dispositivo o desactivá y volvé a activar la opción".into());}
         let time=elapsed.load(Ordering::Relaxed) as f64/1_000_000.;
         if first_time.is_none()&&time>0.{first_time=Some(Instant::now().checked_sub(Duration::from_secs_f64(time)).unwrap_or(started));}
@@ -221,7 +249,12 @@ fn record(app:&tauri::AppHandle,prefs:&Preferences,binary:&Path,screen:Screen,rx
             Err(mpsc::RecvTimeoutError::Timeout)=>{}
         }
     }})();
-    drop(process);let _=reader.join();result
+    #[cfg(target_os="macos")]
+    native_video.stop();
+    drop(process);
+    #[cfg(target_os="macos")]
+    native_video.join();
+    let _=reader.join();result
 }
 fn export_clip(binary:&Path,folder:&Path,dir:&Path,parts:&[(u64,PathBuf)],offset:f64,duration:f64,audio:Vec<replay_audio::Snapshot>)->Result<PathBuf,String>{
     let list=parts.iter().map(|(_,path)|format!("file '{}'\n",path.file_name().unwrap().to_string_lossy())).collect::<String>();fs::write(dir.join("join.txt"),list).map_err(|e|e.to_string())?;
@@ -263,7 +296,7 @@ mod tests{
 #[cfg(test)]
 mod media_tests {
     use super::*;
-    fn binary()->PathBuf{Path::new(env!("CARGO_MANIFEST_DIR")).join("../node_modules/ffmpeg-static/ffmpeg.exe")}
+    fn binary()->PathBuf{Path::new(env!("CARGO_MANIFEST_DIR")).join("../node_modules/ffmpeg-static").join(if cfg!(target_os="macos"){"ffmpeg"}else{"ffmpeg.exe"})}
     fn duration(binary:&Path,path:&Path)->f64{
         let output=command(binary).args(["-hide_banner","-i"]).arg(path).output().unwrap();
         crate::library_media::duration(&String::from_utf8_lossy(&output.stderr)).unwrap()
@@ -312,7 +345,7 @@ mod media_tests {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test,windows))]
 mod desktop_tests {
     use super::*;
     #[test]

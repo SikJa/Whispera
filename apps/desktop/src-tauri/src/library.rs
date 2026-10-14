@@ -9,6 +9,9 @@ use std::{
 use tauri::{Emitter, Manager};
 use tauri_plugin_clipboard_manager::ClipboardExt;
 use tauri_plugin_global_shortcut::GlobalShortcutExt;
+#[cfg(any(target_os = "macos", test))]
+#[path = "macos/clipboard.rs"]
+pub(crate) mod clipboard;
 static GATE: Mutex<()> = Mutex::new(());
 static INCOMING: Mutex<Vec<PathBuf>> = Mutex::new(Vec::new());
 pub fn enqueue(path: &Path) {
@@ -33,11 +36,21 @@ fn image_hash(rgba: &[u8], width: u32, height: u32) -> String {
 #[derive(Default)]
 pub struct Library {
     target: Mutex<Option<paste::Target>>,
-    sequence: Mutex<Option<std::num::NonZeroU32>>,
+    sequence: Mutex<Option<u64>>,
+}
+fn clipboard_sequence() -> Option<u64> {
+    #[cfg(windows)]
+    { clipboard_win::seq_num().map(|n| u64::from(n.get())) }
+    #[cfg(target_os = "macos")]
+    { clipboard::sequence() }
 }
 pub(crate) fn suppress_clipboard(app: &tauri::AppHandle) {
+    // Never hold this mutex while dispatching AppKit work to the main thread.
+    suppress_clipboard_sequence(app, clipboard_sequence());
+}
+pub(crate) fn suppress_clipboard_sequence(app: &tauri::AppHandle, value: Option<u64>) {
     if let Ok(mut sequence) = app.state::<Library>().sequence.lock() {
-        *sequence = clipboard_win::seq_num();
+        *sequence = value;
     }
 }
 pub(crate) fn rows(store: &Store) -> Result<Vec<Value>, String> {
@@ -213,11 +226,12 @@ fn image_data(app: &tauri::AppHandle, image: tauri::image::Image<'_>) -> Result<
         json!({"kind":"image","imageId":path.to_string_lossy(),"fingerprint":fingerprint,"width":image.width(),"height":image.height(),"bytes":fs::metadata(&path).map(|m|m.len()).unwrap_or(0),"ext":"png","source":"image"}),
     )
 }
+#[cfg(windows)]
 fn collect(app: &tauri::AppHandle) -> Result<(), String> {
     let state = app.state::<Library>();
     let _guard = GATE.lock().map_err(|_| "Biblioteca ocupada")?;
     let store = app.state::<Store>();
-    let sequence = clipboard_win::seq_num();
+    let sequence = clipboard_sequence();
     if sequence == *state.sequence.lock().map_err(|_| "Biblioteca ocupada")? {
         return Ok(());
     }
@@ -248,6 +262,62 @@ fn collect(app: &tauri::AppHandle) -> Result<(), String> {
         }
     }
     *state.sequence.lock().map_err(|_| "Biblioteca ocupada")? = sequence;
+    Ok(())
+}
+#[cfg(target_os = "macos")]
+fn collect(app: &tauri::AppHandle) -> Result<(), String> {
+    let state = app.state::<Library>();
+    let previous = *state.sequence.lock().map_err(|_| "Biblioteca ocupada")?;
+    // AppKit runs before taking the history gate. A synchronous UI command must
+    // never wait for a worker that is itself waiting for the main queue.
+    let snapshot = clipboard::snapshot(previous)?;
+    let _guard = GATE.lock().map_err(|_| "Biblioteca ocupada")?;
+    if !clipboard::snapshot_is_current(previous, *state.sequence.lock().map_err(|_| "Biblioteca ocupada")?, snapshot.sequence) {
+        return Ok(());
+    }
+    let store = app.state::<Store>();
+    if !settings(&store)?["incognito"].as_bool().unwrap_or(false) {
+        match snapshot.content {
+            clipboard::Content::Files(paths) => {
+                let paths: Vec<_> = paths.into_iter().filter(|p| Path::new(p).is_file()).take(10).collect();
+                if !paths.is_empty() { add(&store, files_data(&paths))?; }
+            }
+            clipboard::Content::Image(bytes) => {
+                let image = tauri::image::Image::from_bytes(&bytes).map_err(|e| e.to_string())?;
+                add(&store, image_data(app, image)?)?;
+            }
+            clipboard::Content::Text(text) => {
+                if let Some(data) = clipboard::history_text(&text) { add(&store, data)?; }
+            }
+            clipboard::Content::Empty => {}
+        }
+    }
+    let mut current = state.sequence.lock().map_err(|_| "Biblioteca ocupada")?;
+    if *current == previous { *current = Some(snapshot.sequence); }
+    Ok(())
+}
+fn is_plain_file(metadata: &fs::Metadata) -> bool {
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+        metadata.is_file() && metadata.file_attributes() & 0x400 == 0
+    }
+    #[cfg(not(windows))]
+    { metadata.is_file() && !metadata.file_type().is_symlink() }
+}
+fn reveal_file(path: &Path) -> Result<(), String> {
+    #[cfg(windows)]
+    {
+        std::process::Command::new("explorer.exe").arg(format!("/select,{}", path.display()))
+            .spawn().map_err(|e| e.to_string())?;
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let status = std::process::Command::new("/usr/bin/open").arg("-R").arg(path)
+            .stdin(std::process::Stdio::null()).stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null()).status().map_err(|e| e.to_string())?;
+        if !status.success() { return Err("No se pudo mostrar el archivo en Finder".into()); }
+    }
     Ok(())
 }
 pub fn start(app: &tauri::AppHandle) {
@@ -285,10 +355,7 @@ pub fn start(app: &tauri::AppHandle) {
                                     let path = entry.path();
                                     if path.extension().is_some_and(|e| e == "png")
                                         && !used.contains(&path)
-                                        && fs::symlink_metadata(&path).is_ok_and(|m| {
-                                            use std::os::windows::fs::MetadataExt;
-                                            m.is_file() && m.file_attributes() & 0x400 == 0
-                                        })
+                                        && fs::symlink_metadata(&path).is_ok_and(|m| is_plain_file(&m))
                                     {
                                         let _ = fs::remove_file(path);
                                     }
@@ -458,9 +525,9 @@ pub async fn library_action(
       "clear"=>items.retain(|i|i["pinned"].as_bool().unwrap_or(false)),
       "merge"=>{let source=index.ok_or("Elemento inexistente")?;let target=items.iter().position(|i|i["id"]==value).ok_or("Destino inexistente")?;if source==target{return Err("Selecciona otro elemento".into());}let a=items[source]["data"].clone();let b=items[target]["data"].clone();if a["kind"]=="files"&&b["kind"]=="files"{let mut ps=b["paths"].as_array().cloned().unwrap_or_default();ps.extend(a["paths"].as_array().cloned().unwrap_or_default());if ps.len()>10{return Err("Maximo 10 archivos".into());}let ps:Vec<_>=ps.iter().filter_map(|p|p.as_str().map(String::from)).collect();items[target]["data"]=files_data(&ps);}else{let imgs=|d:&Value|->Vec<Value>{if d["kind"]=="image"{vec![d.clone()]}else if d["kind"]=="image-collection"{d["images"].as_array().cloned().unwrap_or_default()}else{vec![]}};let mut images=imgs(&b);let more=imgs(&a);if images.is_empty()||more.is_empty(){return Err("Tipos incompatibles".into());}images.extend(more);if images.len()>10{return Err("Maximo 10 imagenes".into());}items[target]["data"]=json!({"kind":"image-collection","images":images});}items.remove(source);},
       "split"|"remove-part"=>{let i=index.ok_or("Elemento inexistente")?;let part=detach(&mut items[i]["data"],&value)?;if paths(&items[i]["data"]).is_empty(){items.remove(i);}if action=="split"{items.insert(0,json!({"id":uuid::Uuid::new_v4().to_string(),"data":part,"capturedAt":chrono::Utc::now().timestamp_millis(),"hitCount":1,"pinned":false}));}},
-      "reveal"=>{let i=index.ok_or("Elemento inexistente")?;let data=selected(&items[i]["data"],&value)?;let path=paths(&data).into_iter().next().filter(|p|p.is_file()).ok_or("Archivo inexistente")?;std::process::Command::new("explorer.exe").arg(format!("/select,{}",path.display())).spawn().map_err(|e|e.to_string())?;return Ok(json!(true));},
+      "reveal"=>{let i=index.ok_or("Elemento inexistente")?;let data=selected(&items[i]["data"],&value)?;let path=paths(&data).into_iter().next().filter(|p|p.is_file()).ok_or("Archivo inexistente")?;reveal_file(&path)?;return Ok(json!(true));},
       "copy"|"paste"=>{let i=index.ok_or("Elemento inexistente")?;let data=selected(&items[i]["data"],&value)?;if data["kind"]=="text"{app.clipboard().write_text(data["text"].as_str().unwrap_or("")).map_err(|e|e.to_string())?;}else if data["kind"]=="image"{let path=paths(&data).into_iter().next().ok_or("Imagen inexistente")?;let bytes=fs::read(path).map_err(|e|e.to_string())?;let image=tauri::image::Image::from_bytes(&bytes).map_err(|e|e.to_string())?;app.clipboard().write_image(&image).map_err(|e|e.to_string())?;}else{let p=paths(&data);if p.is_empty(){return Err("Los archivos ya no existen".into());}crate::video_transcript::copy_files(&app,&p)?;}
-        *state.sequence.lock().map_err(|_|"Biblioteca ocupada")?=clipboard_win::seq_num();
+        if data["kind"]=="text"||data["kind"]=="image"{suppress_clipboard(&app);}
         if action=="paste"{if let Some(w)=app.get_webview_window("library"){let _=w.hide();}let target=state.target.lock().map_err(|_|"Destino ocupado")?.ok_or("No hay destino. Contenido copiado para pegar manualmente")?;paste::restore_and_paste(target)?;}return Ok(json!(true));},
       "add"=>{let p:Vec<String>=value.as_array().ok_or("Archivos invalidos")?.iter().filter_map(|p|p.as_str().map(String::from)).filter(|p|Path::new(p).is_file()).take(10).collect();if !p.is_empty(){add(&store,files_data(&p))?;}return payload(&store);},
       _=>return Err("Accion no disponible todavia".into())
@@ -479,7 +546,10 @@ pub async fn library_drag(
     }
     let permit = crate::native_drag::reserve()?;
     if !crate::native_drag::button_down() { return Ok(()); }
+    #[cfg(windows)]
     let source = window.hwnd().map_err(|e| e.to_string())?.0 as usize as i64;
+    #[cfg(target_os = "macos")]
+    let source = window;
     tauri::async_runtime::spawn_blocking(move || {
     let data = rows(&app.state::<Store>())?
         .into_iter()
@@ -708,12 +778,15 @@ pub fn library_cursor(
     let origin = window.outer_position().map_err(|e| e.to_string())?;
     let size = window.inner_size().map_err(|e| e.to_string())?;
     let scale = window.scale_factor().map_err(|e| e.to_string())?;
-    let mut cursor = windows::Win32::Foundation::POINT::default();
-    unsafe {
-        windows::Win32::UI::WindowsAndMessaging::GetCursorPos(&mut cursor)
-            .map_err(|e| e.to_string())?;
-    }
+    #[cfg(windows)]
+    let cursor = {
+        let mut point = windows::Win32::Foundation::POINT::default();
+        unsafe { windows::Win32::UI::WindowsAndMessaging::GetCursorPos(&mut point).map_err(|e| e.to_string())?; }
+        tauri::PhysicalPosition::new(point.x as f64, point.y as f64)
+    };
+    #[cfg(target_os = "macos")]
+    let cursor = window.cursor_position().map_err(|e| e.to_string())?;
     Ok(
-        json!({"x":(cursor.x-origin.x) as f64/scale,"y":(cursor.y-origin.y) as f64/scale,"displayWidth":size.width as f64/scale,"displayHeight":size.height as f64/scale,"stickPosition":settings(&app.state::<Store>())?["stickPosition"]}),
+        json!({"x":(cursor.x-origin.x as f64)/scale,"y":(cursor.y-origin.y as f64)/scale,"displayWidth":size.width as f64/scale,"displayHeight":size.height as f64/scale,"stickPosition":settings(&app.state::<Store>())?["stickPosition"]}),
     )
 }

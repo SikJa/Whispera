@@ -1,4 +1,5 @@
 import { invoke } from '@tauri-apps/api/core';
+import { isMac } from './platform';
 
 // Serialize focus changes so moving between fields cannot leave shortcuts paused.
 let pending: Promise<unknown> = Promise.resolve();
@@ -10,7 +11,7 @@ export function captureHotkey(active: boolean) {
 export async function finishHotkeyCapture() { await captureHotkey(false); }
 
 const names: Record<string,string> = {
-  control:'Ctrl', ctrl:'Ctrl', alt:'Alt', shift:'Shift', super:'Win', meta:'Win',
+  control:'Ctrl', ctrl:'Ctrl', alt:isMac?'Option':'Alt', shift:'Shift', super:isMac?'Cmd':'Win', meta:isMac?'Cmd':'Win',
   space:'Espacio', enter:'Enter', escape:'Esc', backspace:'Retroceso', delete:'Supr',
   arrowup:'↑', arrowdown:'↓', arrowleft:'←', arrowright:'→',
   equal:'=', minus:'−', comma:',', period:'.', slash:'/', backslash:'\\',

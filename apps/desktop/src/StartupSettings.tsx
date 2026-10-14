@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { native } from './client';
 import { SettingsSwitch } from './ResourceControls';
+import { systemName, isMac } from './platform';
 
 export default function StartupSettings() {
   const [enabled, setEnabled] = useState(false);
@@ -23,14 +24,14 @@ export default function StartupSettings() {
       await invoke('set_startup', { enabled: value });
       const saved = await invoke<boolean>('startup_enabled');
       setEnabled(saved);
-      if (saved !== value) throw Error('Windows no confirmó el cambio.');
+      if (saved !== value) throw Error(`${systemName} no confirmó el cambio.`);
       setMessage(saved ? 'Inicio automático activado.' : 'Inicio automático desactivado.');
     } catch (error) { setMessage(String(error)); }
     finally { setBusy(false); }
   };
   return <section>
-    <div className="form-row"><label htmlFor="windows-startup">Iniciar Whispera con Windows<span>Oculta en la bandeja, lista para usar tus atajos.</span></label>
-      <SettingsSwitch id="windows-startup" label="Iniciar Whispera con Windows" checked={enabled} disabled={!native || busy || !loaded} onChange={value => void change(value)} />
+    <div className="form-row"><label htmlFor="windows-startup">Iniciar Whispera con {systemName}<span>{isMac ? 'En la barra de menús, lista para usar tus atajos.' : 'Oculta en la bandeja, lista para usar tus atajos.'}</span></label>
+      <SettingsSwitch id="windows-startup" label={`Iniciar Whispera con ${systemName}`} checked={enabled} disabled={!native || busy || !loaded} onChange={value => void change(value)} />
     </div>
     {message && <p className="notice" role="status">{message}</p>}
   </section>;

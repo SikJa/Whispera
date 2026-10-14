@@ -13,7 +13,7 @@ fn client() -> Result<&'static reqwest::Client, String> {
 
 pub fn entry() -> Result<keyring::Entry, String> {
     keyring::Entry::new("Whispera.Desktop.Preview", "groq")
-        .map_err(|_| "No se pudo abrir el almacen de credenciales de Windows".into())
+        .map_err(|_| "No se pudo abrir el almacen seguro de credenciales del sistema".into())
 }
 pub fn corrections(text: &str, rules: &[Rule]) -> String {
     let mut output = text.to_owned();

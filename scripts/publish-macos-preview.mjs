@@ -4,6 +4,7 @@ import {createHash} from 'node:crypto';
 import {execFileSync} from 'node:child_process';
 import {basename, dirname, join, resolve} from 'node:path';
 import {pathToFileURL} from 'node:url';
+import {updateMessage} from './publish-release.mjs';
 
 const repo = 'SikJa/Whispera';
 const digest = path => createHash('sha256').update(readFileSync(path)).digest('hex');
@@ -22,7 +23,7 @@ export function previewManifest(version, entries, notes) {
     platforms[`darwin-${entry.arch}`] = {signature: entry.signature.trim(),
       url: `https://github.com/${repo}/releases/download/v${version}/${entry.name}`};
   }
-  return {version, notes, pub_date: new Date().toISOString(), platforms};
+  return {version, notes:updateMessage(notes), pub_date: new Date().toISOString(), platforms};
 }
 
 function walk(directory) {
@@ -73,7 +74,7 @@ export function prepare(artifacts, source, notes) {
     const evidence = join(directory, `verification-${report.arch}.json`);
     copyFileSync(reportPath, evidence); files.push(evidence);
   }
-  const manifest = previewManifest(version, entries, notes);
+  const manifest = previewManifest(version, entries, readFileSync('docs/update-message-macos.txt', 'utf8'));
   const latest = join(directory, 'latest.json');
   writeFileSync(latest, JSON.stringify(manifest, null, 2) + '\n'); files.push(latest);
   const checksums = join(directory, 'SHA256SUMS.txt');
@@ -105,12 +106,13 @@ export function publish(prepared) {
   gh(['release', 'edit', tag, '--repo', repo, '--draft=false', '--prerelease', '--latest=false']);
 
   const channel = 'macos-preview';
+  const channelNotes = `macOS preview update feed. Download the current DMGs and read the setup notes: [Whispera ${version}](https://github.com/${repo}/releases/tag/${tag}). Builds are ad-hoc signed, not Apple-notarized.`;
   value = release(channel);
   if (!value) gh(['release', 'create', channel, '--repo', repo, '--target', source, '--draft', '--prerelease', '--latest=false',
-    '--title', 'macOS preview update channel', '--notes', 'Signed macOS preview update feed. Download the versioned DMG from the linked preview releases.']);
+    '--title', 'macOS preview update channel', '--notes', channelNotes]);
   gh(['release', 'upload', channel, latest, '--repo', repo, '--clobber']);
   verifyUploaded(release(channel), [latest]);
-  gh(['release', 'edit', channel, '--repo', repo, '--draft=false', '--prerelease', '--latest=false']);
+  gh(['release', 'edit', channel, '--repo', repo, '--draft=false', '--prerelease', '--latest=false', '--notes', channelNotes]);
   console.log(`Published https://github.com/${repo}/releases/tag/${tag}`);
 }
 

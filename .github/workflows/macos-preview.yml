@@ -42,7 +42,8 @@ jobs:
           key: macos-${{ matrix.arch }}
           cache-on-failure: true
       - name: Check source privacy
-        run: node ../../scripts/check-source.mjs
+        working-directory: .
+        run: node scripts/check-source.mjs
       - name: Validate preview manifests
         run: node ../../scripts/verify-macos-release.mjs
       - run: npm ci

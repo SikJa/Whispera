@@ -5,7 +5,7 @@
 <h1 align="center">Whispera</h1>
 
 <p align="center">
-  Dictado por voz, capturas y grabación de pantalla para Windows.<br/>
+  Dictado por voz, capturas y grabación de pantalla para Windows y macOS (beta).<br/>
   Atajos personalizables, edición sobre el recorte y resultados en el portapapeles.
 </p>
 
@@ -20,9 +20,13 @@
 
 Para pasar desde Whispera-K o una versión anterior de SikJa sin actualizador, instalá esta versión una vez usando el botón. Conserva tu perfil y configura la firma propia de SikJa para futuras actualizaciones.
 
-**macOS (beta):** estamos portando Whispera para Apple Silicon e Intel, conservando
-Cristal, Groq y la interfaz. Consultá [instalación, permisos y validación pendiente](docs/MACOS.md).
-La beta no está notarizada por Apple y no reemplaza la versión estable de Windows.
+**macOS 13+ · 0.3.0-beta.1:** descargá el DMG para
+[Apple Silicon](https://github.com/SikJa/Whispera/releases/download/v0.3.0-beta.1/Whispera_0.3.0-beta.1_aarch64.dmg) o
+[Intel](https://github.com/SikJa/Whispera/releases/download/v0.3.0-beta.1/Whispera_0.3.0-beta.1_x86_64.dmg).
+Conserva Cristal, Groq y la interfaz, con integraciones nativas para Mac.
+Consultá [instalación y permisos](docs/MACOS.md) y [las notas de la beta](docs/releases/0.3.0-beta.1.md).
+Probada en runners de macOS, sin validación en una Mac física ni notarización de Apple.
+No reemplaza Windows estable: la beta usa un canal de actualizaciones separado.
 
 ---
 
@@ -40,7 +44,7 @@ Esta actualización integra también el trabajo del fork
 El código de Whispera mantiene su licencia MIT; los componentes de terceros
 conservan sus respectivas licencias.
 
-Whispera es una app de escritorio para Windows que convierte tu voz en texto usando [Groq](https://groq.com).
+Whispera es una app de escritorio para Windows y macOS (beta) que convierte tu voz en texto usando [Groq](https://groq.com).
 Aparece como una **carpeta flotante transparente** sobre cualquier ventana. Grabás, transcribe, y pega el resultado automáticamente — todo desde un atajo de teclado.
 
 - 🎙️ **Sin modelos locales** — usa la API de Groq (Whisper Large V3 Turbo)
@@ -106,7 +110,7 @@ El MP4 se copia como archivo: pegarlo con **Ctrl+V** requiere que la aplicación
 de destino admita archivos. Se conserva una copia temporal local para sostener
 el portapapeles. [Guía de capturas y video](docs/SCREEN_RECORDING.md).
 
-## Instalar
+## Instalar En Windows
 
 1. Descargá `Whispera_*_x64-setup.exe` desde [Releases](https://github.com/SikJa/Whispera/releases)
 2. Instalá para tu usuario — no necesita permisos de administrador

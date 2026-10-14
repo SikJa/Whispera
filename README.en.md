@@ -5,7 +5,7 @@
 <h1 align="center">Whispera</h1>
 
 <p align="center">
-  Voice dictation, screenshots and screen recording for Windows.<br/>
+  Voice dictation, screenshots and screen recording for Windows and macOS (beta).<br/>
   Custom shortcuts, region annotations and clipboard output.
 </p>
 
@@ -18,9 +18,13 @@
 
 ---
 
-**macOS (beta):** Whispera is being ported to Apple Silicon and Intel, preserving
-Cristal, Groq and the shared interface. See [installation, permissions and validation status](docs/MACOS.md).
-The beta is not Apple-notarized and does not replace the stable Windows release.
+**macOS 13+ · 0.3.0-beta.1:** download the DMG for
+[Apple Silicon](https://github.com/SikJa/Whispera/releases/download/v0.3.0-beta.1/Whispera_0.3.0-beta.1_aarch64.dmg) or
+[Intel](https://github.com/SikJa/Whispera/releases/download/v0.3.0-beta.1/Whispera_0.3.0-beta.1_x86_64.dmg).
+It preserves Cristal, Groq and the shared interface, with native Mac integrations.
+See [installation and permissions](docs/MACOS.md) and [preview release notes](docs/releases/0.3.0-beta.1.md).
+Tested on macOS runners, without physical-Mac validation or Apple notarization.
+The preview uses its own update channel and does not replace stable Windows releases.
 
 <p align="center">
   <img src="docs/screenshots/recorder-active.png" width="360" alt="Floating recorder in action" />
@@ -37,7 +41,7 @@ This update also integrates work from the
 [Whispera-K fork](https://github.com/kazu00001/Whispera-K), preserving its history and credits.
 Whispera remains MIT-licensed; third-party components retain their own licenses.
 
-Whispera is a Windows desktop app that turns your voice into text using [Groq](https://groq.com).
+Whispera is a desktop app for Windows and macOS (beta) that turns your voice into text using [Groq](https://groq.com).
 It shows up as a **transparent floating folder** on top of any window. Record, transcribe, and auto-paste — all from a keyboard shortcut.
 
 - 🎙️ **No local models** — uses the Groq API (Whisper Large V3 Turbo)
@@ -80,7 +84,7 @@ MP4 is copied as a file: **Ctrl+V** works in destination apps that accept file
 pasting. A local temporary copy keeps the clipboard valid.
 [Screenshot and video guide, in Spanish](docs/SCREEN_RECORDING.md).
 
-## Install
+## Install On Windows
 
 1. Download `Whispera_*_x64-setup.exe` from [Releases](https://github.com/SikJa/Whispera/releases)
 2. Install for your user — no admin rights needed

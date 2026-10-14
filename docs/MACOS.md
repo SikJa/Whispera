@@ -15,6 +15,12 @@ el foco y el arrastre funcionen en todas las aplicaciones reales.
 
 ## Install / Instalar
 
+Current preview / Beta actual: **0.3.0-beta.1**.
+
+- [Apple Silicon DMG](https://github.com/SikJa/Whispera/releases/download/v0.3.0-beta.1/Whispera_0.3.0-beta.1_aarch64.dmg)
+- [Intel DMG](https://github.com/SikJa/Whispera/releases/download/v0.3.0-beta.1/Whispera_0.3.0-beta.1_x86_64.dmg)
+- [Release notes and checksums / Notas y checksums](https://github.com/SikJa/Whispera/releases/tag/v0.3.0-beta.1)
+
 1. Download the DMG matching your Mac: `aarch64` for Apple Silicon or `x86_64` for Intel.
 2. Open the DMG and move Whispera to **Applications** before launching it.
 3. Open Whispera from Applications. It lives in the **menu bar**, not permanently in the Dock.
@@ -94,6 +100,25 @@ be simulated as successful hardware tests.
 The macOS jobs also run the shared interface in headless WebKit and start the
 bundled app for a short startup smoke check on the runner. These checks exercise
 the browser engine, dynamic linking and app initialization, not real-device recording.
+
+### Published Build Evidence / Evidencia De La Beta
+
+The packages for `0.3.0-beta.1` were built from
+[`fe105f7`](https://github.com/SikJa/Whispera/commit/fe105f7962686f7c60181c9c9313393e0c0d9ed2)
+in [CI run 38645459012](https://github.com/SikJa/Whispera/actions/runs/38645459012):
+
+- Apple Silicon and Intel: **139 native tests passed per architecture**, 5 ignored.
+- Both architectures passed headless WebKit UI fixtures, bundle/FFmpeg architecture
+  checks, ad-hoc code-signature checks and a short bundled-app startup/exit check.
+- Each real updater archive passed verification against the repository public key.
+- Windows regression: **146 native tests passed**, 18 ignored, plus **30 silent
+  headless UI suites**. Native UI interactions in those suites use mocked IPC.
+- Download assets include `verification-aarch64.json`, `verification-x86_64.json`
+  and `SHA256SUMS.txt` so the source revision and package hashes are inspectable.
+
+Los tests omitidos no se cuentan como exitosos. Estas comprobaciones no validan
+los dispositivos, permisos reales, sincronizacion audiovisual ni aplicaciones de
+destino. El checklist de la tabla anterior sigue pendiente en una Mac fisica.
 
 ## References / Referencias
 

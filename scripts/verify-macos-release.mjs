@@ -10,4 +10,5 @@ assert.throws(() => previewManifest(version, [entries[0]], ''));
 assert.throws(() => previewManifest(version, [entries[0], entries[0]], ''));
 assert.throws(() => previewManifest(version, [entries[0], {...entries[1], name: '../../unsafe.tar.gz'}], ''));
 assert.throws(() => previewManifest(version, [entries[0], {...entries[1], signature: ''}], ''));
+assert.throws(() => previewManifest(version, entries, 'x'.repeat(281)));
 console.log('PASS: macOS preview manifest requires both architectures, signatures and versioned repository URLs. No publication performed.');

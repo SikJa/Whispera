@@ -270,7 +270,10 @@ mod tests {
             });
             let config:serde_json::Value=serde_json::from_str(include_str!("../tauri.conf.json")).unwrap();
             let mut context=tauri::test::mock_context(tauri::test::noop_assets());
-            context.config_mut().plugins.0.insert("updater".into(),config["plugins"]["updater"].clone());
+            let mut fixture_config=config["plugins"]["updater"].clone();
+            // This test alone serves signed fixtures over loopback HTTP, including in release builds.
+            fixture_config["dangerousInsecureTransportProtocol"]=serde_json::Value::Bool(true);
+            context.config_mut().plugins.0.insert("updater".into(),fixture_config);
             let app=tauri::test::mock_builder().plugin(tauri_plugin_updater::Builder::new().build()).build(context).unwrap();
             tauri::async_runtime::block_on(async {
                 let update=app.updater_builder().pubkey(config["plugins"]["updater"]["pubkey"].as_str().unwrap()).no_proxy().timeout(Duration::from_secs(10)).endpoints(vec![url.parse().unwrap()]).unwrap().build().unwrap().check().await.unwrap().unwrap();
@@ -282,3 +285,4 @@ mod tests {
         }
     }
 }
+

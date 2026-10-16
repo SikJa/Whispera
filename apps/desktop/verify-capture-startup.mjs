@@ -51,4 +51,3 @@ try {
   }
   console.log('PASS: hidden/suspended frames cannot strand image/video controls; cancellation, native configuration retries and timer cleanup. Native IPC mocked.');
 } finally {await browser.close();}
-

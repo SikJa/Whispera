@@ -15,4 +15,3 @@ export async function showWhenReady(command:string,args:Record<string,unknown>|u
   }
   if(alive())throw Error('La vista tardó demasiado en prepararse. Volvé a intentar.');
 }
-

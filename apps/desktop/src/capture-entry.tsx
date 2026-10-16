@@ -20,4 +20,3 @@ const views:Record<string,React.ReactNode>={
   'screen-hud':<ScreenHud/>, 'screen-indicator':<ScreenIndicator/>,
 };
 createRoot(document.getElementById('root')!).render(views[view??'']??null);
-

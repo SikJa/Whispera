@@ -33,4 +33,3 @@ assert.equal(windows(event('|', 'Backquote', {getModifierState:() => true})), un
 assert.equal(windows(event('Dead', 'Backquote')), 'Backquote');
 assert.equal(captureFor(true)(event('|', 'Backquote')), 'Backquote', 'macOS mapping is unchanged');
 console.log('PASS: Windows printable layout keys, named shortcuts, modifiers, IME/AltGr/repeat, and macOS.');
-

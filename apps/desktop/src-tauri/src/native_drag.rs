@@ -54,7 +54,9 @@ impl Deadline {
 #[cfg(windows)]
 pub fn run(source: i64, files: Vec<PathBuf>, preview: Vec<u8>, _permit: Permit) -> Result<(), String> {
     // Preparation can outlast the gesture. Never enter OLE after the user let go.
-    if !button_down() || !source_visible(source) { return Ok(()); }
+    if !button_down() || !source_visible(source) {
+        return Err("El arrastre se interrumpio durante la preparacion. Volve a arrastrar manteniendo pulsado el boton del mouse.".into());
+    }
     if files.is_empty() || files.len() > 20 || preview.len() > 1_000_000 { return Err("Arrastre invalido".into()); }
     let input = serde_json::to_vec(&Request { source, files, preview }).map_err(|e| e.to_string())?;
     let mut command = Command::new(std::env::current_exe().map_err(|e| e.to_string())?);

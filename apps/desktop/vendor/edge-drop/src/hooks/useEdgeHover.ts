@@ -211,9 +211,14 @@ export function useEdgeHover(): void {
     let dwellTimer: number | undefined
     let graceTimer: number | undefined
     let interactiveTimer: number | undefined
+    let awaitingPointerEntry = useStore.getState().open
+    const unsubOpen = useStore.subscribe((state, previous) => {
+      if (state.open && !previous.open) awaitingPointerEntry = true
+    })
 
     const closePanelNow = () => {
       const s = useStore.getState()
+      if (s.dragActive || s.internalDragReq) return
       if (s.styleFlyoutOpen) s.setStyleFlyoutOpen(false)
       if (s.languageFlyoutOpen) s.setLanguageFlyoutOpen(false)
       s.setOpen(false)
@@ -225,10 +230,11 @@ export function useEdgeHover(): void {
     }
 
     const closePanel = () => {
+      graceTimer = undefined
       const state = useStore.getState()
       if (!state.open) return
       if (state.sliderActive || state.edgeTransition?.active) return
-      if (state.dragActive && !state.internalDragReq) return
+      if (state.dragActive || state.internalDragReq) return
 
       // If any flyout is open, let it play its exit spring first.
       // The Electron window resize (inside setOpen) would cut the flyout animation
@@ -264,7 +270,8 @@ export function useEdgeHover(): void {
     const scheduleClose = (delay = GRACE_MS) => {
       const state = useStore.getState()
       if (state.sliderActive || state.edgeTransition?.active) return
-      if (state.dragActive && !state.internalDragReq) return
+      if (state.dragActive || state.internalDragReq) return
+      if (awaitingPointerEntry && delay !== 0) return
       if (graceTimer !== undefined) return // already closing
 
       // If position/display/slider was recently changed (< 1.75s ago), wait out remaining preview stay window
@@ -406,6 +413,11 @@ export function useEdgeHover(): void {
     }
 
     const onPanelEnter = () => {
+      awaitingPointerEntry = false
+      cancelClose()
+    }
+    const onExplicitOpen = () => {
+      awaitingPointerEntry = true
       cancelClose()
     }
 
@@ -434,6 +446,7 @@ export function useEdgeHover(): void {
       if (data.displayHeight) displaySize.current.height = data.displayHeight
       const state = useStore.getState()
       const { stickPosition, displayWidth } = data
+      if (state.open && isInsideBlade()) awaitingPointerEntry = false
       const { top, bottom, midY, panelHalfH } = zone.current
       const hasFlyout = !!(state.previewItemId || state.styleFlyoutOpen || state.languageFlyoutOpen)
       const currentKeepOpenPx = hasFlyout ? PREVIEW_WIDE - 15 : KEEP_OPEN_PX
@@ -662,7 +675,7 @@ export function useEdgeHover(): void {
       if (!state.open) return
       // Don't close during an external OS file drag — the drag surface may
       // temporarily shift focus to the OS drag-ghost or file manager.
-      if (state.dragActive && !state.internalDragReq) return
+      if (state.dragActive || state.internalDragReq) return
       scheduleClose(400)
     }
 
@@ -698,6 +711,7 @@ export function useEdgeHover(): void {
     // ── register ───────────────────────────────────────────────────────────
     window.addEventListener('keydown', onKeyDown)
     window.addEventListener('blur', onWindowBlur)
+    window.addEventListener('panel:open-request', onExplicitOpen)
     window.addEventListener(PANEL_LEAVE_EVENT, onPanelLeave)
     window.addEventListener(PANEL_ENTER_EVENT, onPanelEnter)
     document.addEventListener('dragenter', onDocDragEnter)
@@ -708,8 +722,10 @@ export function useEdgeHover(): void {
 
     return () => {
       unsubCursorEdge()
+      unsubOpen()
       window.removeEventListener('keydown', onKeyDown)
       window.removeEventListener('blur', onWindowBlur)
+      window.removeEventListener('panel:open-request', onExplicitOpen)
       window.removeEventListener(PANEL_LEAVE_EVENT, onPanelLeave)
       window.removeEventListener(PANEL_ENTER_EVENT, onPanelEnter)
       document.removeEventListener('dragenter', onDocDragEnter)

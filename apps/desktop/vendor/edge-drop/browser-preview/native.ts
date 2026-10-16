@@ -16,13 +16,18 @@ for(const name of ['Items','Settings','Toggle','OpenSettings','DragEnd','Interna
 window.edge=api;
 (window as any).__previewFiles=new Proxy({}, {get:(_,path)=>(window as any).__TAURI_INTERNALS__.convertFileSrc(String(path),'asset')});
 document.getElementById('preview-controls')?.remove();
-await refresh();await act('settings',null,state.settings);
+await refresh();
+// Hydration reuses this snapshot; opening the shelf must not rewrite preferences.
+api.loadState=async()=>state;
 await import('../src/main');
 const {useStore}=await import('../src/store/appStore');
 holdsSettings=()=>Boolean(useStore.getState().sliderActive||useStore.getState().edgeTransition?.active);
 useStore.subscribe((next,previous)=>{if(previous.open&&!next.open)setTimeout(()=>{if(!useStore.getState().open)void invoke('library_window',{operation:'hide'});},350);if(!previous.open&&next.open&&shown)void invoke('library_window',{operation:'show'});});
 const nativeListen=(event:string,callback:Function)=>invoke('plugin:event|listen',{event,target:{kind:'WebviewWindow',label:'library'},handler:(window as any).__TAURI_INTERNALS__.transformCallback(callback)});
-await nativeListen('library-open',()=>useStore.getState().setOpen(true));
+await nativeListen('library-open',()=>{
+  window.dispatchEvent(new Event('panel:open-request'));
+  useStore.getState().setOpen(true);
+});
 await nativeListen('tauri://drag-drop',async({payload}:any)=>{
   const point=payload.position;
   const element=document.elementFromPoint(point.x/devicePixelRatio,point.y/devicePixelRatio);
@@ -43,7 +48,19 @@ let cursorBusy=false;
 setInterval(async()=>{if(cursorBusy)return;cursorBusy=true;try{const point=await invoke('library_cursor');if(point&&typeof point.x==='number')emit('CursorEdge',point);}catch{}finally{cursorBusy=false;}},100);
 setInterval(()=>{const rects=Array.from(document.querySelectorAll('.blade,.preview-flyout,.palette-popover,.split-dropzone,.flare-top,.flare-bottom,.flare-horizontal')).map(el=>el.getBoundingClientRect()).filter(r=>r.width>0&&r.height>0&&r.x<innerWidth&&r.right>0).map(r=>({x:Math.max(0,r.x),y:Math.max(0,r.y),width:Math.min(innerWidth,r.right)-Math.max(0,r.x),height:Math.min(innerHeight,r.bottom)-Math.max(0,r.y)})).filter(r=>r.width>0&&r.height>0);if(!rects.length)return;const signature=JSON.stringify(rects);if(signature!==lastGeometry){lastGeometry=signature;void invoke('recorder_region',{rects}).then(()=>{if(!shown){shown=true;return invoke('library_window',{operation:'show'});}}).catch(()=>{});}},100);
 let nativeDragInFlight=false;
-api.startDrag=(req:any)=>{if(nativeDragInFlight)return;nativeDragInFlight=true;void invoke('library_drag',{id:req.id,request:req}).catch(e=>toast(String(e))).finally(()=>{nativeDragInFlight=false;emit('DragEnd');});};
+api.startDrag=(req:any)=>{
+  if(nativeDragInFlight)return;
+  nativeDragInFlight=true;
+  useStore.setState({nativeDragActive:true,internalDragReq:req});
+  void invoke('library_drag',{id:req.id,request:req}).catch(e=>toast(String(e))).finally(()=>{
+    nativeDragInFlight=false;
+    useStore.setState({nativeDragActive:false});
+    useStore.getState().setInternalDragReq(null);
+    emit('DragEnd');
+  });
+};
+// A cancelled DOM drag must not release the longer-lived native OLE operation.
+document.addEventListener('dragend',e=>{if(nativeDragInFlight)e.stopImmediatePropagation();},true);
 api.removeSubitem=(req:any)=>act('remove-part',req.id,req).then(()=>true);
 api.focusWindow=(focus:boolean)=>focus?invoke('library_window',{operation:'focus'}):Promise.resolve();
 api.minimizeWindow=()=>invoke('library_window',{operation:'hide'});
@@ -51,5 +68,14 @@ api.quitApp=api.minimizeWindow;
 api.openWhisperaUpdates=()=>invoke('open_updates');
 api.revealFile=(path:string)=>{const item=state.items.find((i:any)=>i.data.paths?.includes(path)||i.data.imageId===path);return item?act('reveal',item.id,item.data.kind==='files'?{paths:[path]}:null):Promise.reject('Archivo inexistente');};
 const staged=new Set<string>();
-api.prestageDrag=(req:any)=>{const item=state.items.find((item:any)=>item.id===req.id);const path=req.imageId||req.paths?.[0]||item?.data.imageId||item?.data.images?.[0]?.imageId||item?.data.paths?.[0];if(path&&!staged.has(path)&&/\.(png|mp4|webm|mov|mkv|avi)$/i.test(path)){staged.add(path);void invoke('library_media_info',{path}).catch(()=>staged.delete(path));}};
+let staging=false;
+api.prestageDrag=(req:any)=>{
+  const key=JSON.stringify(req);
+  if(staging||staged.has(key)||nativeDragInFlight)return;
+  staging=true;
+  void invoke('library_prepare_drag',{id:req.id,request:req}).then(()=>{
+    staged.add(key);
+    if(staged.size>32)staged.delete(staged.values().next().value!);
+  }).catch(()=>{}).finally(()=>{staging=false;});
+};
 document.addEventListener('keydown',e=>{if(e.key==='Escape')void invoke('library_window',{operation:'hide'});});

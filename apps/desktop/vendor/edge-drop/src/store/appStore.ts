@@ -72,6 +72,8 @@ interface AppState {
   setEmojiCategory: (cat: import('../lib/emoji/catalog').EmojiCategoryId) => void
   /** True while an OS file drag is hovering the panel (prevents premature close). */
   dragActive: boolean
+  /** The Tauri OLE operation outlives the cancelled HTML drag gesture. */
+  nativeDragActive: boolean
   /**
    * The one stack/bundle whose expanded sub-item list is open (accordion).
    * Single source of truth so expanding one stack collapses the previous,
@@ -217,6 +219,7 @@ export const useStore = create<AppState>((set, get) => ({
     }
   },
   dragActive: false,
+  nativeDragActive: false,
   expandedStackId: null,
   setExpandedStackId: (expandedStackId) => set({ expandedStackId }),
   internalDragReq: null,
@@ -433,6 +436,7 @@ export const useStore = create<AppState>((set, get) => ({
 
   setQuery: (query) => set({ query }),
   setOpen: (open) => {
+    if (!open && get().nativeDragActive) return
     set({ open })
     if (!open) {
       // Release any focused control inside the blade. Without this, a button
@@ -475,6 +479,7 @@ export const useStore = create<AppState>((set, get) => ({
   },
   setDragActive: (dragActive) => set({ dragActive }),
   setInternalDragReq: (internalDragReq) => {
+    if (internalDragReq === null && get().nativeDragActive) return
     if (internalDragReq === null) {
       set({ internalDragReq: null, dragActive: false })
     } else {

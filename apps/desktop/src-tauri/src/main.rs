@@ -618,6 +618,7 @@ fn main() {
             library::library_action,
             library::library_toggle,
             library::library_drag,
+            library::library_prepare_drag,
             library::library_pick,
             library::library_window,
             library::library_cursor,

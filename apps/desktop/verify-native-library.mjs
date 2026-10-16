@@ -38,10 +38,12 @@ try{
       {id:'file',data:{kind:'files',paths:['C:\\fixture.pdf'],entries:[{name:'fixture.pdf',ext:'pdf',size:100,isImage:false}]}}]
       .map(i=>({...i,capturedAt:now,hitCount:1,pinned:false}));
     const settings={captureGlobal:true,tutorialCompleted:true,hoverActivation:false,language:'es',stickPosition:'left',soundEffects:false,...(localStorage.getItem('qa-library-background')?{backgroundColor:localStorage.getItem('qa-library-background')}:{})};
-    window.__qa={calls:[],events:new Map(),settings,failSettings:false};
+    window.__qa={calls:[],events:new Map(),settings,failSettings:false,cursor:sessionStorage.getItem('qa-library-open-tested')?null:{x:1100,y:400,stickPosition:'left',displayWidth:1280,displayHeight:800}};
     window.__TAURI_INTERNALS__={convertFileSrc:path=>/\.mp4$/i.test(path)?'/fixture.mp4':pixel,transformCallback:fn=>fn,
       invoke:async(command,args={})=>{
         window.__qa.calls.push({command,args});
+        if(command==='library_cursor')return window.__qa.cursor;
+        if(command==='library_drag')return new Promise((resolve,reject)=>{window.__qa.finishDrag=resolve;window.__qa.failDrag=reject;});
         if(command==='plugin:event|listen'){window.__qa.events.set(args.event,args.handler);return 1;}
         if(command==='library_media_info')return{previewPath:'C:\\poster.png',duration:12.7,video:true};
         if(command==='video_transcript_action')return{status:'ready',text:'Transcripcion de prueba del video.',error:''};
@@ -59,6 +61,34 @@ try{
   await page.goto(`http://127.0.0.1:${server.address().port}/browser-preview.html`);
   await page.waitForFunction(()=>document.querySelectorAll('.item-main').length===5,null,{timeout:15000});
   await page.waitForTimeout(600);
+  assert.equal(await page.evaluate(()=>window.__qa.calls.filter(c=>c.command==='library_action'&&c.args.action==='settings').length),0,'Opening must never rewrite saved preferences');
+  assert.equal(await page.evaluate(()=>window.__qa.calls.filter(c=>c.command==='library_state').length),1,'Initial hydration should reuse the first snapshot');
+  await page.waitForTimeout(1200);
+  assert.equal(await page.evaluate(()=>window.__qa.calls.some(c=>c.command==='library_window'&&c.args.operation==='hide')),false,'Keyboard-opened shelf must wait for the pointer to enter');
+  await page.evaluate(()=>{window.__qa.cursor={...window.__qa.cursor,x:120};});
+  await page.locator('.item-main[data-id="image"]').hover();
+  for(const id of ['image','video']){
+    await page.evaluate(id=>{
+      window.__qa.calls.length=0;
+      window.edge.startDrag({id});
+      window.__qa.cursor={...window.__qa.cursor,x:1100};
+      document.querySelector(`[data-id="${id}"]`).dispatchEvent(new DragEvent('dragend',{bubbles:true}));
+      window.dispatchEvent(new Event('blur'));
+      window.dispatchEvent(new Event('panel:leave'));
+    },id);
+    await page.waitForTimeout(1900);
+    assert.equal(await page.evaluate(()=>window.__qa.calls.some(c=>c.command==='library_window'&&c.args.operation==='hide')),false,'Blur/DOM dragend/cursor exit must not cancel a native drag');
+    await page.evaluate(()=>{window.__qa.cursor={...window.__qa.cursor,x:120};window.__qa.finishDrag(true);});
+    await page.waitForTimeout(250);
+  }
+  await page.evaluate(()=>{
+    window.__qa.calls.length=0;
+    window.__qa.cursor={...window.__qa.cursor,x:1100};
+    window.__qa.events.get('library-open')({});
+  });
+  await page.waitForTimeout(900);
+  assert.equal(await page.evaluate(()=>window.__qa.calls.some(c=>c.command==='library_window'&&c.args.operation==='hide')),false,'Explicit reopen cancels stale outside-cursor dismissal');
+  await page.evaluate(()=>{window.__qa.cursor=null;sessionStorage.setItem('qa-library-open-tested','true');});
   assert.equal(await page.locator('#preview-controls').count(),0);
   const filters=await page.locator('.header button').evaluateAll(el=>el.map(b=>b.title||b.getAttribute('aria-label')||b.textContent));
   console.log('Filter buttons:',JSON.stringify(filters));
@@ -106,6 +136,7 @@ try{
   assert.ok(await page.evaluate(()=>window.__qa.calls.some(c=>c.command==='library_media_open'&&c.args.mode==='canvas'&&c.args.id==='image')));
   await page.evaluate(async()=>{await window.edge.copySubitem({id:'video',paths:['C:\\fixture.mp4']});window.edge.startDrag({id:'video',paths:['C:\\fixture.mp4']});});
   await page.waitForFunction(()=>window.__qa.calls.some(c=>c.command==='library_drag'));
+  await page.evaluate(()=>window.__qa.finishDrag(true));
   assert.ok(await page.evaluate(()=>window.__qa.calls.some(c=>c.command==='library_action'&&c.args.action==='copy'&&c.args.value.paths[0]==='C:\\fixture.mp4')));
   await page.evaluate(()=>window.edge.setPinned('text',true));
   assert.ok((await page.evaluate(()=>window.edge.loadState())).items.find(i=>i.id==='text').pinned);

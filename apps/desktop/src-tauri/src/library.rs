@@ -535,6 +535,30 @@ pub async fn library_action(
 }).await.map_err(|e|e.to_string())?
 }
 #[tauri::command]
+pub async fn library_prepare_drag(
+    app: tauri::AppHandle,
+    window: tauri::WebviewWindow,
+    id: String,
+    request: Value,
+) -> Result<(), String> {
+    if window.label() != "library" && !window.label().starts_with("media-") {
+        return Err("Arrastre solo desde Biblioteca".into());
+    }
+    tauri::async_runtime::spawn_blocking(move || {
+        let data = rows(&app.state::<Store>())?.into_iter()
+            .find(|i| i["id"] == id).ok_or("Elemento inexistente")?;
+        let files = paths(&selected(&data["data"], &request)?);
+        if files.is_empty() || files.iter().any(|p| !p.is_file()) {
+            return Err("El archivo ya no existe".into());
+        }
+        // Export before the drag gesture; large videos must not consume its duration.
+        let (shared, _) = crate::video_transcript::package(&app.state::<Store>(), &files)?;
+        crate::video_transcript::share_files(&app, &shared)?;
+        let _ = crate::library_media::info(&app, &files[0]);
+        Ok(())
+    }).await.map_err(|e| e.to_string())?
+}
+#[tauri::command]
 pub async fn library_drag(
     app: tauri::AppHandle,
     window: tauri::WebviewWindow,
@@ -545,7 +569,9 @@ pub async fn library_drag(
         return Err("Arrastre solo desde Biblioteca".into());
     }
     let permit = crate::native_drag::reserve()?;
-    if !crate::native_drag::button_down() { return Ok(()); }
+    if !crate::native_drag::button_down() {
+        return Err("El arrastre termino antes de empezar. Mantene pulsado el boton del mouse y volve a arrastrar.".into());
+    }
     #[cfg(windows)]
     let source = window.hwnd().map_err(|e| e.to_string())?.0 as usize as i64;
     #[cfg(target_os = "macos")]

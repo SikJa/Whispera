@@ -1,1 +1,1 @@
-Personaliza el fondo del portapapeles con la paleta de Whispera o un color HEX. El texto adapta su contraste. Mejoramos la estabilidad del arrastre de archivos y conservamos tus atajos, diccionario y preferencias.
+Corregimos capturas y videos bloqueados, paneles invisibles que interceptaban clics y el cierre del portapapeles. Mejoramos el arrastre, la apertura de herramientas y los atajos segun el teclado. Conservamos tu diccionario y configuracion.

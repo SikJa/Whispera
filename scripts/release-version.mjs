@@ -26,8 +26,12 @@ export function setVersion(version){
   const changed=updateLockVersion(original,version);
   writeFileSync(lock,changed);
 }
+export function stableBase(configured,override){
+  if(override!==undefined&&!/^\d+\.\d+\.\d+$/.test(override))throw Error('La version estable de Windows debe ser x.y.z');
+  return override??configured;
+}
 export function prepare(){
-  const base=JSON.parse(readFileSync('apps/desktop/src-tauri/tauri.conf.json','utf8')).version;
+  const base=stableBase(JSON.parse(readFileSync('apps/desktop/src-tauri/tauri.conf.json','utf8')).version,process.env.WHISPERA_STABLE_BASE);
   if(/^\d+\.\d+\.\d+-(?:beta|rc)\.\d+$/.test(base)){
     if(process.env.GITHUB_OUTPUT)appendFileSync(process.env.GITHUB_OUTPUT,'skip=true\n');
     console.log(`La versión ${base} usa el canal de prueba; no se publica como actualización estable.`);

@@ -26,7 +26,13 @@ export function modifiers(e: Pick<KeyboardEvent,'ctrlKey'|'altKey'|'shiftKey'|'m
 }
 export function eventHotkey(e: KeyboardEvent): string | undefined {
   if (e.isComposing || e.repeat || e.getModifierState('AltGraph')) return;
-  // DOM physical codes match the native shortcut parser, including non-US keyboards.
+  const held = modifiers(e);
+  // Windows RegisterHotKey uses virtual keys, not DOM scan codes. For a bare
+  // printable key, preserve its character so native VkKeyScanW uses the layout.
+  // In Latin American layouts, code=Backquote/key="|" is VK_OEM_5, not VK_OEM_3.
+  if (!isMac && !held.length && e.key.length === 1 && e.key !== ' ') return e.key;
+  // macOS maps physical codes explicitly; modified combinations retain their
+  // existing named-key representation.
   let code=e.code;
   // Virtual/accessibility keyboards may omit the scan code. Keep physical codes
   // authoritative and only recover keys with an unambiguous native equivalent.
@@ -37,5 +43,5 @@ export function eventHotkey(e: KeyboardEvent): string | undefined {
     else if (/^(F([1-9]|1[0-9]|2[0-4])|Enter|Tab|Backspace|Delete|Insert|Home|End|PageUp|PageDown|Arrow(Up|Down|Left|Right)|CapsLock|NumLock|ScrollLock|PrintScreen|Pause)$/.test(e.key)) code=e.key;
   }
   if (!/^(Key[A-Z]|Digit[0-9]|F([1-9]|1[0-9]|2[0-4])|Numpad([0-9]|Add|Subtract|Multiply|Divide|Decimal|Enter|Equal)|Space|Enter|Tab|Backspace|Delete|Insert|Home|End|PageUp|PageDown|Arrow(Up|Down|Left|Right)|Backquote|Backslash|Bracket(Left|Right)|Comma|Equal|Minus|Period|Quote|Semicolon|Slash|CapsLock|NumLock|ScrollLock|PrintScreen|Pause)$/.test(code)) return;
-  return [...modifiers(e),code].join('+');
+  return [...held,code].join('+');
 }

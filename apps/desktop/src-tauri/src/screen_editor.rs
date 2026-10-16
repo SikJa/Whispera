@@ -739,7 +739,8 @@ pub async fn screen_image_export(
     bytes: Vec<u8>,
     action: String,
 ) -> Result<bool, String> {
-    tauri::async_runtime::spawn_blocking(move || {
+    let logger = app.clone();
+    let result = tauri::async_runtime::spawn_blocking(move || {
         let ctx = context(&app, &id)?;
         if ctx.kind != "image" || window.label() != session::label(&id,"screen-ink") || bytes.len() > 64 * 1024 * 1024 {
             return Err("Imagen no disponible".into());
@@ -752,18 +753,20 @@ pub async fn screen_image_export(
         let image = tauri::image::Image::from_bytes(&bytes).map_err(|e| e.to_string())?;
         let saved_path = match action.as_str() {
             "copy" => {
-                app.clipboard()
-                    .write_image(&image)
-                    .map_err(|e| e.to_string())?;
-                let root = app
-                    .path()
-                    .app_cache_dir()
-                    .map_err(|e| e.to_string())?
-                    .join("screenshots");
-                fs::create_dir_all(&root).map_err(|e| e.to_string())?;
-                let path = root.join(format!("{}.png", uuid::Uuid::new_v4()));
-                fs::write(&path, &bytes).map_err(|e| e.to_string())?;
-                path
+                retry_clipboard_image(|| app.clipboard().write_image(&image).map_err(|e| e.to_string()))?;
+                // Clipboard success releases the desktop before optional disk/history work.
+                screen::finish_image(app.clone(), &id)?;
+                let archived = (|| -> Result<(), String> {
+                    let root = app.path().app_cache_dir().map_err(|e| e.to_string())?.join("screenshots");
+                    fs::create_dir_all(&root).map_err(|e| e.to_string())?;
+                    let path = root.join(format!("{}.png", uuid::Uuid::new_v4()));
+                    fs::write(&path, &bytes).map_err(|e| e.to_string())?;
+                    crate::capture_history::remember(&app.state::<crate::storage::Store>(), "image", &path)
+                })();
+                if let Err(error) = archived {
+                    let _ = app.state::<crate::storage::Store>().event(&format!("Captura copiada; no se pudo guardar en el historial: {error}"));
+                }
+                return Ok(true);
             }
             "save" => {
                 let path = app
@@ -783,16 +786,57 @@ pub async fn screen_image_export(
             }
             _ => return Err("Accion desconocida".into()),
         };
-        crate::capture_history::remember(
+        screen::finish_image(app.clone(),&id)?;
+        if let Err(error) = crate::capture_history::remember(
             &app.state::<crate::storage::Store>(),
             "image",
             &saved_path,
-        )?;
-        screen::finish_image(app.clone(),&id)?;
+        ) {
+            let _ = app.state::<crate::storage::Store>().event(&format!("Captura guardada; no se pudo actualizar el historial: {error}"));
+        }
         Ok(true)
     })
     .await
-    .map_err(|e| e.to_string())?
+    .map_err(|e| e.to_string())?;
+    if let Err(error) = &result {
+        let _ = logger.state::<crate::storage::Store>().event(&format!("Exportar captura: {error}"));
+    }
+    result
+}
+
+fn retry_clipboard_image(mut write: impl FnMut() -> Result<(), String>) -> Result<(), String> {
+    for attempt in 0..5 {
+        match write() {
+            Ok(()) => return Ok(()),
+            Err(error) if attempt == 4 => return Err(format!("No se pudo copiar la captura: {error}. La imagen sigue abierta para reintentar.")),
+            Err(_) => std::thread::sleep(std::time::Duration::from_millis(40)),
+        }
+    }
+    unreachable!()
+}
+
+#[cfg(test)]
+mod clipboard_export_tests {
+    use super::retry_clipboard_image;
+
+    #[test]
+    fn transient_clipboard_contention_recovers() {
+        let mut attempts = 0;
+        let result = retry_clipboard_image(|| {
+            attempts += 1;
+            if attempts < 3 { Err("clipboard occupied".into()) } else { Ok(()) }
+        });
+        assert!(result.is_ok());
+        assert_eq!(attempts, 3);
+    }
+
+    #[test]
+    fn persistent_failure_is_bounded_and_keeps_retry_available() {
+        let mut attempts = 0;
+        let error = retry_clipboard_image(|| { attempts += 1; Err("clipboard occupied".into()) }).unwrap_err();
+        assert_eq!(attempts, 5);
+        assert!(error.contains("reintentar"));
+    }
 }
 #[tauri::command]
 pub async fn screen_video_snapshot(app: tauri::AppHandle, window: tauri::WebviewWindow, id: String) -> Result<bool, String> {

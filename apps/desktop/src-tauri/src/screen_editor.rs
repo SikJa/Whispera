@@ -74,13 +74,14 @@ fn context(app: &tauri::AppHandle, id: &str) -> Result<Context, String> {
 }
 pub fn hide_session(app: &tauri::AppHandle, secondary:bool) {
     let scope=if secondary {"image-session"}else{"screen"};
+    let editor=session::editor(app,scope);
+    editor.clear();
     for base in ["screen-ink","screen-tools","screen-hud"] {
         if let Some(w)=app.get_webview_window(&session::label(scope,base)) {
+            let _=w.set_ignore_cursor_events(true);
             let _=w.hide();let _=session::emit_window(&w,"screen-editor-reset",Option::<Context>::None);
         }
     }
-    let editor=session::editor(app,scope);
-    editor.clear();
 }
 pub fn context_for(app:&tauri::AppHandle,scope:&str)->Option<Context> {
     session::editor(app,scope).context.lock().unwrap_or_else(|e|e.into_inner()).clone()
@@ -540,8 +541,10 @@ pub(crate) fn open_with_image(
         .map_err(|e| e.to_string())?;
     if session::secondary(source.label()){screen::protect(&ink)?;}
     screen::protect(&tools)?;
+    tools.set_ignore_cursor_events(false).map_err(|e| e.to_string())?;
     place_controls(&tools, &ctx, region, monitor, false)?;
     screen::protect(&hud)?;
+    hud.set_ignore_cursor_events(false).map_err(|e| e.to_string())?;
     place_controls(&hud, &ctx, region, monitor, false)?;
     for w in [&ink, &tools, &hud] {
         session::emit_window(&w,"screen-editor-reset", &ctx)
@@ -597,6 +600,9 @@ pub fn screen_editor_ready(
     window: tauri::WebviewWindow,
     id: String,
 ) -> Result<bool, String> {
+    // Never show a tool between cancellation's state invalidation and hide.
+    let screen = session::screen(&app, window.label());
+    let Ok(_gate) = screen.gate.try_lock() else { return Ok(false); };
     let ctx = context(&app, &id)?;
     if !session::editor(&app,&id).configured.load(Ordering::SeqCst) {
         return Ok(false);
@@ -1155,4 +1161,3 @@ mod tests {
         }
     }
 }
-

@@ -32,6 +32,9 @@ pub struct Context {
 }
 #[derive(Default)]
 pub struct Editor {
+    windows: Mutex<()>,
+    warming: AtomicBool,
+    opening: Mutex<Option<(Instant, std::collections::HashSet<String>)>>,
     configured: AtomicBool,
     dragging: AtomicBool,
     compact: AtomicBool,
@@ -51,6 +54,7 @@ impl Editor {
         if let Ok(mut region)=self.region.lock(){*region=None;}
         if let Ok(mut monitor)=self.monitor.lock(){*monitor=None;}
         if let Ok(mut feedback)=self.feedback.lock(){*feedback=serde_json::json!({});}
+        if let Ok(mut opening)=self.opening.lock(){*opening=None;}
     }
 }
 #[derive(Clone, Deserialize, Serialize)]
@@ -132,6 +136,26 @@ fn window(
         });
     }
     Ok(window)
+}
+fn prepare_windows(app: &tauri::AppHandle, scope: &str) -> Result<[tauri::WebviewWindow; 3], String> {
+    let editor=session::editor(app,scope);
+    let _gate=editor.windows.lock().map_err(|_|"Herramientas ocupadas")?;
+    let ink=window(app,&session::label(scope,"screen-ink"),session::secondary(scope))?;
+    let tools=window(app,&session::label(scope,"screen-tools"),true)?;
+    let hud=window(app,&session::label(scope,"screen-hud"),true)?;
+    Ok([ink,tools,hud])
+}
+// Start only once the selector is visible. No extra sessions are created at
+// startup, and a fast selection shares this creation gate instead of racing it.
+pub(crate) fn warm(app: &tauri::AppHandle, scope: &str) {
+    if session::editor(app,scope).warming.swap(true,Ordering::SeqCst) {return;}
+    let app=app.clone();let scope=scope.to_string();
+    tauri::async_runtime::spawn_blocking(move||{
+        if let Err(error)=prepare_windows(&app,&scope) {
+            let _=app.state::<crate::storage::Store>().event(&format!("Preparacion de herramientas: {error}"));
+        }
+        session::editor(&app,&scope).warming.store(false,Ordering::SeqCst);
+    });
 }
 pub(crate) fn raise_controls(app: &tauri::AppHandle) {
     let mut windows=Vec::new();
@@ -456,6 +480,7 @@ pub(crate) fn open_with_image(
     image: Option<Vec<u8>>,
 ) -> Result<(), String> {
     hide_session(app,session::secondary(source.label()));
+    let opening=Instant::now();
     let bytes = match image {
         Some(bytes) => bytes,
         None if kind == "image" => screenshot(app, region, true)?,
@@ -499,12 +524,13 @@ pub(crate) fn open_with_image(
             .frame_color,
     };
     let editor = session::editor(app,source.label());
+    *editor.opening.lock().map_err(|_|"Editor ocupado")?=Some((opening,Default::default()));
     *editor.region.lock().map_err(|_| "Editor ocupado")? = Some(region);
     *editor.monitor.lock().map_err(|_| "Editor ocupado")? = Some(monitor);
     *editor.image.lock().map_err(|_| "Editor ocupado")? = bytes;
     *editor.context.lock().map_err(|_| "Editor ocupado")? = Some(ctx.clone());
     *editor.feedback.lock().map_err(|_| "Editor ocupado")? = serde_json::json!({});
-    let ink = window(app, &session::label(source.label(),"screen-ink"), session::secondary(source.label()))?;
+    let [ink,tools,hud] = prepare_windows(app,source.label())?;
     #[cfg(target_os = "macos")]
     crate::screen_capture::macos::window_action(&ink, if kind == "video" && !session::secondary(source.label()) { 4 } else { 5 }, None)?;
     screen::place_window(&ink, region)?;
@@ -513,10 +539,8 @@ pub(crate) fn open_with_image(
     ink.set_focusable(kind != "video")
         .map_err(|e| e.to_string())?;
     if session::secondary(source.label()){screen::protect(&ink)?;}
-    let tools = window(app, &session::label(source.label(),"screen-tools"), true)?;
     screen::protect(&tools)?;
     place_controls(&tools, &ctx, region, monitor, false)?;
-    let hud = window(app, &session::label(source.label(),"screen-hud"), true)?;
     screen::protect(&hud)?;
     place_controls(&hud, &ctx, region, monitor, false)?;
     for w in [&ink, &tools, &hud] {
@@ -587,6 +611,13 @@ pub fn screen_editor_ready(
     // Focusing the ink window can raise it above other topmost windows.
     // Restore the editable border afterwards so it never disappears behind the image.
     raise_controls(&app);
+    if let Ok(mut opening)=session::editor(&app,&id).opening.lock() {
+        if let Some((started,shown))=opening.as_mut() {
+            if shown.insert(window.label().to_string()) {
+                let _=app.state::<crate::storage::Store>().event(&format!("Captura {}: {} visible en {} ms desde apertura del editor",ctx.kind,window.label(),started.elapsed().as_millis()));
+            }
+        }
+    }
     Ok(true)
 }
 #[tauri::command]
@@ -1124,3 +1155,4 @@ mod tests {
         }
     }
 }
+

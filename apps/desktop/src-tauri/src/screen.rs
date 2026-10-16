@@ -704,6 +704,7 @@ pub fn screen_overlay_ready(
             window.set_focus().map_err(|e| e.to_string())?;
             if let Some(started) = screen.selection_started.lock().map_err(|_| "Captura ocupada")?.take() {
                 let _ = app.state::<Store>().event(&format!("Selector de captura listo en {} ms", started.elapsed().as_millis()));
+                crate::screen_editor::warm(&app,window.label());
             }
         }
     }
@@ -767,6 +768,7 @@ pub async fn screen_start(
         #[cfg(target_os = "macos")]
         let region = crate::screen_capture::macos::bind(&window, region)?;
         let kind = screen.kind.lock().map_err(|_| "Estado ocupado")?.clone();
+        let editor_started=Instant::now();
         for (label, other) in app.webview_windows() {
             if label.starts_with(if screen.secondary {"image-select-"} else {"screen-select-"}) && label != window.label() {
                 let _ = other.hide();
@@ -781,6 +783,7 @@ pub async fn screen_start(
                 // Keep every monitor frozen until this image editor is closed.
                 cropped
             };
+            let _=app.state::<Store>().event(&format!("Captura imagen: recorte preparado en {} ms",editor_started.elapsed().as_millis()));
             screen.state.lock().map_err(|_| "Estado ocupado")?.phase = "editing".into();
             let preferences: Preferences = app
                 .state::<Store>()
@@ -870,6 +873,7 @@ pub async fn screen_start(
         });
         match ready_rx.recv() {
             Ok(Ok(())) => {
+                let _=app.state::<Store>().event(&format!("Captura video: motor listo en {} ms",editor_started.elapsed().as_millis()));
                 *screen.active.lock().map_err(|_| "Video ocupado")? = Some(Active { stop, thread });
                 if let Err(error) = crate::screen_editor::open(&app, &window, rect, region, "video")
                 {
@@ -1964,3 +1968,4 @@ mod tests {
         }
     }
 }
+

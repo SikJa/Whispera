@@ -9,6 +9,7 @@ const base = `http://127.0.0.1:${server.httpServer.address().port}`;
 const suites = ['screen','capture-loading','selection-ready','selection-recovery','screen-frozen','adjustable-frame','editor','editor-races','capture-events','editor-paint','line-toolbar','capture-controls','history','hotkeys','hotkey-accessibility','setup','updates','settings-layout','sounds','autosave','application','file-import','recorders','replay','native-library','library-settings','library-loading','library-media'];
 suites.push('dictionary');
 suites.push('macos-ui');
+suites.push('capture-startup');
 const failures=[];
 try {
   for (const name of suites) {
@@ -23,3 +24,4 @@ try {
 } finally { await server.close(); }
 if(failures.length)throw Error(`Failed suites: ${failures.join(', ')}`);
 console.log(`PASS: ${suites.length} silent headless suites. Native IPC is mocked.`);
+

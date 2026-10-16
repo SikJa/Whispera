@@ -1,7 +1,7 @@
 name: Windows capture repair
 on:
   push:
-    branches: [fix/capture-copy-20261015]
+    branches: [fix/capture-copy-20261015, codex/capture-startup-20261015]
   workflow_dispatch:
 permissions:
   contents: read
@@ -55,3 +55,4 @@ jobs:
             apps/desktop/src-tauri/target/release/repair-verification.json
           if-no-files-found: error
           retention-days: 7
+

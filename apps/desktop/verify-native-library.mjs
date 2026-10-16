@@ -208,6 +208,7 @@ try{
   await page.waitForFunction(()=>window.__qa.settings.backgroundColor==='#000000'&&!document.documentElement.dataset.libraryColor);
   assert.equal(await page.locator('.blade').evaluate(el=>getComputedStyle(el).backgroundColor),'rgb(0, 0, 0)');
   assert.equal(await page.evaluate(()=>document.documentElement.style.getPropertyValue('--bg-card')),'','black restores the original theme');
+  await page.getByRole('button',{name:'Cerrar paleta',exact:true}).click();
   for(const close of ['escape','native']) {
     if(close==='escape')await page.keyboard.press('Escape');
     else await page.evaluate(()=>window.__qa.events.get('library-close')({}));

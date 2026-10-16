@@ -88,6 +88,8 @@ try{
   });
   await page.waitForTimeout(900);
   assert.equal(await page.evaluate(()=>window.__qa.calls.some(c=>c.command==='library_window'&&c.args.operation==='hide')),false,'Explicit reopen cancels stale outside-cursor dismissal');
+  await page.evaluate(()=>{window.__qa.cursor={...window.__qa.cursor,x:120};});
+  await page.waitForTimeout(150);
   await page.evaluate(()=>{window.__qa.cursor=null;sessionStorage.setItem('qa-library-open-tested','true');});
   assert.equal(await page.locator('#preview-controls').count(),0);
   const filters=await page.locator('.header button').evaluateAll(el=>el.map(b=>b.title||b.getAttribute('aria-label')||b.textContent));
@@ -209,3 +211,4 @@ try{
   assert.deepEqual(errors,[]);
   console.log('PASS native adapter: hydration, filters, no demo controls, subitem copy, file drag IPC, pin, clipped geometry; background presets/custom, persistence, contrast and original black restoration. OS clipboard/drag mocked; no visible Windows tests.');
 }finally{await browser.close();await new Promise(r=>server.close(r));}
+

@@ -30,7 +30,7 @@ export function eventHotkey(e: KeyboardEvent): string | undefined {
   // Windows RegisterHotKey uses virtual keys, not DOM scan codes. For a bare
   // printable key, preserve its character so native VkKeyScanW uses the layout.
   // In Latin American layouts, code=Backquote/key="|" is VK_OEM_5, not VK_OEM_3.
-  if (!isMac && !held.length && e.key.length === 1 && e.key !== ' ') return e.key;
+  if (!isMac && !held.length && /^(Key[A-Z]|Digit[0-9]|Backquote|Backslash|Bracket(Left|Right)|Comma|Equal|Minus|Period|Quote|Semicolon|Slash|IntlBackslash)$/.test(e.code) && e.key.length === 1 && e.key !== ' ') return e.key;
   // macOS maps physical codes explicitly; modified combinations retain their
   // existing named-key representation.
   let code=e.code;
@@ -45,3 +45,4 @@ export function eventHotkey(e: KeyboardEvent): string | undefined {
   if (!/^(Key[A-Z]|Digit[0-9]|F([1-9]|1[0-9]|2[0-4])|Numpad([0-9]|Add|Subtract|Multiply|Divide|Decimal|Enter|Equal)|Space|Enter|Tab|Backspace|Delete|Insert|Home|End|PageUp|PageDown|Arrow(Up|Down|Left|Right)|Backquote|Backslash|Bracket(Left|Right)|Comma|Equal|Minus|Period|Quote|Semicolon|Slash|CapsLock|NumLock|ScrollLock|PrintScreen|Pause)$/.test(code)) return;
   return [...held,code].join('+');
 }
+

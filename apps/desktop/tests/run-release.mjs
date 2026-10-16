@@ -10,6 +10,7 @@ const suites = ['screen','capture-loading','selection-ready','selection-recovery
 suites.push('dictionary');
 suites.push('macos-ui');
 suites.push('capture-startup');
+suites.push('window-lifecycle');
 const failures=[];
 try {
   for (const name of suites) {
@@ -24,4 +25,3 @@ try {
 } finally { await server.close(); }
 if(failures.length)throw Error(`Failed suites: ${failures.join(', ')}`);
 console.log(`PASS: ${suites.length} silent headless suites. Native IPC is mocked.`);
-

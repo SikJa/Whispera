@@ -201,6 +201,8 @@ pub(crate) fn place_window(window: &tauri::WebviewWindow, region: Region) -> Res
     }
 }
 fn hide_selectors(app: &tauri::AppHandle, screen: &Screen) {
+    screen.selection_ready.store(false, Ordering::SeqCst);
+    if let Ok(mut started) = screen.selection_started.lock() { *started = None; }
     screen.frozen_generation.fetch_add(1,Ordering::SeqCst);
     if let Ok(mut ready)=screen.frozen_ready.lock(){ready.clear();}
     if let Ok(mut snapshots) = screen.snapshots.lock() { snapshots.clear(); }
@@ -209,6 +211,7 @@ fn hide_selectors(app: &tauri::AppHandle, screen: &Screen) {
     for (label, window) in app.webview_windows() {
         if label.starts_with(if screen.secondary {"image-select-"} else {"screen-select-"}) ||
             label.starts_with(if screen.secondary {"image-freeze-"} else {"screen-freeze-"}) {
+            let _ = window.set_ignore_cursor_events(true);
             let _ = window.hide();
             let _ = session::emit_window(&window,"screen-hide", ());
         }
@@ -406,6 +409,7 @@ pub fn report_image_error(app:&tauri::AppHandle,error:String) {
 pub fn select(app: &tauri::AppHandle) -> Result<(), String> {
     let screen = app.state::<Screen>();
     let _gate = screen.gate.lock().map_err(|_| "Video ocupado")?;
+    cancel_selection_locked(app, &screen)?;
     select_locked(app, &screen, "video")
 }
 pub fn select_image(app: &tauri::AppHandle) -> Result<(), String> {
@@ -415,18 +419,16 @@ pub fn select_image(app: &tauri::AppHandle) -> Result<(), String> {
         ["starting","recording","paused","pausing","resuming","reframing","saving","cancelling"].contains(&phase.as_str());
     let screen=session::screen(app,if concurrent {"image-session"}else{"screen"});
     let _gate=screen.gate.lock().map_err(|_|"Captura ocupada")?;
-    if screen.state.lock().map_err(|_|"Estado ocupado")?.phase=="editing" {
-        hide_selectors(app,&screen);
-        screen.state.lock().map_err(|_|"Estado ocupado")?.phase="idle".into();
-    }
+    cancel_selection_locked(app, &screen)?;
     select_locked(app,&screen,"image")
 }
 fn select_locked(app: &tauri::AppHandle, screen: &Screen, kind: &str) -> Result<(), String> {
     let _updating=crate::updates::work(app)?;
     if screen.busy() {
-        return Err("Ya hay una grabacion o seleccion de pantalla".into());
+        let phase = screen.state.lock().map_err(|_| "Estado ocupado")?.phase.clone();
+        return Err(format!("Ya hay una grabacion o seleccion de pantalla (estado: {phase})"));
     }
-    *screen.selection_started.lock().map_err(|_| "Captura ocupada")? = Some(Instant::now());
+    crate::library::hide(app)?;
     if kind != "image" { ffmpeg(app)?; }
     let monitors = app.available_monitors().map_err(|e| e.to_string())?;
     if monitors.is_empty() {
@@ -448,6 +450,7 @@ fn select_locked(app: &tauri::AppHandle, screen: &Screen, kind: &str) -> Result<
         }
     }
     hide_selectors(app, screen);
+    *screen.selection_started.lock().map_err(|_| "Captura ocupada")? = Some(Instant::now());
     *screen.snapshots.lock().map_err(|_| "Captura ocupada")? = snapshots;
     crate::shortcuts::register(app, "Escape")?;
     screen.selection_ready.store(false, Ordering::SeqCst);
@@ -501,8 +504,31 @@ fn select_locked(app: &tauri::AppHandle, screen: &Screen, kind: &str) -> Result<
     if result.is_err() {
         hide_selectors(app, &screen);
         screen.state.lock().map_err(|_| "Estado ocupado")?.phase = "idle".into();
+    } else {
+        watch_selection_start(app, screen);
     }
     result
+}
+fn watch_selection_start(app: &tauri::AppHandle, screen: &Screen) {
+    let app = app.clone();
+    let secondary = screen.secondary;
+    let generation = screen.frozen_generation.load(Ordering::SeqCst);
+    tauri::async_runtime::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_secs(12)).await;
+        let _ = tauri::async_runtime::spawn_blocking(move || {
+            let screen = session::screen(&app, if secondary { "image-session" } else { "screen" });
+            let Ok(_gate) = screen.gate.lock() else { return; };
+            if screen.frozen_generation.load(Ordering::SeqCst) != generation { return; }
+            let pending = screen.selection_started.lock().map(|s| s.is_some()).unwrap_or(false);
+            let selecting = screen.state.lock().map(|s| s.phase == "selecting").unwrap_or(false);
+            if pending && selecting {
+                let _ = cancel_selection_locked(&app, &screen);
+                let message = "El selector no termino de cargar en 12 segundos; se libero la pantalla. Podes volver a intentar la captura.";
+                if let Ok(mut status) = screen.state.lock() { status.error = message.into(); }
+                let _ = app.state::<Store>().event(message);
+            }
+        }).await;
+    });
 }
 fn selector_window(app: &tauri::AppHandle, label: &str) -> Result<tauri::WebviewWindow, String> {
     Ok(match app.get_webview_window(label) {
@@ -663,6 +689,7 @@ pub fn screen_frozen_state(app:tauri::AppHandle,window:tauri::WebviewWindow)->Op
 pub fn screen_frozen_ready(app:tauri::AppHandle,window:tauri::WebviewWindow,generation:u64)->Result<bool,String> {
     session::frozen_source(window.label()).ok_or("Vista incorrecta")?;
     let screen=session::screen(&app,window.label());
+    let Ok(_gate) = screen.gate.try_lock() else { return Ok(false); };
     // A late response from a closed capture must never cover the live desktop.
     if frozen_generation(&screen)!=Some(generation){return Ok(true);}
     if !screen.selection_ready.load(Ordering::SeqCst){return Ok(false);}
@@ -682,6 +709,7 @@ pub fn screen_overlay_ready(
     window: tauri::WebviewWindow,
 ) -> Result<bool, String> {
     let screen=session::screen(&app,window.label());
+    let Ok(_gate) = screen.gate.try_lock() else { return Ok(false); };
     if !screen.selection_ready.load(Ordering::SeqCst) {
         return Ok(false);
     }
@@ -1968,4 +1996,3 @@ mod tests {
         }
     }
 }
-

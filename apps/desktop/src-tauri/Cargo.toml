@@ -21,7 +21,7 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 rusqlite = { version = "0.32", features = ["bundled", "backup"] }
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "multipart"] }
-tokio = { version = "1", features = ["fs", "macros", "time"] }
+tokio = { version = "1", features = ["fs", "macros", "time", "sync"] }
 uuid = { version = "1", features = ["v4"] }
 chrono = "0.4"
 regex = "1"

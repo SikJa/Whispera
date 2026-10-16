@@ -1,4 +1,5 @@
 import { DEFAULT_SETTINGS } from '../shared/types';
+import { libraryWindow } from './window-lifecycle';
 const invoke=(command:string,args:any={})=>(window as any).__TAURI_INTERNALS__.invoke(command,args);
 const listeners=new Map<string,Set<Function>>();
 const emit=(name:string,...args:any[])=>listeners.get(name)?.forEach(f=>f(...args));
@@ -22,12 +23,27 @@ api.loadState=async()=>state;
 await import('../src/main');
 const {useStore}=await import('../src/store/appStore');
 holdsSettings=()=>Boolean(useStore.getState().sliderActive||useStore.getState().edgeTransition?.active);
-useStore.subscribe((next,previous)=>{if(previous.open&&!next.open)setTimeout(()=>{if(!useStore.getState().open)void invoke('library_window',{operation:'hide'});},350);if(!previous.open&&next.open&&shown)void invoke('library_window',{operation:'show'});});
+const surface=libraryWindow(invoke,()=>Array.from(document.querySelectorAll('.blade,.preview-flyout,.palette-popover,.split-dropzone'))
+  .filter(el=>getComputedStyle(el).visibility!=='hidden'&&getComputedStyle(el).display!=='none')
+  .map(el=>el.getBoundingClientRect())
+  .map(r=>({x:Math.max(0,r.x),y:Math.max(0,r.y),width:Math.min(innerWidth,r.right)-Math.max(0,r.x),height:Math.min(innerHeight,r.bottom)-Math.max(0,r.y)}))
+  .filter(r=>r.width>0&&r.height>0));
+const closePanel=()=>{
+  useStore.setState({open:false,previewItemId:null,previewItemRect:null});
+  return surface.close();
+};
+const surfaceError=(error:unknown)=>{void closePanel().catch(()=>{});toast(String(error));};
+useStore.subscribe((next,previous)=>{
+  if(previous.open&&!next.open)void surface.close().catch(()=>{});
+  if(!previous.open&&next.open)void surface.open().catch(surfaceError);
+});
 const nativeListen=(event:string,callback:Function)=>invoke('plugin:event|listen',{event,target:{kind:'WebviewWindow',label:'library'},handler:(window as any).__TAURI_INTERNALS__.transformCallback(callback)});
 await nativeListen('library-open',()=>{
   window.dispatchEvent(new Event('panel:open-request'));
-  useStore.getState().setOpen(true);
+  if(useStore.getState().open)void surface.open().catch(surfaceError);
+  else useStore.getState().setOpen(true);
 });
+await nativeListen('library-close',()=>void closePanel().catch(()=>{}));
 await nativeListen('tauri://drag-drop',async({payload}:any)=>{
   const point=payload.position;
   const element=document.elementFromPoint(point.x/devicePixelRatio,point.y/devicePixelRatio);
@@ -42,11 +58,9 @@ await nativeListen('tauri://drag-drop',async({payload}:any)=>{
 });
 const ready=setInterval(()=>{if(useStore.getState().hydrated){useStore.getState().setOpen(true);clearInterval(ready);}},50);
 setInterval(async()=>{if(busy)return;busy=true;try{await refresh();}catch(e){toast(String(e));}finally{busy=false;}},1500);
-let lastGeometry='';
-let shown=false;
 let cursorBusy=false;
 setInterval(async()=>{if(cursorBusy)return;cursorBusy=true;try{const point=await invoke('library_cursor');if(point&&typeof point.x==='number')emit('CursorEdge',point);}catch{}finally{cursorBusy=false;}},100);
-setInterval(()=>{const rects=Array.from(document.querySelectorAll('.blade,.preview-flyout,.palette-popover,.split-dropzone,.flare-top,.flare-bottom,.flare-horizontal')).map(el=>el.getBoundingClientRect()).filter(r=>r.width>0&&r.height>0&&r.x<innerWidth&&r.right>0).map(r=>({x:Math.max(0,r.x),y:Math.max(0,r.y),width:Math.min(innerWidth,r.right)-Math.max(0,r.x),height:Math.min(innerHeight,r.bottom)-Math.max(0,r.y)})).filter(r=>r.width>0&&r.height>0);if(!rects.length)return;const signature=JSON.stringify(rects);if(signature!==lastGeometry){lastGeometry=signature;void invoke('recorder_region',{rects}).then(()=>{if(!shown){shown=true;return invoke('library_window',{operation:'show'});}}).catch(()=>{});}},100);
+setInterval(()=>{if(useStore.getState().open)void surface.sync().catch(surfaceError);},100);
 let nativeDragInFlight=false;
 api.startDrag=(req:any)=>{
   if(nativeDragInFlight)return;
@@ -63,7 +77,7 @@ api.startDrag=(req:any)=>{
 document.addEventListener('dragend',e=>{if(nativeDragInFlight)e.stopImmediatePropagation();},true);
 api.removeSubitem=(req:any)=>act('remove-part',req.id,req).then(()=>true);
 api.focusWindow=(focus:boolean)=>focus?invoke('library_window',{operation:'focus'}):Promise.resolve();
-api.minimizeWindow=()=>invoke('library_window',{operation:'hide'});
+api.minimizeWindow=closePanel;
 api.quitApp=api.minimizeWindow;
 api.openWhisperaUpdates=()=>invoke('open_updates');
 api.revealFile=(path:string)=>{const item=state.items.find((i:any)=>i.data.paths?.includes(path)||i.data.imageId===path);return item?act('reveal',item.id,item.data.kind==='files'?{paths:[path]}:null):Promise.reject('Archivo inexistente');};
@@ -78,4 +92,4 @@ api.prestageDrag=(req:any)=>{
     if(staged.size>32)staged.delete(staged.values().next().value!);
   }).catch(()=>{}).finally(()=>{staging=false;});
 };
-document.addEventListener('keydown',e=>{if(e.key==='Escape')void invoke('library_window',{operation:'hide'});});
+document.addEventListener('keydown',e=>{if(e.key==='Escape')void closePanel().catch(()=>{});});

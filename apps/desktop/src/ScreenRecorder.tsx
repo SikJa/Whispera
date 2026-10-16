@@ -32,6 +32,7 @@ export function ScreenOverlay() {
     let alive=true; let imageUrl:string|undefined; let resetId=0; const off:UnlistenFn[]=[];
     const reset=async(mode:'video'|'image')=>{
       const id=++resetId;
+      try {
       const [appearance,bytes]=await Promise.all([
         invoke<Appearance>('screen_appearance'),
         mode==='image'?invoke<ArrayBuffer>('screen_selection_image'):Promise.resolve(undefined),
@@ -43,6 +44,13 @@ export function ScreenOverlay() {
       if(!alive||id!==resetId)return;
       setSnapshot(imageUrl);setFrameColor(appearance.frameColor??'#ffffff');setStage(undefined);setEditor(undefined);setKind(mode);setEpoch(v=>v+1);setInitialized(true);
       await showWhenReady('screen_overlay_ready',undefined,()=>alive&&id===resetId);
+      } catch (error) {
+        if(!alive||id!==resetId)return;
+        if(imageUrl)URL.revokeObjectURL(imageUrl);
+        imageUrl=undefined;setSnapshot(undefined);setInitialized(false);
+        console.error('Capture selector initialization failed',error);
+        await invoke('screen_cancel_selection').catch(()=>{});
+      }
     };
     void(async()=>{
       for(const promise of [listen('screen-hide',()=>{++resetId;if(imageUrl)URL.revokeObjectURL(imageUrl);imageUrl=undefined;if(alive){setSnapshot(undefined);setStage(undefined);setEditor(undefined);setInitialized(false);}}),listen<'video'|'image'>('screen-reset',e=>void reset(e.payload)),listen<Stage>('screen-stage',e=>{if(alive)setStage(e.payload);}),listen<CaptureContext|null>('screen-editor-reset',e=>{if(alive){setEditor(e.payload??undefined);if(e.payload&&imageUrl){URL.revokeObjectURL(imageUrl);imageUrl=undefined;setSnapshot(undefined);}}})]){

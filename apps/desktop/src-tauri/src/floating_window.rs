@@ -23,7 +23,7 @@ pub struct HitRect {
 }
 
 #[tauri::command]
-pub fn recorder_region(window: tauri::WebviewWindow, rects: Vec<HitRect>) -> Result<(), String> {
+pub async fn recorder_region(window: tauri::WebviewWindow, rects: Vec<HitRect>) -> Result<(), String> {
     if !(["recorder", "library"].contains(&window.label()) || window.label().starts_with("media-"))
         || rects.is_empty()
         || rects.len() > 32
@@ -51,16 +51,16 @@ pub fn recorder_region(window: tauri::WebviewWindow, rects: Vec<HitRect>) -> Res
     #[cfg(target_os = "windows")]
     {
         let clone = window.clone();
+        let (send, receive) = tokio::sync::oneshot::channel();
         window
             .run_on_main_thread(move || {
-                let Ok(raw) = clone.hwnd() else {
-                    return;
-                };
+                let result = (|| -> Result<(), String> {
+                let raw = clone.hwnd().map_err(|e| e.to_string())?;
                 let dpi = clone.scale_factor().unwrap_or(1.);
                 unsafe {
                     let region = CreateRectRgn(0, 0, 0, 0);
                     if region.0.is_null() {
-                        return;
+                        return Err("No se pudo crear la region interactiva".into());
                     }
                     for r in rects {
                         let part = CreateRoundRectRgn(
@@ -71,18 +71,30 @@ pub fn recorder_region(window: tauri::WebviewWindow, rects: Vec<HitRect>) -> Res
                             (12. * dpi) as i32,
                             (12. * dpi) as i32,
                         );
-                        if !part.0.is_null() {
-                            let _ = CombineRgn(Some(region), Some(region), Some(part), RGN_OR);
-                            let _ = DeleteObject(part.into());
+                        if part.0.is_null() {
+                            let _ = DeleteObject(region.into());
+                            return Err("No se pudo crear la region del panel".into());
+                        }
+                        let combined = CombineRgn(Some(region), Some(region), Some(part), RGN_OR);
+                        let _ = DeleteObject(part.into());
+                        if combined.0 == 0 {
+                            let _ = DeleteObject(region.into());
+                            return Err("No se pudo combinar la region del panel".into());
                         }
                     }
                     // Windows owns the region only after successful SetWindowRgn.
                     if SetWindowRgn(HWND(raw.0), Some(region), true) == 0 {
                         let _ = DeleteObject(region.into());
+                        return Err("No se pudo aplicar la region interactiva".into());
                     }
                 }
+                Ok(())
+                })();
+                let _ = send.send(result);
             })
-            .map_err(|e| e.to_string())
+            .map_err(|e| e.to_string())?;
+        // Do not acknowledge a region that is only queued, not yet applied.
+        receive.await.map_err(|e| e.to_string())?
     }
 }
 #[tauri::command]

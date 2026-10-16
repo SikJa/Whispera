@@ -208,7 +208,16 @@ try{
   await page.waitForFunction(()=>window.__qa.settings.backgroundColor==='#000000'&&!document.documentElement.dataset.libraryColor);
   assert.equal(await page.locator('.blade').evaluate(el=>getComputedStyle(el).backgroundColor),'rgb(0, 0, 0)');
   assert.equal(await page.evaluate(()=>document.documentElement.style.getPropertyValue('--bg-card')),'','black restores the original theme');
+  for(const close of ['escape','native']) {
+    if(close==='escape')await page.keyboard.press('Escape');
+    else await page.evaluate(()=>window.__qa.events.get('library-close')({}));
+    await page.waitForFunction(()=>window.__qa.calls.filter(c=>c.command==='library_window').at(-1)?.args.operation==='hide');
+    const shows=await page.evaluate(()=>window.__qa.calls.filter(c=>c.command==='library_window'&&c.args.operation==='show').length);
+    await page.waitForTimeout(650);
+    assert.equal(await page.evaluate(()=>window.__qa.calls.filter(c=>c.command==='library_window'&&c.args.operation==='show').length),shows,'closed panel must not reopen from DOM polling');
+    await page.evaluate(()=>window.__qa.events.get('library-open')({}));
+    await page.waitForFunction(shows=>window.__qa.calls.filter(c=>c.command==='library_window'&&c.args.operation==='show').length>shows,shows);
+  }
   assert.deepEqual(errors,[]);
   console.log('PASS native adapter: hydration, filters, no demo controls, subitem copy, file drag IPC, pin, clipped geometry; background presets/custom, persistence, contrast and original black restoration. OS clipboard/drag mocked; no visible Windows tests.');
 }finally{await browser.close();await new Promise(r=>server.close(r));}
-

@@ -5,6 +5,22 @@ import {installNativeMock} from './tests/native-mock.mjs';
 const server=process.env.WHISPERA_TEST_URL?null:await createServer({server:{host:'127.0.0.1',port:0,strictPort:false,hmr:false}});await server?.listen();
 const browser=await launchSilentBrowser();
 try{
+  const base=process.env.WHISPERA_TEST_URL||`http://127.0.0.1:${server.httpServer.address().port}`;
+  for(const broken of ['screen_appearance','screen_selection_image','screen_overlay_ready']) {
+    const failed=await browser.newPage();
+    await failed.addInitScript(installNativeMock,{kind:'image'});
+    await failed.addInitScript(broken=>{
+      const original=window.__TAURI_INTERNALS__.invoke;
+      window.__TAURI_INTERNALS__.invoke=async(command,args)=>{
+        if(command===broken)throw Error('Simulated selector initialization failure');
+        return original(command,args);
+      };
+    },broken);
+    await failed.goto(`${base}/overlay.html?view=screen-select`);
+    await failed.waitForFunction(()=>window.calls.some(c=>c.command==='screen_cancel_selection'));
+    assert.equal(await failed.locator('.screen-selection').count(),0,'failed selector must release its native session');
+    await failed.close();
+  }
   const page=await browser.newPage({viewport:{width:640,height:480}});page.setDefaultTimeout(5000);
   await page.addInitScript(installNativeMock,{});
   await page.addInitScript(()=>{const original=window.__TAURI_INTERNALS__.invoke;let fail=true;window.__TAURI_INTERNALS__.invoke=async(command,args)=>{if(command==='screen_start'&&fail){fail=false;throw Error('No se pudo iniciar la captura de prueba');}return original(command,args);};});

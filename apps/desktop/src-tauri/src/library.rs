@@ -37,6 +37,7 @@ fn image_hash(rgba: &[u8], width: u32, height: u32) -> String {
 pub struct Library {
     target: Mutex<Option<paste::Target>>,
     sequence: Mutex<Option<u64>>,
+    open_requested: std::sync::atomic::AtomicBool,
 }
 fn clipboard_sequence() -> Option<u64> {
     #[cfg(windows)]
@@ -528,7 +529,7 @@ pub async fn library_action(
       "reveal"=>{let i=index.ok_or("Elemento inexistente")?;let data=selected(&items[i]["data"],&value)?;let path=paths(&data).into_iter().next().filter(|p|p.is_file()).ok_or("Archivo inexistente")?;reveal_file(&path)?;return Ok(json!(true));},
       "copy"|"paste"=>{let i=index.ok_or("Elemento inexistente")?;let data=selected(&items[i]["data"],&value)?;if data["kind"]=="text"{app.clipboard().write_text(data["text"].as_str().unwrap_or("")).map_err(|e|e.to_string())?;}else if data["kind"]=="image"{let path=paths(&data).into_iter().next().ok_or("Imagen inexistente")?;let bytes=fs::read(path).map_err(|e|e.to_string())?;let image=tauri::image::Image::from_bytes(&bytes).map_err(|e|e.to_string())?;app.clipboard().write_image(&image).map_err(|e|e.to_string())?;}else{let p=paths(&data);if p.is_empty(){return Err("Los archivos ya no existen".into());}crate::video_transcript::copy_files(&app,&p)?;}
         if data["kind"]=="text"||data["kind"]=="image"{suppress_clipboard(&app);}
-        if action=="paste"{if let Some(w)=app.get_webview_window("library"){let _=w.hide();}let target=state.target.lock().map_err(|_|"Destino ocupado")?.ok_or("No hay destino. Contenido copiado para pegar manualmente")?;paste::restore_and_paste(target)?;}return Ok(json!(true));},
+        if action=="paste"{hide(&app)?;let target=state.target.lock().map_err(|_|"Destino ocupado")?.ok_or("No hay destino. Contenido copiado para pegar manualmente")?;paste::restore_and_paste(target)?;}return Ok(json!(true));},
       "add"=>{let p:Vec<String>=value.as_array().ok_or("Archivos invalidos")?.iter().filter_map(|p|p.as_str().map(String::from)).filter(|p|Path::new(p).is_file()).take(10).collect();if !p.is_empty(){add(&store,files_data(&p))?;}return payload(&store);},
       _=>return Err("Accion no disponible todavia".into())
     }save(&store,items)?;payload(&store)
@@ -732,17 +733,29 @@ pub async fn library_toggle(app: tauri::AppHandle) -> Result<(), String> {
         .await
         .map_err(|e| e.to_string())?
 }
+pub(crate) fn hide(app: &tauri::AppHandle) -> Result<(), String> {
+    app.state::<Library>().open_requested.store(false, std::sync::atomic::Ordering::SeqCst);
+    if let Some(window) = app.get_webview_window("library") {
+        // A transparent webview must stop intercepting clicks before hiding.
+        let input = window.set_ignore_cursor_events(true);
+        let hidden = window.hide();
+        let _ = window.emit("library-close", ());
+        input.and(hidden).map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
 fn toggle(app: tauri::AppHandle) -> Result<(), String> {
     if let Some(w) = app.get_webview_window("library") {
         if w.is_visible().map_err(|e| e.to_string())? {
-            return w.hide().map_err(|e| e.to_string());
+            return hide(&app);
         }
         *app.state::<Library>()
             .target
             .lock()
             .map_err(|_| "Destino ocupado")? = paste::capture();
+        app.state::<Library>().open_requested.store(true, std::sync::atomic::Ordering::SeqCst);
         let _ = w.emit("library-open", ());
-        return w.show().map_err(|e| e.to_string());
+        return Ok(()); // The frontend commits its hit region before showing.
     }
     *app.state::<Library>()
         .target
@@ -766,6 +779,8 @@ fn toggle(app: tauri::AppHandle) -> Result<(), String> {
     .build()
     .map_err(|e| e.to_string())?;
     crate::floating_window::apply(&w)?;
+    w.set_ignore_cursor_events(true).map_err(|e| e.to_string())?;
+    app.state::<Library>().open_requested.store(true, std::sync::atomic::Ordering::SeqCst);
     if let Some(m) = w.current_monitor().map_err(|e| e.to_string())? {
         let work = m.work_area();
         let scale = m.scale_factor();
@@ -781,13 +796,27 @@ fn toggle(app: tauri::AppHandle) -> Result<(), String> {
     Ok(())
 }
 #[tauri::command]
-pub fn library_window(window: tauri::WebviewWindow, operation: String) -> Result<(), String> {
+pub fn library_window(app: tauri::AppHandle, window: tauri::WebviewWindow, operation: String) -> Result<(), String> {
     if window.label() != "library" {
         return Err("Ventana invalida".into());
     }
     match operation.as_str() {
-        "show" => window.show(),
-        "hide" => window.hide(),
+        "show" => {
+            if !app.state::<Library>().open_requested.load(std::sync::atomic::Ordering::SeqCst) {
+                return Err("El panel ya se cerro".into());
+            }
+            window.show().map_err(|e| e.to_string())?;
+            window.set_ignore_cursor_events(false).map_err(|e| e.to_string())?;
+            if !app.state::<Library>().open_requested.load(std::sync::atomic::Ordering::SeqCst) {
+                return hide(&app);
+            }
+            Ok(())
+        },
+        "hide" => {
+            app.state::<Library>().open_requested.store(false, std::sync::atomic::Ordering::SeqCst);
+            let input = window.set_ignore_cursor_events(true);
+            input.and(window.hide())
+        },
         "focus" => window.set_focus(),
         _ => return Err("Accion invalida".into()),
     }

@@ -31,7 +31,7 @@ export default function ReaderPanel({text,onTextChange,compact=false}:{text:stri
     void refresh();const timer=setInterval(()=>{if(!document.hidden&&!gate.current)void refresh();},1500);
     return()=>{alive=false;clearInterval(timer);};
   },[reload]);
-  useEffect(()=>{try{localStorage.setItem('whispera.reader.preferences',JSON.stringify({voice,rate}));}catch{/* Preferences are optional. */}},[voice,rate]);
+  useEffect(()=>{try{localStorage.setItem('whispera.reader.preferences',JSON.stringify({voice,rate}));}catch{/* Preferences are optional. */}if(native&&voice)void invoke('reader_configure',{voice,rate}).catch(reason=>setError(String(reason)));},[voice,rate]);
   // Closing the transcript/reader view explicitly stops its playback.
   useEffect(()=>()=>{if(native)void invoke('reader_control',{action:'stop'}).catch(()=>{});},[]);
   async function act(action:'speak'|'pause'|'resume'|'stop') {
@@ -45,6 +45,7 @@ export default function ReaderPanel({text,onTextChange,compact=false}:{text:stri
   const playing=status.phase==='speaking', paused=status.phase==='paused', unavailable=!native||!status.supported||!voice;
   return <section className={`reader-panel${compact?' reader-compact':''}`} aria-label="Lectura en voz alta">
     {!compact&&<div className="provider-line"><div className="provider-logo"><Headphones size={22}/></div><div><h2>Lectura local</h2><p>Voces instaladas en Windows · sin clave de Groq</p></div></div>}
+    {!compact&&<p className="reader-privacy">Acceso rápido: seleccioná un texto y pulsá el atajo de Lectura configurado en Atajos (inicial: Ctrl + Alt + R). Volvé a pulsarlo para detener. No modifica el portapapeles.</p>}
     {!compact&&<p className="reader-privacy">Escuchá un texto o una transcripción. Este lector no envía el contenido a internet ni lo guarda en el historial.</p>}
     {onTextChange&&<label className="reader-text"><span>Texto para escuchar</span><textarea aria-label="Texto para escuchar" value={text} maxLength={50000} spellCheck={false} placeholder="Pegá o escribí el texto que querés escuchar…" onChange={event=>onTextChange(event.target.value)}/><small>{text.length.toLocaleString('es')} / 50.000 caracteres</small></label>}
     {status.supported&&status.voices.length>0&&!status.voices.some(item=>item.language.startsWith("es"))&&<p className="reader-privacy">No hay una voz en español instalada. Podés añadirla en la configuración de idioma de Windows; el lector solo usa las voces disponibles.</p>}

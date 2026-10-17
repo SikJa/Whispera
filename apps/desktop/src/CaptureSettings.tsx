@@ -1,24 +1,24 @@
 import { useEffect, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
-import { AudioLines, Camera, ClipboardList, Keyboard, Mic, Monitor, RefreshCw, VolumeX, Video } from 'lucide-react';
+import { AudioLines, Camera, ClipboardList, Keyboard, Headphones, Mic, Monitor, RefreshCw, VolumeX, Video } from 'lucide-react';
 import { native } from './client';
 import HotkeyInput from './HotkeyInput';
 import { finishHotkeyCapture } from './hotkey-capture';
 import {useAutoSave,AutoSaveStatus} from './useAutoSave';
-import { commandKey, systemName } from './platform';
+import { commandKey, systemName, isMac } from './platform';
 
 export type CapturePreferences = { audio: 'none' | 'system' | 'microphone' | 'both'; hotkey: string; image_hotkey: string; frame_color: string; image_auto_copy: boolean };
 export const defaultCapturePreferences: CapturePreferences = { audio:'none',hotkey:'Control+Shift+F9',image_hotkey:'Control+Shift+F10',frame_color:'#ffffff',image_auto_copy:false };
 type Devices = { microphone:string|null; system:string|null };
 
 export function ShortcutSettings({ voice, onSaved }: { voice:string; onSaved:()=>void }) {
-  const [keys,setKeys] = useState({voice,video:defaultCapturePreferences.hotkey,image:defaultCapturePreferences.image_hotkey,library:'Alt+C'});
+  const [keys,setKeys] = useState({voice,video:defaultCapturePreferences.hotkey,image:defaultCapturePreferences.image_hotkey,library:'Alt+C',reading:'Control+Alt+KeyR'});
   const [loading,setLoading] = useState(native);
   const [busy,setBusy] = useState(false);
   const [message,setMessage] = useState('');
   useEffect(()=>{
     let alive=true;
-    if(native) void Promise.all([invoke<CapturePreferences>('screen_preferences'),invoke<{toggleHotkey:string}>('library_preferences')]).then(([p,l])=>{if(alive)setKeys(k=>({...k,video:p.hotkey,image:p.image_hotkey,library:l.toggleHotkey}));}).catch(e=>{if(alive)setMessage(String(e));}).finally(()=>{if(alive)setLoading(false);});
+    if(native) void Promise.all([invoke<CapturePreferences>('screen_preferences'),invoke<{toggleHotkey:string}>('library_preferences'),invoke<{hotkey:string}>('reader_preferences')]).then(([p,l,r])=>{if(alive)setKeys(k=>({...k,video:p.hotkey,image:p.image_hotkey,library:l.toggleHotkey,reading:r.hotkey}));}).catch(e=>{if(alive)setMessage(String(e));}).finally(()=>{if(alive)setLoading(false);});
     return()=>{alive=false;};
   },[]);
   const autosave=useAutoSave<typeof keys>(async next=>{
@@ -28,7 +28,7 @@ export function ShortcutSettings({ voice, onSaved }: { voice:string; onSaved:()=
   });
   return <section className="shortcut-settings">
     <p className="muted-note">Hacé clic en cada campo y presioná la combinación. Cada función usa un atajo distinto.</p>
-    {([['voice','Dictado por voz','Iniciar y terminar la transcripción.',Keyboard],['video','Grabar video','Seleccionar un área y terminar la grabación.',Video],['image','Capturar imagen','Seleccionar un área de la pantalla.',Camera],['library','Portapapeles','Abrir y cerrar la biblioteca.',ClipboardList]] as const).map(([name,label,help,Icon])=><div className="form-row shortcut-setting-row" key={name}>
+    {([['voice','Dictado por voz','Iniciar y terminar la transcripción.',Keyboard],['video','Grabar video','Seleccionar un área y terminar la grabación.',Video],['image','Capturar imagen','Seleccionar un área de la pantalla.',Camera],['library','Portapapeles','Abrir y cerrar la biblioteca.',ClipboardList],['reading','Lectura en voz alta','Leer el texto seleccionado en otra aplicación. Pulsar de nuevo para detener.',Headphones]] as const).filter(([name])=>name!=='reading'||!isMac).map(([name,label,help,Icon])=><div className="form-row shortcut-setting-row" key={name}>
       <label htmlFor={`shortcut-${name}`}><Icon size={18}/>{label}<span>{help}</span></label>
       <HotkeyInput id={`shortcut-${name}`} disabled={busy||loading} value={keys[name]} onChange={value=>setKeys(k=>{const next={...k,[name]:value};autosave.queue(next);return next;})}/>
     </div>)}

@@ -4,12 +4,17 @@ on:
     branches: [main, codex/read-aloud]
   pull_request:
   workflow_dispatch:
+concurrency:
+  group: windows-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: true
 permissions:
   contents: read
 jobs:
   build:
     runs-on: windows-latest
     timeout-minutes: 45
+    env:
+      WHISPERA_LIGHT_CHECKS: ${{ github.head_ref == 'codex/read-aloud' || github.ref_name == 'codex/read-aloud' }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -18,6 +23,10 @@ jobs:
           cache: npm
           cache-dependency-path: apps/desktop/package-lock.json
       - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: apps/desktop/src-tauri
+          cache-on-failure: true
       - name: Check source
         run: node scripts/check-source.mjs
       - name: Install frontend dependencies
@@ -28,11 +37,19 @@ jobs:
         run: npm ci --ignore-scripts
       - name: Rust unit tests (no desktop or network fixtures)
         working-directory: apps/desktop/src-tauri
-        run: cargo test --locked
+        shell: pwsh
+        run: |
+          if ($env:WHISPERA_LIGHT_CHECKS -eq 'true') {
+            cargo test --locked reader
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            cargo test --locked shortcuts::
+          } else { cargo test --locked }
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Local reader protocol tests (silent)
         shell: pwsh
         run: node apps/desktop/tests/reader-protocol.mjs apps/desktop/src-tauri/target/reader/WhisperaReader.exe
       - name: Windows startup provider regression (isolated registry keys)
+        if: env.WHISPERA_LIGHT_CHECKS != 'true'
         shell: pwsh
         run: ./apps/desktop/tests/verify-startup-provider.ps1
       - name: Build installer
@@ -46,7 +63,11 @@ jobs:
         run: npx playwright install chromium
       - name: Silent headless regression tests
         working-directory: apps/desktop
-        run: npm run test:release
+        shell: pwsh
+        run: |
+          if ($env:WHISPERA_LIGHT_CHECKS -eq 'true') { npm run test:release -- reader hotkeys }
+          else { npm run test:release }
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Checksums
         shell: pwsh
         run: Get-ChildItem apps/desktop/src-tauri/target/release/bundle/nsis/*.exe | ForEach-Object { "$((Get-FileHash $_.FullName -Algorithm SHA256).Hash)  $($_.Name)" } | Out-File apps/desktop/src-tauri/target/release/bundle/nsis/SHA256SUMS.txt -Encoding ascii

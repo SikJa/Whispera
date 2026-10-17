@@ -1,8 +1,9 @@
 //! Explicit local text-to-speech. Text is never persisted, logged, or sent to a provider.
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use std::{io::{BufRead, BufReader, Write}, process::{Child, ChildStdin, Command, Stdio}, sync::{mpsc, Mutex}, time::Duration};
-use tauri::Manager;
+use std::{io::{BufRead, BufReader, Write}, process::{Child, ChildStdin, Command, Stdio}, sync::{mpsc, Mutex, atomic::{AtomicBool, AtomicU64, Ordering}}, time::Duration};
+use tauri::{Manager, Emitter};
+use tauri_plugin_global_shortcut::GlobalShortcutExt;
 
 #[derive(Clone, Default, Deserialize, Serialize)]
 pub struct Voice { pub id: String, pub name: String, pub language: String }
@@ -11,7 +12,67 @@ pub struct Status { pub supported: bool, pub phase: String, #[serde(default)] pu
 struct Session { child: Child, stdin: ChildStdin, replies: mpsc::Receiver<String> }
 impl Drop for Session { fn drop(&mut self) { let _ = self.child.kill(); let _ = self.child.wait(); } }
 #[derive(Default)]
-pub struct Reader(Mutex<Option<Session>>);
+pub struct Reader(Mutex<Option<Session>>, Mutex<()>, AtomicU64, AtomicBool);
+#[derive(Serialize)]
+pub struct Preferences { pub hotkey: String, pub voice: String, pub rate: i32 }
+pub fn hotkey(app: &tauri::AppHandle) -> String {
+    app.state::<crate::storage::Store>().get::<Option<String>>("reader_hotkey").unwrap_or_default().unwrap_or_else(|| "Control+Alt+KeyR".into())
+}
+#[tauri::command]
+pub fn reader_preferences(app: tauri::AppHandle, window: tauri::WebviewWindow) -> Result<Preferences, String> {
+    authorize(&window)?; Ok(preferences(&app))
+}
+fn preferences(app: &tauri::AppHandle) -> Preferences {
+    let store = app.state::<crate::storage::Store>();
+    Preferences { hotkey: hotkey(app), voice: store.get("reader_voice").unwrap_or_default(), rate: store.get("reader_rate").unwrap_or_default() }
+}
+#[tauri::command]
+pub fn reader_configure(app: tauri::AppHandle, window: tauri::WebviewWindow, voice: String, rate: i32) -> Result<(), String> {
+    authorize(&window)?; validate("preferences", rate)?;
+    if voice.len() > 512 { return Err("Voz no válida.".into()); }
+    app.state::<crate::storage::Store>().put_many(&[("reader_voice",json!(voice)),("reader_rate",json!(rate))])
+}
+pub fn enabled(app: &tauri::AppHandle) -> bool { app.state::<Reader>().3.load(Ordering::SeqCst) }
+pub fn registered(app: &tauri::AppHandle, value: bool) { app.state::<Reader>().3.store(value, Ordering::SeqCst); }
+pub fn matches(app: &tauri::AppHandle, key: &tauri_plugin_global_shortcut::Shortcut) -> bool {
+    app.state::<Reader>().3.load(Ordering::SeqCst) && crate::shortcuts::parse(&hotkey(app)).is_ok_and(|k| k == *key)
+}
+pub fn initialize(app: &tauri::AppHandle) -> Result<(), String> {
+    if !cfg!(windows) { return Ok(()); }
+    let key = crate::shortcuts::parse(&hotkey(app))?;
+    if app.global_shortcut().is_registered(key) { return Err("El atajo de Lectura coincide con otro. Cambialo en Atajos.".into()); }
+    app.global_shortcut().register(key).map_err(|_| "No se pudo registrar el atajo de Lectura. Elegí otro en Atajos.".to_string())?;
+    registered(app,true); Ok(())
+}
+fn available(app: &tauri::AppHandle, engine: &crate::engine::Engine) -> Result<(), String> {
+    if crate::health::busy(&engine.recorder.snapshot().phase) || crate::screen::busy(app) || crate::replay::preferences(app).enabled {
+        return Err("Terminá el dictado o la captura y desactivá Replay antes de leer en voz alta.".into());
+    } Ok(())
+}
+pub fn toggle_selection(app: &tauri::AppHandle, source: isize) -> Result<(), String> {
+    let reader = app.state::<Reader>();
+    let ticket = reader.2.fetch_add(1, Ordering::SeqCst).wrapping_add(1);
+    let Ok(_operation) = reader.1.try_lock() else { stop(app); return Ok(()); };
+    let engine = app.state::<crate::engine::Engine>();
+    let _gate = engine.gate.lock().map_err(|_| "Motor ocupado.")?;
+    let status = request(app,json!({"action":"status"}))?;
+    if ["speaking","paused"].contains(&status.phase.as_str()) { stop(app); return Ok(()); }
+    available(app,&engine)?;
+    let selection = crate::reader_selection::selected_text(source);
+    if reader.2.load(Ordering::SeqCst) != ticket { return Ok(()); }
+    let text = selection?;
+    let prefs = preferences(app); validate(&text,prefs.rate)?;
+    let voice = status.voices.iter().find(|v| v.id == prefs.voice)
+        .or_else(|| status.voices.iter().find(|v| v.language.starts_with("es"))).or(status.voices.first())
+        .ok_or("No hay voces de escritorio instaladas.")?;
+    if reader.2.load(Ordering::SeqCst) != ticket { return Ok(()); }
+    request_guarded(app,json!({"action":"speak","text":text,"voice":voice.id,"rate":prefs.rate}),Some(ticket))?;
+    Ok(())
+}
+pub fn report_shortcut_error(app: &tauri::AppHandle, error: String) {
+    let _ = crate::open_settings(app.clone());
+    let _ = app.emit_to("main","reader-shortcut-error",error);
+}
 fn authorize(window: &tauri::WebviewWindow) -> Result<(), String> {
     if window.label() != "main" { return Err("Abrí Lectura desde Configuración.".into()); } Ok(())
 }
@@ -41,9 +102,11 @@ fn launch(app: &tauri::AppHandle) -> Result<Session, String> {
 }
 #[cfg(not(windows))]
 fn launch(_: &tauri::AppHandle) -> Result<Session, String> { Err("La lectura local de esta versión está disponible en Windows.".into()) }
-fn request(app: &tauri::AppHandle, value: Value) -> Result<Status, String> {
+fn request(app: &tauri::AppHandle, value: Value) -> Result<Status, String> { request_guarded(app,value,None) }
+fn request_guarded(app: &tauri::AppHandle, value: Value, ticket: Option<u64>) -> Result<Status, String> {
     let reader = app.state::<Reader>();
     let mut slot = reader.0.lock().map_err(|_| "Lector ocupado.")?;
+    if ticket.is_some_and(|ticket| reader.2.load(Ordering::SeqCst) != ticket) { return Ok(Status::default()); }
     if slot.is_none() { *slot = Some(launch(app)?); }
     let session = slot.as_mut().unwrap();
     let result = (|| {
@@ -71,9 +134,8 @@ pub async fn reader_speak(app: tauri::AppHandle, window: tauri::WebviewWindow, t
         let _work = crate::updates::work(&app)?;
         let engine = app.state::<crate::engine::Engine>();
         let _gate = engine.gate.lock().map_err(|_| "Motor ocupado.")?;
-        if crate::health::busy(&engine.recorder.snapshot().phase) || crate::screen::busy(&app) || crate::replay::preferences(&app).enabled {
-            return Err("Terminá el dictado o la captura y desactivá Replay antes de leer en voz alta.".into());
-        }
+        available(&app,&engine)?;
+        app.state::<Reader>().2.fetch_add(1, Ordering::SeqCst);
         request(&app, json!({"action":"speak","text":text,"voice":voice,"rate":rate}))
     }).await.map_err(|e| e.to_string())?
 }
@@ -81,11 +143,15 @@ pub async fn reader_speak(app: tauri::AppHandle, window: tauri::WebviewWindow, t
 pub async fn reader_control(app: tauri::AppHandle, window: tauri::WebviewWindow, action: String) -> Result<Status, String> {
     authorize(&window)?;
     if !["pause", "resume", "stop"].contains(&action.as_str()) { return Err("Acción de lectura no admitida.".into()); }
-    tauri::async_runtime::spawn_blocking(move || request(&app, json!({"action":action}))).await.map_err(|e| e.to_string())?
+    tauri::async_runtime::spawn_blocking(move || {
+        if action == "stop" { stop(&app); return request(&app,json!({"action":"status"})); }
+        request(&app, json!({"action":action}))
+    }).await.map_err(|e| e.to_string())?
 }
 // Killing our own helper stops synthesis immediately, without changing other audio.
 pub fn stop(app: &tauri::AppHandle) {
     if let Some(reader) = app.try_state::<Reader>() {
+        reader.2.fetch_add(1, Ordering::SeqCst);
         if let Ok(mut session) = reader.0.lock() { *session = None; }
     }
 }

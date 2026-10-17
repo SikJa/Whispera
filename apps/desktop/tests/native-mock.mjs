@@ -6,6 +6,7 @@ export function installNativeMock({kind='video',width=640,height=480,scale=1,set
   window.calls=[]; const callbacks=new Map(), listeners=new Map();let next=1;
   window.videoPreferences={audio:'none',hotkey:'Control+Shift+F9',image_hotkey:'Control+Shift+F10',frame_color:'#ffffff',image_auto_copy:false};
   window.voiceShortcut='Alt+KeyZ';
+  window.readerPreferences={hotkey:'Control+Alt+KeyR',voice:'',rate:0};
   window.libraryPreferences={toggleHotkey:'Alt+C',captureGlobal:true,incognito:false,historyLimit:250,autoDeleteHours:48};
   window.videoStatus={phase:selectionPhase??(new URLSearchParams(location.search).get('view')==='screen-select'?'selecting':'idle'),seconds:0,path:'',error:'',copied:false};
   window.editorContext={id:'test-session',kind,width,height,scale};
@@ -17,6 +18,8 @@ export function installNativeMock({kind='video',width=640,height=480,scale=1,set
     transformCallback:callback=>{const id=next++;callbacks.set(id,callback);return id;},
     invoke:async(command,args={})=>{
       window.calls.push({command,args});
+      if(command==='reader_preferences')return window.readerPreferences;
+      if(command==='reader_configure'){Object.assign(window.readerPreferences,args);return null;}
       if(command==='reader_status')return window.readerStatus;
       if(command==='reader_speak'){if(window.readerFailure)throw Error('Terminá el dictado antes de leer.');window.readerStatus={...window.readerStatus,phase:'speaking'};return window.readerStatus;}
       if(command==='reader_control'){window.readerStatus={...window.readerStatus,phase:args.action==='pause'?'paused':args.action==='resume'?'speaking':'idle'};return window.readerStatus;}
@@ -46,10 +49,11 @@ export function installNativeMock({kind='video',width=640,height=480,scale=1,set
       if(command==='screen_frozen_state')return kind==='image'&&['selecting','editing'].includes(window.videoStatus.phase)?1:null;
       if(command==='screen_preferences')return window.videoPreferences;
       if(command==='library_preferences')return window.libraryPreferences;
-      if(command==='library_action'&&args.action==='settings'){window.libraryPreferences={...window.libraryPreferences,...args.value};return window.libraryPreferences;}
+      if(command==='library_action'&&args.action==='settings'){window.readerPreferences={hotkey:'Control+Alt+KeyR',voice:'',rate:0};
+  window.libraryPreferences={...window.libraryPreferences,...args.value};return window.libraryPreferences;}
       if(command==='screen_status')return window.videoStatus;
       if(command==='screen_audio_devices')return{microphone:'Micrófono de prueba',system:'Altavoces de prueba'};
-      if(command==='save_all_shortcuts'){window.voiceShortcut=args.voice;window.videoPreferences={...window.videoPreferences,hotkey:args.video,image_hotkey:args.image};window.libraryPreferences.toggleHotkey=args.library;}
+      if(command==='save_all_shortcuts'){window.readerPreferences.hotkey=args.reading||window.readerPreferences.hotkey;window.voiceShortcut=args.voice;window.videoPreferences={...window.videoPreferences,hotkey:args.video,image_hotkey:args.image};window.libraryPreferences.toggleHotkey=args.library;}
       if(command==='screen_pause')window.videoStatus.phase=window.videoStatus.phase==='paused'?'recording':'paused';
       if(command==='screen_cancel')window.videoStatus.phase='idle';
       if(command==='screen_stop')window.videoStatus.phase='idle';

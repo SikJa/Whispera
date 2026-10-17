@@ -12,6 +12,8 @@ suites.push('reader');
 suites.push('macos-ui');
 suites.push('capture-startup');
 suites.push('window-lifecycle');
+const requested=process.argv.slice(2);
+if(requested.length){if(requested.some(name=>!suites.includes(name)))throw Error('Unknown suite');suites.splice(0,suites.length,...requested);}
 const failures=[];
 try {
   for (const name of suites) {

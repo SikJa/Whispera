@@ -68,6 +68,11 @@ const descriptions: Record<Route, string> = {
 function SettingsApp({sidebarExpanded}:{sidebarExpanded:boolean}) {
   const updater=useUpdates();
   const [readerText,setReaderText]=useState("");
+  const [readerNotice,setReaderNotice]=useState("");
+  useEffect(()=>{if(!api.native)return;let alive=true;let off:(()=>void)|undefined;
+    void listenUpdate<string>('reader-shortcut-error',event=>{if(alive){setReaderNotice(event.payload);setRoute('reading');}},{target:'main'}).then(remove=>{if(alive)off=remove;else remove();});
+    return()=>{alive=false;off?.();};
+  },[]);
   const [historyKind,setHistoryKind] = useState<'text'|'captures'>('text');
   const [data, setData] = useState<api.Snapshot>();
   const [route, setRoute] = useState<Route>("transcription");
@@ -135,7 +140,7 @@ function SettingsApp({sidebarExpanded}:{sidebarExpanded:boolean}) {
         <div className="page-heading"><div><h1>{title}</h1><p>{descriptions[route]}</p></div><AutoSaveStatus save={autosave}/></div>
         {message && <div className="notice" role="status">{message}<button aria-label="Cerrar aviso" onClick={() => setMessage("")}><X size={14} /></button></div>}
         <div className="settings-section">
-        {route==='reading'&&<ReaderPanel text={readerText} onTextChange={setReaderText}/>}
+        {route==='reading'&&<>{readerNotice&&<p role="alert">{readerNotice} <button onClick={()=>setReaderNotice('')}>Cerrar aviso</button></p>}<ReaderPanel text={readerText} onTextChange={setReaderText}/></>}
         {route==='updates'&&<p role="status">Versión experimental de danieluxury88. Las actualizaciones del proyecto original están desactivadas para conservar la lectura local.</p>}
         {route==='application'&&<ApplicationSettings/>}
         {route === 'screen' && <ScreenRecorder />}

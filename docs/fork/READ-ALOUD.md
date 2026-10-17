@@ -1,4 +1,4 @@
-# Local reading preview — 0.3.0-readaloud.1
+# Local reading preview — 0.3.0-readaloud.2
 
 This fork adds Windows text-to-speech independently of Groq transcription.
 
@@ -9,7 +9,8 @@ This fork adds Windows text-to-speech independently of Groq transcription.
 - An installed Spanish desktop voice is required for Spanish narration. Windows may offer other narrator voices that are not exposed to the legacy desktop synthesis API; availability is shown in the list.
 - Dictation/screen recording/replay stops the reader. A running capture prevents starting playback. Closing the reader panel stops playback.
 - The local reader is currently Windows-only. macOS shows an unavailable state.
-- This is not a screen reader, OCR or PDF importer. Reading selections in other applications is deferred; use paste for now.
+- Select text in a compatible Windows application and press **Ctrl+Alt+R** to read it; press again to stop. Change it in **Atajos → Lectura en voz alta**. Selection uses UI Automation: no simulated Copy, clipboard reads or clipboard changes. Password fields, empty selections, unsupported apps and selections over the limit are rejected. The shortcut uses the voice/speed most recently chosen in Lectura.
+- This is not a screen reader, OCR or PDF importer. Apps must expose their selection through Windows accessibility. No full-document or clipboard fallback is used.
 
 ## Privacy changes
 

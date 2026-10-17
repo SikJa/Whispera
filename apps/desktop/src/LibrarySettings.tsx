@@ -10,7 +10,7 @@ import {selectionFromHex,selectionHex} from './palette';
 import './LibraryBrowser.css';
 
 type Preferences = { captureGlobal:boolean; incognito:boolean; historyLimit:number; autoDeleteHours:number; clearUnpinnedOnRestart:boolean; transcribeVideo:boolean; videoTranscriptAttachment:boolean; backgroundColor:string };
-const defaults:Preferences = {captureGlobal:true,incognito:false,historyLimit:250,autoDeleteHours:48,clearUnpinnedOnRestart:false,transcribeVideo:true,videoTranscriptAttachment:true,backgroundColor:'#000000'};
+const defaults:Preferences = {captureGlobal:false,incognito:false,historyLimit:250,autoDeleteHours:48,clearUnpinnedOnRestart:false,transcribeVideo:false,videoTranscriptAttachment:false,backgroundColor:'#000000'};
 export default function LibrarySettings() {
   const [tab,setTab]=useState<'browser'|'settings'>('browser');
   const [value,setValue]=useState(defaults);

@@ -18,5 +18,14 @@ try{
  await page.locator('#library-limit').fill('410');await page.waitForFunction(()=>window.libraryPreferences.historyLimit===410);
  const saved=await page.evaluate(()=>window.libraryPreferences);
  assert.equal(saved.incognito,true);assert.equal(saved.captureGlobal,false);assert.equal(saved.autoDeleteHours,0);assert.equal(saved.transcribeVideo,false);assert.equal(saved.videoTranscriptAttachment,false);
- console.log('PASS: library read failure blocks edits; retry restores saved preferences before later edits. Native IPC mocked.');
+ const fresh=await browser.newPage();await fresh.addInitScript(installNativeMock,{});
+ await fresh.addInitScript(()=>{const original=window.__TAURI_INTERNALS__.invoke;window.__TAURI_INTERNALS__.invoke=(command,args)=>command==='library_preferences'?Promise.resolve({}):original(command,args);});
+ await fresh.goto(page.url(),{timeout:90000});
+ await fresh.getByRole('button',{name:'Portapapeles',exact:true}).click();await fresh.getByRole('tab',{name:'Configuración',exact:true}).click();
+ await fresh.waitForFunction(()=>!document.querySelector('#library-limit').closest('fieldset').disabled);
+ for(const key of ['captureGlobal','transcribeVideo','videoTranscriptAttachment'])assert.equal(await fresh.locator(`#library-${key}`).getAttribute('aria-checked'),'false',`${key} must require explicit opt-in when absent`);
+ await fresh.locator('#library-limit').fill('280');await fresh.waitForFunction(()=>window.libraryPreferences.historyLimit===280);
+ for(const key of ['captureGlobal','transcribeVideo','videoTranscriptAttachment'])assert.equal(await fresh.evaluate(key=>window.libraryPreferences[key],key),false,`An unrelated edit must not enable ${key}`);
+ await fresh.close();
+ console.log('PASS: failed preference reads block edits; restored choices survive changes; missing privacy preferences remain off after unrelated edits. Native IPC mocked.');
 }finally{await browser.close();await server?.close();}

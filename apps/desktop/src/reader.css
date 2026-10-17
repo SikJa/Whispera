@@ -1,0 +1,19 @@
+/* The reader reuses Whispera's Instrument Sans, muted surfaces and control scale. */
+.reader-panel { --reader-text:var(--foreground,#f5f4ef); --reader-muted:var(--muted-foreground,#90978d); --reader-border:var(--border,#ffffff0c); --reader-inset:var(--background,#0d0f0e); color:var(--reader-text); }
+.reader-privacy { color:var(--reader-muted); font-size:13px; line-height:1.6; margin:12px 0 24px; max-width:60ch; }
+.reader-text { display:flex; flex-direction:column; gap:10px; font-size:13px; }
+.reader-text textarea { width:100%; min-height:220px; resize:vertical; line-height:1.65; }
+.reader-text small { color:var(--reader-muted); align-self:flex-end; font-variant-numeric:tabular-nums; }
+.reader-options { display:grid; grid-template-columns:minmax(0,1.5fr) minmax(130px,1fr); gap:24px; margin:24px 0; }
+.reader-options label { display:flex; flex-direction:column; gap:10px; font-size:13px; min-width:0; }
+.reader-options label>span { display:flex; justify-content:space-between; gap:12px; }
+.reader-options output { color:var(--reader-muted); }
+.reader-options select { width:100%; max-width:100%; }
+.reader-options input[type=range] { width:100%; accent-color:var(--ring,#c6b3e6); padding:8px 0; margin:0; }
+.reader-transport { display:flex; gap:8px; flex-wrap:wrap; }
+.reader-state { min-height:36px; color:var(--reader-muted); font-size:12px; line-height:1.5; padding-top:12px; }
+.reader-error { border-top:1px solid var(--reader-border); padding-top:12px; font-size:13px; }
+.reader-error button { margin-top:8px; }
+.reader-compact { margin-top:20px; padding-top:16px; border-top:1px solid var(--reader-border); }
+.reader-compact .reader-options { margin:0 0 16px; }
+@media(max-width:620px) { .reader-options { grid-template-columns:1fr; gap:16px; } .reader-text textarea { min-height:180px; } }

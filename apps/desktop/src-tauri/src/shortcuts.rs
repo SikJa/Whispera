@@ -50,6 +50,7 @@ pub fn capture(app: &tauri::AppHandle, active: bool) -> Result<(), String> {
         screen.image_hotkey,
         crate::library::hotkey(app),
         crate::replay::hotkey(app),
+        if cfg!(windows) { crate::reader::hotkey(app) } else { String::new() },
     ]
     .into_iter()
     .filter(|key| !key.is_empty())
@@ -187,9 +188,11 @@ pub async fn save_all_shortcuts(
     video: String,
     image: String,
     library: Option<String>,
+    reading: Option<String>,
 ) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
         let library = library.unwrap_or_else(|| crate::library::hotkey(&app));
+        let reading = reading.unwrap_or_else(|| crate::reader::hotkey(&app));
         let screen = app.state::<crate::screen::Screen>();
         let _screen_gate = screen.gate.lock().map_err(|_| "Captura ocupada")?;
         let engine = app.state::<crate::engine::Engine>();
@@ -197,22 +200,15 @@ pub async fn save_all_shortcuts(
         if crate::screen::busy(&app) || crate::health::busy(&engine.recorder.snapshot().phase) {
             return Err("Termina la grabacion antes de cambiar los atajos".into());
         }
-        let next = [
+        let mut next = vec![
             parse(&voice)?,
             parse(&video)?,
             parse(&image)?,
             parse(&library)?,
         ];
+        if cfg!(windows) { next.push(parse(&reading)?); }
         let replay_key = crate::replay::hotkey(&app);
-        if (!replay_key.is_empty() && next.contains(&parse(&replay_key)?))
-            || next.contains(&parse("Escape")?)
-            || next
-                .iter()
-                .enumerate()
-                .any(|(i, key)| next[..i].contains(key))
-        {
-            return Err("Elegi cuatro atajos distintos. Escape se reserva para salir.".into());
-        }
+        validate_bindings(&next,&replay_key)?;
         let store = app.state::<crate::storage::Store>();
         let mut settings: crate::storage::Settings = store.get("settings")?;
         let mut preferences: crate::screen::Preferences = store.get("screen_preferences")?;
@@ -220,21 +216,22 @@ pub async fn save_all_shortcuts(
         if !library_preferences.is_object() {
             library_preferences = serde_json::json!({});
         }
-        let old = [
+        let mut old = vec![
             parse(&settings.hotkey)?,
             parse(&preferences.hotkey)?,
             parse(&preferences.image_hotkey)?,
             parse(&crate::library::hotkey(&app))?,
         ];
+        if cfg!(windows) && crate::reader::enabled(&app) { old.push(parse(&crate::reader::hotkey(&app))?); }
         let result = (|| -> Result<(), String> {
-            for key in old {
+            for &key in &old {
                 if app.global_shortcut().is_registered(key) {
                     app.global_shortcut()
                         .unregister(key)
                         .map_err(|e| e.to_string())?;
                 }
             }
-            for key in next {
+            for &key in &next {
                 app.global_shortcut().register(key).map_err(|_| {
                     "Otra aplicacion usa uno de esos atajos. Elegi otra combinacion.".to_string()
                 })?;
@@ -246,6 +243,7 @@ pub async fn save_all_shortcuts(
             settings.validate()?;
             store.put_many(&[
                 ("library_settings", library_preferences),
+                ("reader_hotkey", serde_json::json!(reading)),
                 (
                     "settings",
                     serde_json::to_value(&settings).map_err(|e| e.to_string())?,
@@ -257,17 +255,37 @@ pub async fn save_all_shortcuts(
             ])
         })();
         if result.is_err() {
-            for key in next {
+            for &key in &next {
                 let _ = app.global_shortcut().unregister(key);
             }
-            for key in old {
+            for &key in &old {
                 if !app.global_shortcut().is_registered(key) {
                     let _ = app.global_shortcut().register(key);
                 }
             }
         }
+        if result.is_ok() && cfg!(windows) { crate::reader::registered(&app,true); }
         result
     })
     .await
     .map_err(|e| e.to_string())?
+}
+
+fn validate_bindings(next: &[Shortcut], replay_key: &str) -> Result<(), String> {
+    if (!replay_key.is_empty() && next.contains(&parse(replay_key)?))
+        || next.contains(&parse("Escape")?)
+        || next.iter().enumerate().any(|(i,key)|next[..i].contains(key)) {
+        return Err("Elegí atajos distintos. Escape se reserva para salir.".into());
+    } Ok(())
+}
+#[cfg(test)]
+mod binding_tests {
+    use super::*;
+    #[test] fn reading_cannot_reuse_dictation_replay_or_escape() {
+        let key=|s|parse(s).unwrap();
+        assert!(validate_bindings(&[key("Alt+KeyD"),key("Control+Alt+KeyR")],"Alt+KeyP").is_ok());
+        for conflict in ["Alt+KeyD","Alt+KeyP","Escape"] {
+            assert!(validate_bindings(&[key("Alt+KeyD"),key(conflict)],"Alt+KeyP").is_err());
+        }
+    }
 }

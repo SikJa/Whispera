@@ -778,6 +778,7 @@ pub async fn screen_start(
     window: tauri::WebviewWindow,
     rect: Rect,
 ) -> Result<(), String> {
+    crate::reader::stop(&app);
     tauri::async_runtime::spawn_blocking(move || {
         if !session::selector(window.label()) {
             return Err("Seleccion no disponible".into());

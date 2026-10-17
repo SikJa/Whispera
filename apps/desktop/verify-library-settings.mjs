@@ -9,6 +9,7 @@ const server=createServer(async(req,res)=>{try{const url=new URL(req.url,'http:/
 await new Promise(r=>server.listen(0,'127.0.0.1',r));
 const browser=await launchSilentBrowser();
 function installLibraryMock() {
+ window.libraryPreferences.transcribeVideo=true;window.libraryPreferences.videoTranscriptAttachment=true;
  const fixture=(id,data,pinned=false)=>({id,data,pinned,capturedAt:1790985600000,hitCount:1});
  window.libraryItems=[
   fixture('text',{kind:'text',text:'Nota de biblioteca'}),

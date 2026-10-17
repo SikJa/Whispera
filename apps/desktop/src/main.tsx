@@ -1,11 +1,12 @@
 import VideoTrim from './VideoTrim';
-import UpdatesPanel, {useUpdates} from "./UpdatesPanel";
+import ReaderPanel from './ReaderPanel';
+import {useUpdates} from "./UpdatesPanel";
 import {listen as listenUpdate} from "@tauri-apps/api/event";
 import React, { useEffect, useState, useRef } from "react";
 import {useAutoSave,AutoSaveStatus} from './useAutoSave';
 import { createRoot } from "react-dom/client";
 import { Dialog, Modal, ModalOverlay } from "react-aria-components";
-import { AudioLines, BookOpen, Palette, Keyboard, History, Activity, ArrowUpRight, Search, Plus, Trash2, Check, Upload, X, Paintbrush, Download, Settings2 } from "lucide-react";
+import { Headphones, AudioLines, BookOpen, Palette, Keyboard, History, Activity, ArrowUpRight, Search, Plus, Trash2, Check, Upload, X, Paintbrush, Download, Settings2 } from "lucide-react";
 import { CopyButton, SaveButton, SettingsSwitch } from "./ResourceControls";
 import { Button } from "../vendor/components/ui/button";
 import "@fontsource-variable/instrument-sans";
@@ -38,6 +39,7 @@ import { credentialStore, isMac } from './platform';
 
 const routes = [
   { id: "transcription", name: "Transcripción", icon: AudioLines, group: "Preferencias" },
+  { id: "reading", name: "Lectura", icon: Headphones },
   { id: "appearance", name: "Apariencia", icon: Palette },
   { id: "hotkey", name: "Atajos", icon: Keyboard },
   { id: "screen", name: "Capturas y video", icon: Play },
@@ -52,6 +54,7 @@ const routes = [
 type Route = typeof routes[number]["id"];
 const artworkModels = [{id:'original',name:'Carpeta animada original'},{id:'metallic',name:'Carpeta metálica'}] as const;
 const descriptions: Record<Route, string> = {
+  reading: "Escuchá tus textos con las voces locales de Windows.",
   transcription: "Tu voz, con tus preferencias.", dictionary: "Las palabras que tienen que salir bien.",
   appearance: "Tus indicadores, a tu manera.",
   hotkey: "Dictado, video y capturas, cada uno con su combinación.", history: "Transcripciones, capturas y videos, en un lugar.",
@@ -64,6 +67,7 @@ const descriptions: Record<Route, string> = {
 
 function SettingsApp({sidebarExpanded}:{sidebarExpanded:boolean}) {
   const updater=useUpdates();
+  const [readerText,setReaderText]=useState("");
   const [historyKind,setHistoryKind] = useState<'text'|'captures'>('text');
   const [data, setData] = useState<api.Snapshot>();
   const [route, setRoute] = useState<Route>("transcription");
@@ -131,7 +135,8 @@ function SettingsApp({sidebarExpanded}:{sidebarExpanded:boolean}) {
         <div className="page-heading"><div><h1>{title}</h1><p>{descriptions[route]}</p></div><AutoSaveStatus save={autosave}/></div>
         {message && <div className="notice" role="status">{message}<button aria-label="Cerrar aviso" onClick={() => setMessage("")}><X size={14} /></button></div>}
         <div className="settings-section">
-        {route==='updates'&&<UpdatesPanel updater={updater}/>}
+        {route==='reading'&&<ReaderPanel text={readerText} onTextChange={setReaderText}/>}
+        {route==='updates'&&<p role="status">Versión experimental de danieluxury88. Las actualizaciones del proyecto original están desactivadas para conservar la lectura local.</p>}
         {route==='application'&&<ApplicationSettings/>}
         {route === 'screen' && <ScreenRecorder />}
         {route === 'library' && <LibrarySettings />}
@@ -180,7 +185,7 @@ function SettingsApp({sidebarExpanded}:{sidebarExpanded:boolean}) {
         </div>
       </section>
     </div>
-    <ModalOverlay className="modal-backdrop desktop-app-modal" isOpen={!!selected} isDismissable onOpenChange={open => { if (!open) setSelected(undefined); }}><Modal className="transcript-modal"><Dialog aria-label="Transcripción">{selected && <><div className="modal-heading"><h2>Transcripción</h2><button aria-label="Cerrar transcripción" onClick={() => setSelected(undefined)}><X size={18} /></button></div><textarea aria-label="Texto de transcripción" value={selected.text} onChange={e => setSelected({ ...selected, text: e.target.value })} /><div className="transcript-edit-actions"><CopyButton text={selected.text} /><SaveButton busy={busy} onSave={()=>run(()=>api.saveTranscript(selected.id,selected.text),'Cambios guardados en el historial')}/></div>{message&&<p role="status">{message}</p>}</>}</Dialog></Modal></ModalOverlay>
+    <ModalOverlay className="modal-backdrop desktop-app-modal" isOpen={!!selected} isDismissable onOpenChange={open => { if (!open) setSelected(undefined); }}><Modal className="transcript-modal"><Dialog aria-label="Transcripción">{selected && <><div className="modal-heading"><h2>Transcripción</h2><button aria-label="Cerrar transcripción" onClick={() => setSelected(undefined)}><X size={18} /></button></div><textarea aria-label="Texto de transcripción" value={selected.text} onChange={e => setSelected({ ...selected, text: e.target.value })} /><div className="transcript-edit-actions"><CopyButton text={selected.text} /><SaveButton busy={busy} onSave={()=>run(()=>api.saveTranscript(selected.id,selected.text),'Cambios guardados en el historial')}/></div><ReaderPanel compact text={selected.text}/>{message&&<p role="status">{message}</p>}</>}</Dialog></Modal></ModalOverlay>
   </div>;
 }
 

@@ -2,6 +2,7 @@ export function installNativeMock({kind='video',width=640,height=480,scale=1,set
   const view=new URLSearchParams(location.search).get('view');
   const label=windowLabel??(view==='screen-select'?'screen-select-0':view==='screen-freeze'?'screen-freeze-0':view?.startsWith('screen-')?view:'main');
   window.updateStatus={currentVersion:'0.2.15',version:null,notes:'',phase:'idle',downloaded:0,total:null,error:''};
+  window.readerStatus={supported:true,phase:"idle",voices:[{id:"fixture-es",name:"Voz de prueba",language:"es-ES"}]};
   window.calls=[]; const callbacks=new Map(), listeners=new Map();let next=1;
   window.videoPreferences={audio:'none',hotkey:'Control+Shift+F9',image_hotkey:'Control+Shift+F10',frame_color:'#ffffff',image_auto_copy:false};
   window.voiceShortcut='Alt+KeyZ';
@@ -16,6 +17,9 @@ export function installNativeMock({kind='video',width=640,height=480,scale=1,set
     transformCallback:callback=>{const id=next++;callbacks.set(id,callback);return id;},
     invoke:async(command,args={})=>{
       window.calls.push({command,args});
+      if(command==='reader_status')return window.readerStatus;
+      if(command==='reader_speak'){if(window.readerFailure)throw Error('Terminá el dictado antes de leer.');window.readerStatus={...window.readerStatus,phase:'speaking'};return window.readerStatus;}
+      if(command==='reader_control'){window.readerStatus={...window.readerStatus,phase:args.action==='pause'?'paused':args.action==='resume'?'speaking':'idle'};return window.readerStatus;}
       if(command==='plugin:event|listen'){const id=next++;listeners.set(id,args);return id;}
       if(command==='plugin:event|unlisten')return;
       if(command==='replay_preferences')return{enabled:false,seconds:60,audio:'none',folder:'',hotkey:''};

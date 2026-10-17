@@ -324,7 +324,7 @@ fn reveal_file(path: &Path) -> Result<(), String> {
 pub fn start(app: &tauri::AppHandle) {
     let store = app.state::<Store>();
     if settings(&store).unwrap_or(Value::Null).is_null() {
-        let _ = store.put("library_settings", &json!({"captureGlobal":true,"autoDeleteHours":48,"historyLimit":250,"incognito":false,"toggleHotkey":"Alt+C"}));
+        let _ = store.put("library_settings", &json!({"captureGlobal":false,"autoDeleteHours":48,"historyLimit":250,"incognito":false,"toggleHotkey":"Alt+C"}));
     }
     if settings(&store)
         .ok()

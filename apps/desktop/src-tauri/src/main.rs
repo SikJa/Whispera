@@ -1,5 +1,6 @@
 #![cfg_attr(target_os = "windows", windows_subsystem = "windows")]
 mod replay;
+mod reader;
 #[cfg(all(test, windows))]
 mod audit_tests;
 mod platform;
@@ -352,6 +353,7 @@ fn main() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_clipboard_manager::init())
+        .manage(reader::Reader::default())
         .plugin(
             tauri_plugin_global_shortcut::Builder::new()
                 .with_handler(|app, shortcut, event| {
@@ -497,7 +499,8 @@ fn main() {
             app.manage(replay::Replay::default());
             app.manage(video_trim::Editors::default());
             app.manage(updates::Updates::default());
-            updates::start(app.handle());
+            // Fork preview: upstream updates could replace the local reader build.
+            // updates::start is intentionally disabled until this fork signs its releases.
             health::start(app.handle());
             retention::start(app.handle());
             let settings: Settings = app
@@ -609,6 +612,7 @@ fn main() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            reader::reader_status, reader::reader_speak, reader::reader_control,
             permissions::platform_permissions, permissions::platform_request_permission,
             replay::replay_preferences, replay::replay_status, replay::replay_create_folder, replay::replay_save_preferences, replay::replay_save,
             video_trim::video_trim_open, video_trim::video_trim_context, video_trim::video_trim_close, video_trim::video_trim_save,
@@ -733,6 +737,7 @@ fn main() {
                 });
             }
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                if window.label() == "main" { reader::stop(window.app_handle()); }
                 if !lifecycle::keep_on_close(window.label()) { return; }
                 api.prevent_close();
                 let _ = window.hide();

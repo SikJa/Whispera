@@ -1,3 +1,5 @@
+> **Fork experimental de danieluxury88 — 0.3.0-readaloud.1.** Añade lectura local con voces de Windows, sin clave de Groq. Incluye controles de privacidad para recortes y perfiles nuevos. [Uso, compilación y límites](docs/fork/READ-ALOUD.md). El resto del documento describe el proyecto original; no descargues su instalador esperando obtener esta función.
+
 <p align="center">
   <img src="apps/desktop/public/cristal/128x128.png" width="80" alt="Whispera" />
 </p>

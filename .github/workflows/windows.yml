@@ -1,7 +1,7 @@
 name: Windows beta
 on:
   push:
-    branches: [main]
+    branches: [main, codex/read-aloud]
   pull_request:
   workflow_dispatch:
 permissions:
@@ -29,6 +29,9 @@ jobs:
       - name: Rust unit tests (no desktop or network fixtures)
         working-directory: apps/desktop/src-tauri
         run: cargo test --locked
+      - name: Local reader protocol tests (silent)
+        shell: pwsh
+        run: node apps/desktop/tests/reader-protocol.mjs apps/desktop/src-tauri/target/reader/WhisperaReader.exe
       - name: Windows startup provider regression (isolated registry keys)
         shell: pwsh
         run: ./apps/desktop/tests/verify-startup-provider.ps1

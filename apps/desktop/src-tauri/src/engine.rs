@@ -102,6 +102,7 @@ pub fn control(app: &tauri::AppHandle, action: &str) -> Result<(), String> {
     }
     match action {
         "start" => {
+            crate::reader::stop(app);
             let settings: Settings = app.state::<Store>().get("settings")?;
             let rules: Vec<Rule> = app.state::<Store>().get("rules")?;
             if groq::entry()?.get_password().is_err() {
@@ -389,6 +390,7 @@ pub async fn reveal_recording(id: String, app: tauri::AppHandle) -> Result<(), S
     .map_err(|e| e.to_string())?
 }
 pub fn shutdown(app: &tauri::AppHandle) {
+    crate::reader::stop(app);
     let engine = app.state::<Engine>();
     let _guard = engine.gate.lock().unwrap();
     if ["recording", "paused"].contains(&engine.recorder.snapshot().phase.as_str()) {

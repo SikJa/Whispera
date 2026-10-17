@@ -1,6 +1,6 @@
 [package]
 name = "whispera-desktop"
-version = "0.3.0-beta.2"
+version = "0.3.0-readaloud.1"
 edition = "2021"
 license = "MIT"
 description = "Floating voice dictation, captures and clipboard for Windows and macOS"

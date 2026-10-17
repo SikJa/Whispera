@@ -65,7 +65,8 @@ pub fn updater_open_upstream(app:tauri::AppHandle)->Result<(),String>{
 
 #[tauri::command]
 pub async fn updater_check(app:tauri::AppHandle)->Result<Status,String> {
-    check(app,true).await
+    let _ = app;
+    Err("Las actualizaciones del proyecto original están desactivadas en esta versión experimental.".into())
 }
 async fn fetch_update(app:&tauri::AppHandle)->Result<Option<Update>,String>{
     let preferred=app.state::<Updates>().recovery_route.load(Ordering::Relaxed);
@@ -127,6 +128,8 @@ fn idle(app:&tauri::AppHandle)->Result<(),String> {
 #[tauri::command]
 pub async fn updater_install(app:tauri::AppHandle,window:tauri::WebviewWindow)->Result<(),String>{
     if window.label()!="main"{return Err("Abrí Configuración para actualizar".into());}
+    const UPSTREAM_UPDATES_ENABLED: bool = false;
+    if !UPSTREAM_UPDATES_ENABLED { return Err("Instalación de actualizaciones del original desactivada en este fork.".into()); }
     let state=app.state::<Updates>();let _operation=operation(&state.operation)?;
     idle(&app)?;
     let mut update=state.available.lock().map_err(|_|"Actualizador ocupado")?.clone().ok_or("Buscá una actualización primero")?;

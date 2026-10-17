@@ -19,7 +19,7 @@ try {
  await page.goto((process.env.WHISPERA_TEST_URL||'http://127.0.0.1:5190')+'/');
  await page.getByRole('button',{name:'Lectura',exact:true}).click();
  const read=page.getByRole('button',{name:'Leer en voz alta',exact:true});
- await page.getByLabel('Voz de lectura').selectOption('fixture-es');assert.equal(await read.isDisabled(),true);
+ await page.getByLabel('Voz de lectura').selectOption('fixture-es');await page.waitForFunction(()=>window.readerPreferences.voice==='fixture-es');assert.equal(await read.isDisabled(),true);
  await page.getByLabel('Texto para escuchar').fill('Solo debe leerse al pulsar el botón.');
  assert.equal(await page.evaluate(()=>window.calls.filter(c=>c.command==='reader_speak').length),0);
  await read.click();await page.getByText('Leyendo en voz alta.',{exact:true}).waitFor();

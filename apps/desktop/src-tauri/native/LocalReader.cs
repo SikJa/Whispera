@@ -6,6 +6,7 @@ using System.Speech.Synthesis;
 using System.Web.Script.Serialization;
 
 internal static class LocalReader {
+    sealed class ReaderInputException : Exception { public ReaderInputException(string message) : base(message) {} }
     const int MaximumTextLength = 50000;
     static readonly JavaScriptSerializer Json = new JavaScriptSerializer { MaxJsonLength = 400000 };
     static SpeechSynthesizer Synth;
@@ -17,7 +18,7 @@ internal static class LocalReader {
     }
     static string RequiredString(Dictionary<string, object> request, string key) {
         object value;
-        if (!request.TryGetValue(key, out value) || !(value is string)) throw new ArgumentException("Solicitud de lectura inválida.");
+        if (!request.TryGetValue(key, out value) || !(value is string)) throw new ReaderInputException("Solicitud de lectura inválida.");
         return (string)value;
     }
     static object Handle(Dictionary<string, object> request) {
@@ -29,9 +30,9 @@ internal static class LocalReader {
                 string voice = RequiredString(request, "voice");
                 object rawRate;
                 int rate;
-                if (String.IsNullOrWhiteSpace(text) || text.Length > MaximumTextLength || text.IndexOf('\0') >= 0) throw new ArgumentException("Usá entre 1 y 50.000 caracteres de texto.");
-                if (!request.TryGetValue("rate", out rawRate) || !Int32.TryParse(Convert.ToString(rawRate, CultureInfo.InvariantCulture), out rate) || rate < -10 || rate > 10) throw new ArgumentException("Velocidad no válida.");
-                if (!VoiceNames.Contains(voice)) throw new ArgumentException("La voz elegida no está instalada.");
+                if (String.IsNullOrWhiteSpace(text) || text.Length > MaximumTextLength || text.IndexOf('\0') >= 0) throw new ReaderInputException("Usá entre 1 y 50.000 caracteres de texto.");
+                if (!request.TryGetValue("rate", out rawRate) || !Int32.TryParse(Convert.ToString(rawRate, CultureInfo.InvariantCulture), out rate) || rate < -10 || rate > 10) throw new ReaderInputException("Velocidad no válida.");
+                if (!VoiceNames.Contains(voice)) throw new ReaderInputException("La voz elegida no está instalada.");
                 Synth.SpeakAsyncCancelAll();
                 if (Synth.State == SynthesizerState.Paused) Synth.Resume();
                 Synth.SelectVoice(voice);
@@ -46,7 +47,7 @@ internal static class LocalReader {
                 Synth.SpeakAsyncCancelAll();
                 if (Synth.State == SynthesizerState.Paused) Synth.Resume();
                 break;
-            default: throw new ArgumentException("Acción de lectura no admitida.");
+            default: throw new ReaderInputException("Acción de lectura no admitida.");
         }
         return Snapshot();
     }
@@ -65,12 +66,12 @@ internal static class LocalReader {
                 string line;
                 while ((line = Console.ReadLine()) != null) {
                     try {
-                        if (line.Length > 350000) throw new ArgumentException("Solicitud demasiado grande.");
+                        if (line.Length > 350000) throw new ReaderInputException("Solicitud demasiado grande.");
                         var request = Json.Deserialize<Dictionary<string, object>>(line);
                         Console.WriteLine(Json.Serialize(Handle(request)));
                     } catch (Exception error) {
                         // No input text or raw engine exception is written to logs/output.
-                        string message = error is ArgumentException ? error.Message : "Windows no pudo completar la lectura. Probá otra voz.";
+                        string message = error is ReaderInputException ? error.Message : "Windows no pudo completar la lectura. Probá otra voz.";
                         Console.WriteLine(Json.Serialize(new { ok = false, error = message }));
                     }
                     Console.Out.Flush();

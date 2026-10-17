@@ -49,15 +49,15 @@ fn build_macos_bridge() {
 fn build_windows_reader() {
     use std::{env, path::PathBuf, process::Command};
     let root = PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").unwrap());
-    let source = root.join("native/LocalReader.cs");
+    let source = root.join("native").join("LocalReader.cs");
     println!("cargo:rerun-if-changed={}", source.display());
-    let out = root.join("target/reader");
+    let out = root.join("target").join("reader");
     std::fs::create_dir_all(&out).expect("Reader output directory");
     let framework = PathBuf::from(env::var_os("WINDIR").expect("Windows directory"))
-        .join("Microsoft.NET/Framework64/v4.0.30319");
+        .join("Microsoft.NET").join("Framework64").join("v4.0.30319");
     let compiler = framework.join("csc.exe");
     let result = Command::new(compiler).args(["/nologo", "/target:exe", "/optimize+", "/reference:System.Web.Extensions.dll"])
-        .arg(format!("/reference:{}", framework.join("WPF/System.Speech.dll").display()))
+        .arg(format!("/reference:{}", framework.join("WPF").join("System.Speech.dll").display()))
         .arg(format!("/out:{}", out.join("WhisperaReader.exe").display())).arg(source)
         .output().expect("The Windows .NET Framework C# compiler is required for local reading");
     assert!(result.status.success(), "Reader compilation failed: {}{}", String::from_utf8_lossy(&result.stdout), String::from_utf8_lossy(&result.stderr));

@@ -39,7 +39,7 @@ export function publish(){
   };
   let release=findRelease();
   if(release&&!release.draft)throw Error('Esta versión ya está publicada; no se reemplaza un instalador anunciado');
-  if(!release)execFileSync(gh,['release','create',tag,'--repo',repo,'--target',sha,'--draft','--title',`Whispera ${version}`,'--notes-file','.local/release-notes.md'],{stdio:'inherit'});
+  if(!release)execFileSync(gh,['release','create',tag,'--repo',repo,'--target',sha,'--draft','--title',`Whispera ${version} - Windows`,'--notes-file','.local/release-notes.md'],{stdio:'inherit'});
   const pending=files.filter(file=>{
     const asset=release?.assets.find(a=>a.name===file.split('/').at(-1));
     return !asset||asset.digest!=='sha256:'+createHash('sha256').update(readFileSync(file)).digest('hex');

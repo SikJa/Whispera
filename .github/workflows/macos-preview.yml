@@ -5,6 +5,11 @@ on:
   pull_request:
     paths: ['apps/desktop/**', '.github/workflows/macos-preview.yml', 'scripts/verify-macos-bundle.mjs']
   workflow_dispatch:
+    inputs:
+      publish:
+        description: Publish the verified macOS beta packages
+        type: boolean
+        default: false
 permissions:
   contents: read
 concurrency:
@@ -76,6 +81,7 @@ jobs:
           path: |
             apps/desktop/src-tauri/target/release/bundle/dmg/*.dmg
             apps/desktop/src-tauri/target/release/bundle/macos/*.tar.gz*
+            apps/desktop/src-tauri/target/release/bundle/macos/*.app.zip
             apps/desktop/src-tauri/target/release/bundle/macos/verification.json
           if-no-files-found: error
   windows-regression:
@@ -103,3 +109,22 @@ jobs:
         working-directory: apps/desktop/src-tauri
       - run: npx playwright install chromium
       - run: npm run test:release
+  publish:
+    needs: [native, windows-regression]
+    if: github.ref == 'refs/heads/main' && ((github.event_name == 'workflow_dispatch' && inputs.publish) || (github.event_name == 'push' && contains(github.event.head_commit.message, '[publish macos]')))
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: whispera-macos-*
+          path: .local/macos-artifacts
+      - name: Publish verified DMGs, portable apps and the separate Mac update feed
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: node scripts/publish-macos-preview.mjs --artifacts .local/macos-artifacts --source "$GITHUB_SHA" --notes docs/releases/0.3.0-beta.2.md --publish

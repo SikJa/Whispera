@@ -48,19 +48,23 @@ export function prepare(artifacts, source, notes) {
     assert.equal(report.source, source, 'Artifacts must come from this exact source commit');
     assert.equal(report.updaterSignatureVerified, true);
     assert.equal(report.startupVerified, true);
+    assert.equal(report.dmgInstallVerified, true);
+    assert.equal(report.portableVerified, true);
+    assert.equal(report.updaterExtractionVerified, true);
     assert.equal(report.notarized, false);
     assert.equal(report.hardwareValidated, false);
     assert.ok(['aarch64', 'x86_64'].includes(report.arch));
-    assert.equal(report.files.length, 2);
+    assert.equal(report.files.length, 3);
     assert.equal(report.files.filter(file => file.name.endsWith('.dmg')).length, 1);
     assert.equal(report.files.filter(file => file.name.endsWith('.app.tar.gz')).length, 1);
+    assert.equal(report.files.filter(file => file.name.endsWith('.app.zip')).length, 1);
     const paths = walk(dirname(dirname(reportPath)));
     for (const item of report.files) {
       const matches = paths.filter(path => basename(path) === item.name);
       assert.equal(matches.length, 1, `Missing or ambiguous artifact ${item.name}`);
       const original = matches[0];
       assert.equal(digest(original), item.sha256, 'Artifact checksum changed after CI verification');
-      const extension = item.name.endsWith('.dmg') ? '.dmg' : '.app.tar.gz';
+      const extension = item.name.endsWith('.dmg') ? '.dmg' : item.name.endsWith('.app.zip') ? '.app.zip' : '.app.tar.gz';
       assert.ok(item.name.endsWith(extension));
       const name = `Whispera_${version}_${report.arch}${extension}`;
       const destination = join(directory, name);
@@ -100,7 +104,7 @@ export function publish(prepared) {
   let value = release(tag);
   assert.ok(!value || value.draft, 'A published version is immutable; increment the preview version');
   if (!value) gh(['release', 'create', tag, '--repo', repo, '--target', source, '--draft', '--prerelease', '--latest=false',
-    '--title', `Whispera ${version} - macOS preview`, '--notes-file', notesFile]);
+    '--title', `Whispera ${version} - macOS (Apple Silicon + Intel)`, '--notes-file', notesFile]);
   gh(['release', 'upload', tag, ...files, '--repo', repo, '--clobber']);
   verifyUploaded(release(tag), files);
   gh(['release', 'edit', tag, '--repo', repo, '--draft=false', '--prerelease', '--latest=false']);
@@ -109,10 +113,14 @@ export function publish(prepared) {
   const channelNotes = `macOS preview update feed. Download the current DMGs and read the setup notes: [Whispera ${version}](https://github.com/${repo}/releases/tag/${tag}). Builds are ad-hoc signed, not Apple-notarized.`;
   value = release(channel);
   if (!value) gh(['release', 'create', channel, '--repo', repo, '--target', source, '--draft', '--prerelease', '--latest=false',
-    '--title', 'macOS preview update channel', '--notes', channelNotes]);
+    '--title', 'macOS - Beta update feed (not an installer)', '--notes', channelNotes]);
   gh(['release', 'upload', channel, latest, '--repo', repo, '--clobber']);
   verifyUploaded(release(channel), [latest]);
-  gh(['release', 'edit', channel, '--repo', repo, '--draft=false', '--prerelease', '--latest=false', '--notes', channelNotes]);
+  gh(['release', 'edit', channel, '--repo', repo, '--draft=false', '--prerelease', '--latest=false', '--title', 'macOS - Beta update feed (not an installer)', '--notes', channelNotes]);
+  const stable = JSON.parse(gh(['api', `repos/${repo}/releases/latest`]));
+  if (!stable.prerelease && stable.assets.some(asset => asset.name === 'Whispera-setup.exe') && stable.name === `Whispera ${stable.tag_name.replace(/^v/, '')}`) {
+    gh(['release', 'edit', stable.tag_name, '--repo', repo, '--title', `${stable.name} - Windows`]);
+  }
   console.log(`Published https://github.com/${repo}/releases/tag/${tag}`);
 }
 

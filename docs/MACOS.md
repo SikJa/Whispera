@@ -15,11 +15,21 @@ el foco y el arrastre funcionen en todas las aplicaciones reales.
 
 ## Install / Instalar
 
-Current preview / Beta actual: **0.3.0-beta.1**.
+Current preview / Beta actual: **0.3.0-beta.2**.
 
-- [Apple Silicon DMG](https://github.com/SikJa/Whispera/releases/download/v0.3.0-beta.1/Whispera_0.3.0-beta.1_aarch64.dmg)
-- [Intel DMG](https://github.com/SikJa/Whispera/releases/download/v0.3.0-beta.1/Whispera_0.3.0-beta.1_x86_64.dmg)
-- [Release notes and checksums / Notas y checksums](https://github.com/SikJa/Whispera/releases/tag/v0.3.0-beta.1)
+- [Apple Silicon DMG](https://github.com/SikJa/Whispera/releases/download/v0.3.0-beta.2/Whispera_0.3.0-beta.2_aarch64.dmg)
+- [Intel DMG](https://github.com/SikJa/Whispera/releases/download/v0.3.0-beta.2/Whispera_0.3.0-beta.2_x86_64.dmg)
+- [Apple Silicon app ZIP](https://github.com/SikJa/Whispera/releases/download/v0.3.0-beta.2/Whispera_0.3.0-beta.2_aarch64.app.zip)
+- [Intel app ZIP](https://github.com/SikJa/Whispera/releases/download/v0.3.0-beta.2/Whispera_0.3.0-beta.2_x86_64.app.zip)
+- [Release notes and checksums / Notas y checksums](https://github.com/SikJa/Whispera/releases/tag/v0.3.0-beta.2)
+
+The ZIP is the signed app bundle without a disk image. Extract it, move the app to
+Applications and launch it there. It does not bypass Gatekeeper and does not store
+your settings beside the executable. Do not run two copies at once.
+
+El ZIP contiene la app sin instalador; no es un perfil portable. Extraelo y mueve
+Whispera.app a Aplicaciones. Conserva el mismo perfil, Keychain y permisos del DMG.
+Los `.app.tar.gz` son paquetes del actualizador, no la descarga recomendada para usuarios.
 
 1. Download the DMG matching your Mac: `aarch64` for Apple Silicon or `x86_64` for Intel.
 2. Open the DMG and move Whispera to **Applications** before launching it.
@@ -101,7 +111,18 @@ The macOS jobs also run the shared interface in headless WebKit and start the
 bundled app for a short startup smoke check on the runner. These checks exercise
 the browser engine, dynamic linking and app initialization, not real-device recording.
 
-### Published Build Evidence / Evidencia De La Beta
+### Beta 2 Package Tests / Pruebas De Paquetes
+
+Publication requires both Mac architectures and Windows regressions to pass.
+Each Mac runner mounts the DMG read-only, copies the app to a temporary Applications
+directory, extracts the ZIP and updater archive, verifies code signatures and starts
+each extracted app with the bounded CI smoke mode. The reports include
+`dmgInstallVerified`, `portableVerified` and `updaterExtractionVerified`.
+These are runner checks, not Gatekeeper approval or real microphone/screen testing.
+
+For the real-Mac test, follow the [beta 2 checklist](releases/0.3.0-beta.2.md).
+
+### Beta 1 Historical Evidence / Evidencia Historica
 
 The packages for `0.3.0-beta.1` were built from
 [`fe105f7`](https://github.com/SikJa/Whispera/commit/fe105f7962686f7c60181c9c9313393e0c0d9ed2)

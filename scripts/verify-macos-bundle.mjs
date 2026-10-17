@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import {execFileSync} from 'node:child_process';
-import {existsSync, readFileSync, readdirSync, writeFileSync} from 'node:fs';
+import {existsSync, readFileSync, readdirSync, writeFileSync, mkdtempSync, mkdirSync, rmSync} from 'node:fs';
+import {tmpdir} from 'node:os';
 import {join, resolve} from 'node:path';
 import {createHash} from 'node:crypto';
 
@@ -35,9 +36,39 @@ assert.ok(archive, 'Missing updater archive');
 assert.ok(readFileSync(join(bundle, 'macos', `${archive}.sig`), 'utf8').trim().length > 30);
 const dmg = readdirSync(join(bundle, 'dmg')).find(name => name.endsWith('.dmg'));
 assert.ok(dmg, 'Missing DMG');
-const files = [join(bundle, 'dmg', dmg), join(bundle, 'macos', archive)];
+const portable = join(bundle, 'macos', `Whispera_${plist.CFBundleShortVersionString}_${arch}.app.zip`);
+run('/usr/bin/ditto', ['-c', '-k', '--sequesterRsrc', '--keepParent', app, portable]);
+const temporary = mkdtempSync(join(tmpdir(), 'whispera-package-check-'));
+let mounted = false;
+const mount = join(temporary, 'volume');
+function verifyExtracted(path) {
+  run('/usr/bin/codesign', ['--verify', '--deep', '--strict', path]);
+  const binary = join(path, 'Contents/MacOS', plist.CFBundleExecutable);
+  assert.ok(run('/usr/bin/lipo', ['-archs', binary]).split(' ').includes(binaryArch));
+  assert.match(execFileSync(binary, ['--ci-smoke'], {encoding:'utf8', timeout:30000,
+    env:{...process.env, WHISPERA_CI_SMOKE:'1'}}), /WHISPERA_CI_READY/);
+}
+try {
+  for (const directory of ['volume', 'Applications', 'portable', 'updater']) mkdirSync(join(temporary, directory));
+  run('/usr/bin/hdiutil', ['verify', join(bundle, 'dmg', dmg)]);
+  run('/usr/bin/hdiutil', ['attach', '-readonly', '-nobrowse', '-mountpoint', mount, join(bundle, 'dmg', dmg)]);
+  mounted = true;
+  const installed = join(temporary, 'Applications/Whispera.app');
+  run('/usr/bin/ditto', [join(mount, 'Whispera.app'), installed]);
+  verifyExtracted(installed);
+  run('/usr/bin/ditto', ['-x', '-k', portable, join(temporary, 'portable')]);
+  verifyExtracted(join(temporary, 'portable/Whispera.app'));
+  run('/usr/bin/tar', ['-xzf', join(bundle, 'macos', archive), '-C', join(temporary, 'updater')]);
+  verifyExtracted(join(temporary, 'updater/Whispera.app'));
+} finally {
+  if (mounted) run('/usr/bin/hdiutil', ['detach', mount]);
+  // Only our mkdtemp directory is removed, after detaching the read-only image.
+  rmSync(temporary, {recursive:true, force:true});
+}
+const files = [join(bundle, 'dmg', dmg), join(bundle, 'macos', archive), portable];
 const report = {version: plist.CFBundleShortVersionString, arch, source: process.env.GITHUB_SHA,
-  signature: 'ad-hoc', updaterSignatureVerified: true, startupVerified: true, notarized: false,
+  signature: 'ad-hoc', updaterSignatureVerified: true, startupVerified: true,
+  dmgInstallVerified: true, portableVerified: true, updaterExtractionVerified: true, notarized: false,
   hardwareValidated: false, files: files.map(path => ({name: path.split('/').at(-1),
     sha256: createHash('sha256').update(readFileSync(path)).digest('hex')}))};
 writeFileSync(join(bundle, 'macos/verification.json'), JSON.stringify(report, null, 2) + '\n');

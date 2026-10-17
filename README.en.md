@@ -18,11 +18,18 @@
 
 ---
 
-**macOS 13+ · 0.3.0-beta.1:** download the DMG for
-[Apple Silicon](https://github.com/SikJa/Whispera/releases/download/v0.3.0-beta.1/Whispera_0.3.0-beta.1_aarch64.dmg) or
-[Intel](https://github.com/SikJa/Whispera/releases/download/v0.3.0-beta.1/Whispera_0.3.0-beta.1_x86_64.dmg).
+## Downloads by platform
+
+| Platform | Installer | Compressed app, no installer |
+| --- | --- | --- |
+| Stable Windows | [EXE installer](https://github.com/SikJa/Whispera/releases/latest/download/Whispera-setup.exe) | Not included |
+| macOS 13+ · Apple Silicon · beta 2 | [DMG](https://github.com/SikJa/Whispera/releases/download/v0.3.0-beta.2/Whispera_0.3.0-beta.2_aarch64.dmg) | [Whispera.app ZIP](https://github.com/SikJa/Whispera/releases/download/v0.3.0-beta.2/Whispera_0.3.0-beta.2_aarch64.app.zip) |
+| macOS 13+ · Intel · beta 2 | [DMG](https://github.com/SikJa/Whispera/releases/download/v0.3.0-beta.2/Whispera_0.3.0-beta.2_x86_64.dmg) | [Whispera.app ZIP](https://github.com/SikJa/Whispera/releases/download/v0.3.0-beta.2/Whispera_0.3.0-beta.2_x86_64.app.zip) |
+
+**[Dedicated macOS 0.3.0-beta.2 release](https://github.com/SikJa/Whispera/releases/tag/v0.3.0-beta.2).**
+The ZIP uses the same profile directories and Keychain as the DMG; it is not a self-contained data profile.
 It preserves Cristal, Groq and the shared interface, with native Mac integrations.
-See [installation and permissions](docs/MACOS.md) and [preview release notes](docs/releases/0.3.0-beta.1.md).
+See [installation and permissions](docs/MACOS.md) and [preview release notes](docs/releases/0.3.0-beta.2.md).
 Tested on macOS runners, without physical-Mac validation or Apple notarization.
 The preview uses its own update channel and does not replace stable Windows releases.
 

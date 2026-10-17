@@ -23,4 +23,4 @@ Use the existing Node 22+/Rust MSVC/WebView2 build instructions on Windows. `bui
 
 `node tests/reader-protocol.mjs src-tauri/target/reader/WhisperaReader.exe` exercises the protocol silently. Native Rust input tests cover bounds; the browser fixture covers controls and reading edited history with mocked IPC. Full audible voice quality requires a manual test with non-sensitive text; automated checks intentionally do not play sound.
 
-The Windows CI workflow builds an unsigned experimental installer. A successful workflow is required before treating the installer as validated. No release is automatically published from this fork.
+The Windows CI workflow builds an unsigned experimental installer. A successful workflow is required before treating the installer as validated. No release is automatically published from this fork. The upstream macOS release workflow is restricted to the original repository; this preview delivers a Windows installer only.

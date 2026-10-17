@@ -578,6 +578,7 @@ mod tests {
         let root = root();
         let video = root.join("fixture.mp4");
         let store = Store::open(Path::new(":memory:")).unwrap();
+        store.put("library_settings", &serde_json::json!({"transcribeVideo":true})).unwrap();
         store.put(&key(&video), &Transcript {
             status: "pending".into(),
             parts: vec![root.join("first.wav"), root.join("second.wav")],
@@ -626,6 +627,7 @@ mod tests {
         let root=root();let video=root.join("public-qa.mp4");fs::write(&video,b"clipboard packaging fixture").unwrap();
         let part=root.join("part-0000");fs::create_dir_all(&part).unwrap();fs::copy(fixture,part.join("speech-0000.wav")).unwrap();
         let store=Store::open(Path::new(":memory:")).unwrap();
+        store.put("library_settings", &serde_json::json!({"transcribeVideo":true,"videoTranscriptAttachment":true})).unwrap();
         let mut settings=Settings::default();settings.language="es".into();store.put("settings",&settings).unwrap();
         enqueue(&store,&video).unwrap();let started=std::time::Instant::now();let result=process(&store,&video).unwrap();
         assert_eq!(result.status,"ready","{}",result.error);assert!(!result.text.trim().is_empty());

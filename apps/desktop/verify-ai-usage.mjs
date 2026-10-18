@@ -39,8 +39,8 @@ try{
   assert.equal(await codex.getByRole('progressbar').first().getAttribute('aria-valuenow'),'75');
   assert.ok(!await page.evaluate(()=>JSON.stringify(localStorage).includes('usedPercent')));
   for(const width of [1100,620]){await page.setViewportSize({width,height:1000});assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));}
-  await page.setViewportSize({width:1100,height:1000});await page.evaluate(()=>{window.quotaFailure=false;const p=window.aiUsage.providers[1];p.status='ready';p.observedAt=Math.floor(Date.now()/1000);p.windows=[{label:'Sesión',usedPercent:44,resetAt:Math.floor(Date.now()/1000)+7200,windowMinutes:300},{label:'Semana',usedPercent:18,resetAt:Math.floor(Date.now()/1000)+172800,windowMinutes:10080}];});
-  await page.getByRole('button',{name:'Actualizar cuotas',exact:true}).click();await claude.getByRole('progressbar').nth(1).waitFor();
+  await page.setViewportSize({width:1100,height:1250});await page.evaluate(()=>{window.quotaFailure=false;window.aiUsage.claudeConnection.connected=true;const p=window.aiUsage.providers[1];p.status='ready';p.observedAt=Math.floor(Date.now()/1000);p.windows=[{label:'Sesión',usedPercent:44,resetAt:Math.floor(Date.now()/1000)+7200,windowMinutes:300},{label:'Semana',usedPercent:18,resetAt:Math.floor(Date.now()/1000)+172800,windowMinutes:10080}];});
+  await page.getByRole('button',{name:'Lectura',exact:true}).click();await page.getByRole('button',{name:'Uso de IA',exact:true}).click();await claude.getByRole('progressbar').nth(1).waitFor();
   mkdirSync('../../.local',{recursive:true});await page.screenshot({path:'../../.local/ai-usage-preview.png',fullPage:true});
   assert.deepEqual(errors,[]);
   console.log('PASS: account quota windows, remaining percentages, missing/stale/expired data, connection/disconnection, provider link, error recovery, no localStorage quota persistence and responsive layout (mocked IPC).');

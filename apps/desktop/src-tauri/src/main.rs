@@ -550,13 +550,30 @@ fn main() {
             let quit = MenuItem::with_id(app, "quit", "Salir / Quit Whispera", true, None::<&str>)?;
             let library_menu = MenuItem::with_id(app, "library", "Biblioteca / Portapapeles", true, None::<&str>)?;
             let sep = PredefinedMenuItem::separator(app)?;
+            let reading_sep = PredefinedMenuItem::separator(app)?;
+            let reading_end = PredefinedMenuItem::separator(app)?;
+            let reader_menu = reader::TrayMenu::new(app.handle())?;
             let menu =
-                Menu::with_items(app, &[&record, &video, &image, &import, &library_menu, &show, &update_menu, &sep, &quit])?;
+                Menu::with_items(app, &[&record, &video, &image, &import, &library_menu])?;
+            if cfg!(windows) {
+                menu.append_items(&[&reading_sep, &reader_menu.pause, &reader_menu.stop, &reading_end])?;
+            }
+            menu.append_items(&[&show, &update_menu, &sep, &quit])?;
+            app.manage(reader_menu);
             tauri::tray::TrayIconBuilder::new()
                 .icon(tauri::image::Image::from_bytes(include_bytes!("../icons/cristal/32x32.png"))?)
                 .tooltip("Whispera")
                 .menu(&menu)
                 .on_menu_event(|app, event| match event.id.as_ref() {
+                    "reader-pause" | "reader-stop" => {
+                        let app = app.clone();
+                        let id = event.id.as_ref().to_owned();
+                        tauri::async_runtime::spawn_blocking(move || {
+                            if let Err(error) = reader::control_from_tray(&app,&id) {
+                                reader::report_shortcut_error(&app,error);
+                            }
+                        });
+                    }
                     "library" => { let app=app.clone(); tauri::async_runtime::spawn(async move { let _ = library::library_toggle(app).await; }); }
                     "settings" => {
                         if let Err(error) = open_settings(app.clone()) { let _ = app.state::<Store>().event(&error); }
@@ -585,6 +602,7 @@ fn main() {
                             let _ = screen::stop(&app);
                             engine::shutdown(&app);
                             replay::stop(&app);
+                            reader::stop(&app);
                             app.exit(0);
                         });
                     }
@@ -607,6 +625,7 @@ fn main() {
                     _ => {}
                 })
                 .build(app)?;
+            reader::start_tray_monitor(app.handle());
             if std::env::args().any(|arg| arg == "--settings")
                 || !app
                     .state::<Store>()

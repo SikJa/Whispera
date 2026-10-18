@@ -1,4 +1,4 @@
-# Local reading preview — 0.3.0-readaloud.2
+# Local reading preview — 0.3.0-readaloud.3
 
 This fork adds Windows text-to-speech independently of Groq transcription.
 
@@ -10,6 +10,7 @@ This fork adds Windows text-to-speech independently of Groq transcription.
 - Dictation/screen recording/replay stops the reader. A running capture prevents starting playback. Closing the reader panel stops playback.
 - The local reader is currently Windows-only. macOS shows an unavailable state.
 - Select text in a compatible Windows application and press **Ctrl+Alt+R** to read it; press again to stop. Change it in **Atajos → Lectura en voz alta**. Selection uses UI Automation: no simulated Copy, clipboard reads or clipboard changes. Password fields, empty selections, unsupported apps and selections over the limit are rejected. The shortcut uses the voice/speed most recently chosen in Lectura.
+- Right-click the Whispera icon next to the Windows clock to **Pausar lectura**, **Continuar lectura** or **Detener lectura**. These controls also work for selection-shortcut playback with Settings hidden. Pause preserves the current position; Stop ends playback. Controls disable after completion or Stop, and do not start a reader when idle.
 - This is not a screen reader, OCR or PDF importer. Apps must expose their selection through Windows accessibility. No full-document or clipboard fallback is used.
 
 ## Privacy changes

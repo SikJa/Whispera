@@ -1,7 +1,7 @@
 //! Explicit local text-to-speech. Text is never persisted, logged, or sent to a provider.
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use std::{io::{BufRead, BufReader, Write}, process::{Child, ChildStdin, Command, Stdio}, sync::{mpsc, Mutex, atomic::{AtomicBool, AtomicU64, Ordering}}, time::Duration};
+use std::{io::{BufRead, BufReader, Write}, process::{Child, ChildStdin, Command, Stdio}, sync::{mpsc, Mutex, atomic::{AtomicBool, AtomicU8, AtomicU64, Ordering}}, time::Duration};
 use tauri::{Manager, Emitter};
 use tauri_plugin_global_shortcut::GlobalShortcutExt;
 
@@ -13,6 +13,66 @@ struct Session { child: Child, stdin: ChildStdin, replies: mpsc::Receiver<String
 impl Drop for Session { fn drop(&mut self) { let _ = self.child.kill(); let _ = self.child.wait(); } }
 #[derive(Default)]
 pub struct Reader(Mutex<Option<Session>>, Mutex<()>, AtomicU64, AtomicBool);
+pub struct TrayMenu {
+    pub pause: tauri::menu::MenuItem<tauri::Wry>,
+    pub stop: tauri::menu::MenuItem<tauri::Wry>,
+    phase: AtomicU8,
+}
+impl TrayMenu {
+    pub fn new(app: &tauri::AppHandle) -> tauri::Result<Self> {
+        Ok(Self {
+            pause: tauri::menu::MenuItem::with_id(app,"reader-pause","Pausar lectura",false,None::<&str>)?,
+            stop: tauri::menu::MenuItem::with_id(app,"reader-stop","Detener lectura",false,None::<&str>)?,
+            phase: AtomicU8::new(0),
+        })
+    }
+}
+fn sync_tray(app: &tauri::AppHandle, phase: &str) {
+    let Some(menu) = app.try_state::<TrayMenu>() else { return; };
+    let phase = match phase { "speaking" => 1, "paused" => 2, _ => 0 };
+    if menu.phase.swap(phase,Ordering::SeqCst) == phase { return; }
+    let app_copy = app.clone();
+    // Never wait for the UI thread while holding the helper lock: closing the
+    // settings window can stop the reader on that same UI thread.
+    let _ = app.run_on_main_thread(move || {
+        let menu = app_copy.state::<TrayMenu>();
+        if menu.phase.load(Ordering::SeqCst) != phase { return; }
+        let _ = menu.pause.set_text(if phase == 2 { "Continuar lectura" } else { "Pausar lectura" });
+        let _ = menu.pause.set_enabled(phase != 0);
+        let _ = menu.stop.set_enabled(phase != 0);
+    });
+}
+pub fn start_tray_monitor(app: &tauri::AppHandle) {
+    if !cfg!(windows) { return; }
+    let app = app.clone();
+    std::thread::spawn(move || loop {
+        std::thread::sleep(Duration::from_millis(500));
+        let reader = app.state::<Reader>();
+        let Ok(mut slot) = reader.0.try_lock() else { continue; };
+        // Observe completion even with Settings hidden; never start a helper
+        // just to refresh the tray, or recreate one after Stop.
+        let Some(session) = slot.as_mut() else { continue; };
+        match exchange(session,&json!({"action":"status"})) {
+            Ok(status) => sync_tray(&app,&status.phase),
+            Err(_) => { *slot = None; sync_tray(&app,"idle"); }
+        }
+    });
+}
+pub fn control_from_tray(app: &tauri::AppHandle, id: &str) -> Result<(), String> {
+    if id == "reader-stop" { stop(app); return Ok(()); }
+    let reader = app.state::<Reader>();
+    let mut slot = reader.0.lock().map_err(|_| "Lector ocupado.")?;
+    let Some(session) = slot.as_mut() else { sync_tray(app,"idle"); return Ok(()); };
+    let result: Result<Status,String> = (|| {
+        let status = exchange(session,&json!({"action":"status"}))?;
+        let action = match status.phase.as_str() { "speaking" => "pause", "paused" => "resume", _ => return Ok(status) };
+        exchange(session,&json!({"action":action}))
+    })();
+    match result {
+        Ok(status) => { sync_tray(app,&status.phase); Ok(()) }
+        Err(error) => { *slot = None; sync_tray(app,"idle"); Err(error) }
+    }
+}
 #[derive(Serialize)]
 pub struct Preferences { pub hotkey: String, pub voice: String, pub rate: i32 }
 pub fn hotkey(app: &tauri::AppHandle) -> String {
@@ -108,18 +168,19 @@ fn request_guarded(app: &tauri::AppHandle, value: Value, ticket: Option<u64>) ->
     let mut slot = reader.0.lock().map_err(|_| "Lector ocupado.")?;
     if ticket.is_some_and(|ticket| reader.2.load(Ordering::SeqCst) != ticket) { return Ok(Status::default()); }
     if slot.is_none() { *slot = Some(launch(app)?); }
-    let session = slot.as_mut().unwrap();
-    let result = (|| {
+    let result = exchange(slot.as_mut().unwrap(),&value);
+    // A disconnected/timed-out helper must not leave stale audio playing.
+    if result.is_err() { *slot = None; }
+    sync_tray(app,result.as_ref().map(|s|s.phase.as_str()).unwrap_or("idle"));
+    result
+}
+fn exchange(session: &mut Session, value: &Value) -> Result<Status, String> {
         writeln!(session.stdin, "{value}").map_err(|_| "El lector local se desconectó.")?;
         session.stdin.flush().map_err(|_| "El lector local se desconectó.")?;
         let line = session.replies.recv_timeout(Duration::from_secs(8)).map_err(|_| "El lector local no respondió a tiempo.")?;
         let reply: Value = serde_json::from_str(line.trim_start_matches('\u{feff}')).map_err(|_| "Respuesta del lector no válida.")?;
         if reply["ok"] != true { return Err(reply["error"].as_str().unwrap_or("No se pudo completar la lectura.").to_owned()); }
         serde_json::from_value(reply).map_err(|_| "Estado del lector no válido.".into())
-    })();
-    // A disconnected/timed-out helper must not leave stale audio playing.
-    if result.is_err() { *slot = None; }
-    result
 }
 #[tauri::command]
 pub async fn reader_status(app: tauri::AppHandle, window: tauri::WebviewWindow) -> Result<Status, String> {
@@ -152,7 +213,7 @@ pub async fn reader_control(app: tauri::AppHandle, window: tauri::WebviewWindow,
 pub fn stop(app: &tauri::AppHandle) {
     if let Some(reader) = app.try_state::<Reader>() {
         reader.2.fetch_add(1, Ordering::SeqCst);
-        if let Ok(mut session) = reader.0.lock() { *session = None; }
+        if let Ok(mut session) = reader.0.lock() { *session = None; sync_tray(app,"idle"); }
     }
 }
 #[cfg(test)]

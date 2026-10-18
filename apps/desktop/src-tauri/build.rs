@@ -1,9 +1,21 @@
 fn main() {
-    if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows") { build_windows_reader(); }
+    if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows") { build_windows_reader(); build_windows_usage(); }
     if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("macos") {
         build_macos_bridge();
     }
     tauri_build::build()
+}
+
+fn build_windows_usage() {
+    use std::{env,path::PathBuf,process::Command};
+    let root=PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").unwrap());
+    let source=root.join("native/ClaudeUsage.cs");
+    println!("cargo:rerun-if-changed={}",source.display());
+    let out=root.join("target/reader");std::fs::create_dir_all(&out).unwrap();
+    let compiler=PathBuf::from(env::var_os("WINDIR").unwrap()).join("Microsoft.NET/Framework64/v4.0.30319/csc.exe");
+    let result=Command::new(compiler).args(["/nologo","/target:exe","/optimize+","/reference:System.Web.Extensions.dll"])
+        .arg(format!("/out:{}",out.join("WhisperaClaudeUsage.exe").display())).arg(source).output().expect("Windows .NET Framework compiler required");
+    assert!(result.status.success(),"Claude usage bridge did not compile: {}{}",String::from_utf8_lossy(&result.stdout),String::from_utf8_lossy(&result.stderr));
 }
 
 fn build_macos_bridge() {

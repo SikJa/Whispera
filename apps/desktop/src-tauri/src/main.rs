@@ -1,6 +1,7 @@
 #![cfg_attr(target_os = "windows", windows_subsystem = "windows")]
 mod replay;
 mod reader;
+mod ai_usage;
 mod reader_selection;
 #[cfg(all(test, windows))]
 mod audit_tests;
@@ -355,6 +356,7 @@ fn main() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_clipboard_manager::init())
         .manage(reader::Reader::default())
+        .manage(ai_usage::Usage::default())
         .plugin(
             tauri_plugin_global_shortcut::Builder::new()
                 .with_handler(|app, shortcut, event| {
@@ -539,6 +541,7 @@ fn main() {
             });
             use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
             let show = MenuItem::with_id(app, "settings", "Configuracion", true, None::<&str>)?;
+            let usage_menu = MenuItem::with_id(app, "ai-usage", "Uso de IA", true, None::<&str>)?;
             let record = MenuItem::with_id(app, "recorder", "Abrir grabadora", true, None::<&str>)?;
             let import =
                 MenuItem::with_id(app, "import", "Transcribir archivo...", true, None::<&str>)?;
@@ -558,13 +561,19 @@ fn main() {
             if cfg!(windows) {
                 menu.append_items(&[&reading_sep, &reader_menu.pause, &reader_menu.stop, &reading_end])?;
             }
-            menu.append_items(&[&show, &update_menu, &sep, &quit])?;
+            menu.append_items(&[&usage_menu, &show, &update_menu, &sep, &quit])?;
             app.manage(reader_menu);
             tauri::tray::TrayIconBuilder::new()
                 .icon(tauri::image::Image::from_bytes(include_bytes!("../icons/cristal/32x32.png"))?)
                 .tooltip("Whispera")
                 .menu(&menu)
                 .on_menu_event(|app, event| match event.id.as_ref() {
+                    "ai-usage" => {
+                        if open_settings(app.clone()).is_ok() {
+                            use tauri::Emitter;
+                            let _ = app.emit_to("main","ai-usage-open",());
+                        }
+                    }
                     "reader-pause" | "reader-stop" => {
                         let app = app.clone();
                         let id = event.id.as_ref().to_owned();
@@ -640,6 +649,7 @@ fn main() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            ai_usage::ai_usage_snapshot, ai_usage::ai_usage_connect_claude, ai_usage::ai_usage_open_provider,
             reader::reader_status, reader::reader_speak, reader::reader_control, reader::reader_preferences, reader::reader_configure,
             permissions::platform_permissions, permissions::platform_request_permission,
             replay::replay_preferences, replay::replay_status, replay::replay_create_folder, replay::replay_save_preferences, replay::replay_save,

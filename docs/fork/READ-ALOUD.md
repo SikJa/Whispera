@@ -1,4 +1,4 @@
-# Local reading preview — 0.3.0-readaloud.3
+# Local reading preview — 0.3.0-readaloud.4
 
 This fork adds Windows text-to-speech independently of Groq transcription.
 

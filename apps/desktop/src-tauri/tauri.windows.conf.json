@@ -5,7 +5,8 @@
       "../node_modules/ffmpeg-static/ffmpeg.exe": "bin/ffmpeg.exe",
       "../node_modules/ffmpeg-static/ffmpeg.exe.LICENSE": "bin/ffmpeg.LICENSE",
       "../node_modules/ffmpeg-static/ffmpeg.exe.README": "bin/ffmpeg.README",
-      "target/reader/WhisperaReader.exe": "bin/WhisperaReader.exe"
+      "target/reader/WhisperaReader.exe": "bin/WhisperaReader.exe",
+      "target/reader/WhisperaClaudeUsage.exe": "bin/WhisperaClaudeUsage.exe"
     }
   }
 }

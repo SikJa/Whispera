@@ -1,5 +1,6 @@
 import VideoTrim from './VideoTrim';
 import ReaderPanel from './ReaderPanel';
+import AIUsagePanel from './AIUsagePanel';
 import {useUpdates} from "./UpdatesPanel";
 import {listen as listenUpdate} from "@tauri-apps/api/event";
 import React, { useEffect, useState, useRef } from "react";
@@ -40,6 +41,7 @@ import { credentialStore, isMac } from './platform';
 const routes = [
   { id: "transcription", name: "Transcripción", icon: AudioLines, group: "Preferencias" },
   { id: "reading", name: "Lectura", icon: Headphones },
+  { id: "ai-usage", name: "Uso de IA", icon: Activity },
   { id: "appearance", name: "Apariencia", icon: Palette },
   { id: "hotkey", name: "Atajos", icon: Keyboard },
   { id: "screen", name: "Capturas y video", icon: Play },
@@ -54,6 +56,7 @@ const routes = [
 type Route = typeof routes[number]["id"];
 const artworkModels = [{id:'original',name:'Carpeta animada original'},{id:'metallic',name:'Carpeta metálica'}] as const;
 const descriptions: Record<Route, string> = {
+  'ai-usage': "Tus cuotas de OpenAI y Claude, en un lugar.",
   reading: "Escuchá tus textos con las voces locales de Windows.",
   transcription: "Tu voz, con tus preferencias.", dictionary: "Las palabras que tienen que salir bien.",
   appearance: "Tus indicadores, a tu manera.",
@@ -109,6 +112,7 @@ function SettingsApp({sidebarExpanded}:{sidebarExpanded:boolean}) {
     return()=>{alive=false;};
   },[route]);
   useEffect(()=>{if(!api.native)return;let alive=true;let off:(()=>void)|undefined;void listenUpdate('updater-open',()=>{if(alive)setRoute('updates');},{target:'main'}).then(remove=>{if(alive)off=remove;else remove();});return()=>{alive=false;off?.();};},[]);
+  useEffect(()=>{if(!api.native)return;let alive=true;let off:(()=>void)|undefined;void listenUpdate('ai-usage-open',()=>{if(alive)setRoute('ai-usage');},{target:'main'}).then(remove=>{if(alive)off=remove;else remove();});return()=>{alive=false;off?.();};},[]);
   const run = async (work: () => Promise<unknown>, success: string) => {
     setBusy(true);
     try { await work(); await refresh(); setMessage(success); return true; }
@@ -140,6 +144,7 @@ function SettingsApp({sidebarExpanded}:{sidebarExpanded:boolean}) {
         <div className="page-heading"><div><h1>{title}</h1><p>{descriptions[route]}</p></div><AutoSaveStatus save={autosave}/></div>
         {message && <div className="notice" role="status">{message}<button aria-label="Cerrar aviso" onClick={() => setMessage("")}><X size={14} /></button></div>}
         <div className="settings-section">
+        {route==='ai-usage'&&<AIUsagePanel/>}
         {route==='reading'&&<>{readerNotice&&<p role="alert">{readerNotice} <button onClick={()=>setReaderNotice('')}>Cerrar aviso</button></p>}<ReaderPanel text={readerText} onTextChange={setReaderText}/></>}
         {route==='updates'&&<p role="status">Versión experimental de danieluxury88. Las actualizaciones del proyecto original están desactivadas para conservar la lectura local.</p>}
         {route==='application'&&<ApplicationSettings/>}

@@ -54,6 +54,38 @@ by Whispera, organization hook restrictions and different accounts require their
 own connector configuration; the automatic connector targets the Windows user.
 The official usage link is available when no compatible data source is running.
 
+### Claude CLI inside WSL (no app reinstall)
+
+The automatic **Conectar Claude Code** button in readaloud.4 targets Windows.
+For a CLI running in Ubuntu/WSL, connect once in Whispera to prepare the collector,
+then run `python3 scripts/connect-claude-wsl.py` from this repository **inside the
+same WSL distribution as Claude**. Python 3 and WSL interoperability with Windows
+executables are required. No additional AI service, login or API key is needed.
+The helper can also be downloaded and run as a standalone Python file.
+
+This switches the existing bridge to WSL's user settings, honors WSL's absolute
+`CLAUDE_CONFIG_DIR`, and launches the same installed quota collector directly.
+It backs up both configurations and the connection manifest, restores the previous
+Windows status line if still owned by Whispera, and preserves unrelated settings.
+If the currently connected status line was changed by another tool, migration
+refuses to overwrite it. A pre-existing target WSL status line is backed up and
+recorded for restoration on disconnect. Partial writes are rolled back; backups remain beside
+the configuration files. A failed migration can discard an old quota snapshot,
+which will be recreated on a later successful delivery.
+
+Whispera reads the WSL settings via `\\wsl.localhost\<distribution>\…`, so its existing
+**Desconectar Claude Code** button restores WSL's previous status line. Keep that
+distribution available when disconnecting. One bridge targets one installation;
+running this helper again after disconnecting reconnects WSL. The Windows Connect
+button by itself still targets Windows. A successful repeat of the WSL helper is
+idempotent and retains the original backup/previous status line.
+
+After Claude's next normal response, choose **Actualizar cuotas** in Whispera.
+Starting a session alone may show no quotas: subscription `rate_limits` are
+available after the first API response. Project overrides and managed restrictions
+can still prevent a user status line from running; the helper does not change them.
+Verification fixtures only write temporary quota files, never fake dashboard data.
+
 The optional gateway spend window is labeled separately. Subscription percentages
 and monetary balances are never added together. No general Claude API-key billing
 or extra-credit balance is inferred from subscription percentages.

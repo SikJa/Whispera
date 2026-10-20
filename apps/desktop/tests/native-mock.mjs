@@ -21,8 +21,15 @@ export function installNativeMock({kind='video',width=640,height=480,scale=1,set
       if(command==='reader_preferences')return window.readerPreferences;
       if(command==='reader_configure'){Object.assign(window.readerPreferences,args);return null;}
       if(command==='reader_status')return window.readerStatus;
-      if(command==='reader_speak'){if(window.readerFailure)throw Error('Terminá el dictado antes de leer.');window.readerStatus={...window.readerStatus,phase:'speaking'};return window.readerStatus;}
+      if(command==='reader_speak'){if(window.readerFailure)throw Error('Terminá el dictado antes de leer.');window.readerStatus={...window.readerStatus,phase:'speaking',has_reading:true};return window.readerStatus;}
       if(command==='reader_control'){window.readerStatus={...window.readerStatus,phase:args.action==='pause'?'paused':args.action==='resume'?'speaking':'idle'};return window.readerStatus;}
+      if(command==='reader_export_mp3'){
+        if(window.readerExportMode==='error')throw Error('No se pudo guardar el MP3.');
+        if(window.readerExportMode==='cancel')return null;
+        if(window.readerExportMode==='pending'){window.readerStatus.exporting=true;return new Promise(resolve=>{window.finishReaderExport=resolve;});}
+        return 'C:\\Audio\\lectura.mp3';
+      }
+      if(command==='reader_export_cancel'){window.readerStatus.exporting=false;window.finishReaderExport?.(null);return null;}
       if(command==='plugin:event|listen'){const id=next++;listeners.set(id,args);return id;}
       if(command==='plugin:event|unlisten')return;
       if(command==='replay_preferences')return{enabled:false,seconds:60,audio:'none',folder:'',hotkey:''};

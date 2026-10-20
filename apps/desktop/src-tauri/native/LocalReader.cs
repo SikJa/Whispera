@@ -2,6 +2,7 @@
 using System;
 using System.Collections.Generic;
 using System.Globalization;
+using System.IO;
 using System.Speech.Synthesis;
 using System.Web.Script.Serialization;
 
@@ -25,7 +26,7 @@ internal static class LocalReader {
         string action = RequiredString(request, "action");
         switch (action) {
             case "status": break;
-            case "speak": {
+            case "speak": case "render-wave": {
                 string text = RequiredString(request, "text");
                 string voice = RequiredString(request, "voice");
                 object rawRate;
@@ -33,6 +34,16 @@ internal static class LocalReader {
                 if (String.IsNullOrWhiteSpace(text) || text.Length > MaximumTextLength || text.IndexOf('\0') >= 0) throw new ReaderInputException("Usá entre 1 y 50.000 caracteres de texto.");
                 if (!request.TryGetValue("rate", out rawRate) || !Int32.TryParse(Convert.ToString(rawRate, CultureInfo.InvariantCulture), out rate) || rate < -10 || rate > 10) throw new ReaderInputException("Velocidad no válida.");
                 if (!VoiceNames.Contains(voice)) throw new ReaderInputException("La voz elegida no está instalada.");
+                if (action == "render-wave") {
+                    string path = RequiredString(request, "path");
+                    if (!Path.IsPathRooted(path)) throw new ReaderInputException("Ruta de audio no válida.");
+                    Synth.SelectVoice(voice);
+                    Synth.Rate = rate;
+                    // A separate one-shot process renders silently to a private staging file.
+                    Synth.SetOutputToWaveFile(path);
+                    try { Synth.Speak(text); } finally { Synth.SetOutputToNull(); }
+                    break;
+                }
                 Synth.SpeakAsyncCancelAll();
                 if (Synth.State == SynthesizerState.Paused) Synth.Resume();
                 Synth.SelectVoice(voice);
@@ -68,11 +79,15 @@ internal static class LocalReader {
                     try {
                         if (line.Length > 350000) throw new ReaderInputException("Solicitud demasiado grande.");
                         var request = Json.Deserialize<Dictionary<string, object>>(line);
+                        bool render = args.Length == 1 && args[0] == "--render-wave";
+                        if ((RequiredString(request, "action") == "render-wave") != render) throw new ReaderInputException("Acción de lectura no admitida.");
                         Console.WriteLine(Json.Serialize(Handle(request)));
+                        if (render) return 0;
                     } catch (Exception error) {
                         // No input text or raw engine exception is written to logs/output.
                         string message = error is ReaderInputException ? error.Message : "Windows no pudo completar la lectura. Probá otra voz.";
                         Console.WriteLine(Json.Serialize(new { ok = false, error = message }));
+                        if (args.Length != 0) return 1;
                     }
                     Console.Out.Flush();
                 }

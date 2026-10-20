@@ -8,14 +8,18 @@ use tauri_plugin_global_shortcut::GlobalShortcutExt;
 #[derive(Clone, Default, Deserialize, Serialize)]
 pub struct Voice { pub id: String, pub name: String, pub language: String }
 #[derive(Clone, Default, Deserialize, Serialize)]
-pub struct Status { pub supported: bool, pub phase: String, #[serde(default)] pub voices: Vec<Voice> }
+pub struct Status { pub supported: bool, pub phase: String, #[serde(default)] pub voices: Vec<Voice>, #[serde(default)] pub exporting: bool, #[serde(default)] pub has_reading: bool }
+#[derive(Clone, Deserialize, Serialize)]
+pub struct Reading { pub text: String, pub voice: String, pub rate: i32 }
 struct Session { child: Child, stdin: ChildStdin, replies: mpsc::Receiver<String> }
 impl Drop for Session { fn drop(&mut self) { let _ = self.child.kill(); let _ = self.child.wait(); } }
 #[derive(Default)]
-pub struct Reader(Mutex<Option<Session>>, Mutex<()>, AtomicU64, AtomicBool);
+pub struct Reader(Mutex<Option<Session>>, Mutex<()>, AtomicU64, AtomicBool, Mutex<Option<Reading>>);
 pub struct TrayMenu {
     pub pause: tauri::menu::MenuItem<tauri::Wry>,
     pub stop: tauri::menu::MenuItem<tauri::Wry>,
+    pub export: tauri::menu::MenuItem<tauri::Wry>,
+    pub cancel_export: tauri::menu::MenuItem<tauri::Wry>,
     phase: AtomicU8,
 }
 impl TrayMenu {
@@ -23,6 +27,8 @@ impl TrayMenu {
         Ok(Self {
             pause: tauri::menu::MenuItem::with_id(app,"reader-pause","Pausar lectura",false,None::<&str>)?,
             stop: tauri::menu::MenuItem::with_id(app,"reader-stop","Detener lectura",false,None::<&str>)?,
+            export: tauri::menu::MenuItem::with_id(app,"reader-export","Guardar lectura como MP3…",false,None::<&str>)?,
+            cancel_export: tauri::menu::MenuItem::with_id(app,"reader-export-cancel","Cancelar guardado MP3",false,None::<&str>)?,
             phase: AtomicU8::new(0),
         })
     }
@@ -133,20 +139,23 @@ pub fn report_shortcut_error(app: &tauri::AppHandle, error: String) {
     let _ = crate::open_settings(app.clone());
     let _ = app.emit_to("main","reader-shortcut-error",error);
 }
-fn authorize(window: &tauri::WebviewWindow) -> Result<(), String> {
+pub(crate) fn authorize(window: &tauri::WebviewWindow) -> Result<(), String> {
     if window.label() != "main" { return Err("Abrí Lectura desde Configuración.".into()); } Ok(())
 }
-fn validate(text: &str, rate: i32) -> Result<(), String> {
+pub(crate) fn validate(text: &str, rate: i32) -> Result<(), String> {
     if text.trim().is_empty() || text.encode_utf16().count() > 50000 || text.contains('\0') { return Err("Usá entre 1 y 50.000 caracteres de texto.".into()); }
     if !(-10..=10).contains(&rate) { return Err("Velocidad no válida.".into()); } Ok(())
 }
 #[cfg(windows)]
+pub(crate) fn binary(app: &tauri::AppHandle) -> Result<std::path::PathBuf, String> {
+    Ok(if cfg!(debug_assertions) {
+        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target/reader/WhisperaReader.exe")
+    } else { app.path().resource_dir().map_err(|e| e.to_string())?.join("bin/WhisperaReader.exe") })
+}
+#[cfg(windows)]
 fn launch(app: &tauri::AppHandle) -> Result<Session, String> {
     use std::os::windows::process::CommandExt;
-    let binary = if cfg!(debug_assertions) {
-        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target/reader/WhisperaReader.exe")
-    } else { app.path().resource_dir().map_err(|e| e.to_string())?.join("bin/WhisperaReader.exe") };
-    let mut child = Command::new(binary).creation_flags(0x08000000)
+    let mut child = Command::new(binary(app)?).creation_flags(0x08000000)
         .stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null()).spawn()
         .map_err(|_| "No se pudo iniciar el lector local de Windows.".to_string())?;
     let stdin = child.stdin.take().ok_or("Lector sin canal de entrada.")?;
@@ -168,9 +177,19 @@ fn request_guarded(app: &tauri::AppHandle, value: Value, ticket: Option<u64>) ->
     let mut slot = reader.0.lock().map_err(|_| "Lector ocupado.")?;
     if ticket.is_some_and(|ticket| reader.2.load(Ordering::SeqCst) != ticket) { return Ok(Status::default()); }
     if slot.is_none() { *slot = Some(launch(app)?); }
-    let result = exchange(slot.as_mut().unwrap(),&value);
+    let mut result = exchange(slot.as_mut().unwrap(),&value);
     // A disconnected/timed-out helper must not leave stale audio playing.
     if result.is_err() { *slot = None; }
+    if let Ok(status) = &mut result {
+        if value["action"] == "speak" {
+            if let Ok(reading) = serde_json::from_value::<Reading>(value) {
+                *reader.4.lock().map_err(|_|"Lectura ocupada.")? = Some(reading);
+                crate::reader_export::sync_tray(app);
+            }
+        }
+        status.has_reading = current(app).is_some();
+        status.exporting = crate::reader_export::busy(app);
+    }
     sync_tray(app,result.as_ref().map(|s|s.phase.as_str()).unwrap_or("idle"));
     result
 }
@@ -185,7 +204,7 @@ fn exchange(session: &mut Session, value: &Value) -> Result<Status, String> {
 #[tauri::command]
 pub async fn reader_status(app: tauri::AppHandle, window: tauri::WebviewWindow) -> Result<Status, String> {
     authorize(&window)?;
-    if !cfg!(windows) { return Ok(Status { supported: false, phase: "unavailable".into(), voices: vec![] }); }
+    if !cfg!(windows) { return Ok(Status { supported: false, phase: "unavailable".into(), ..Status::default() }); }
     tauri::async_runtime::spawn_blocking(move || request(&app, json!({"action":"status"}))).await.map_err(|e| e.to_string())?
 }
 #[tauri::command]
@@ -215,6 +234,10 @@ pub fn stop(app: &tauri::AppHandle) {
         reader.2.fetch_add(1, Ordering::SeqCst);
         if let Ok(mut session) = reader.0.lock() { *session = None; sync_tray(app,"idle"); }
     }
+}
+// Only the latest successful reading is retained in memory, including shortcut selections.
+pub(crate) fn current(app: &tauri::AppHandle) -> Option<Reading> {
+    app.state::<Reader>().4.lock().ok().and_then(|value|value.clone())
 }
 #[cfg(test)]
 mod tests {

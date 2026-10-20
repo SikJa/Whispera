@@ -1,6 +1,7 @@
 #![cfg_attr(target_os = "windows", windows_subsystem = "windows")]
 mod replay;
 mod reader;
+mod reader_export;
 mod ai_usage;
 mod reader_selection;
 #[cfg(all(test, windows))]
@@ -356,6 +357,7 @@ fn main() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_clipboard_manager::init())
         .manage(reader::Reader::default())
+        .manage(reader_export::Exports::default())
         .manage(ai_usage::Usage::default())
         .plugin(
             tauri_plugin_global_shortcut::Builder::new()
@@ -559,7 +561,7 @@ fn main() {
             let menu =
                 Menu::with_items(app, &[&record, &video, &image, &import, &library_menu])?;
             if cfg!(windows) {
-                menu.append_items(&[&reading_sep, &reader_menu.pause, &reader_menu.stop, &reading_end])?;
+                menu.append_items(&[&reading_sep, &reader_menu.pause, &reader_menu.stop, &reader_menu.export, &reader_menu.cancel_export, &reading_end])?;
             }
             menu.append_items(&[&usage_menu, &show, &update_menu, &sep, &quit])?;
             app.manage(reader_menu);
@@ -579,6 +581,15 @@ fn main() {
                         let id = event.id.as_ref().to_owned();
                         tauri::async_runtime::spawn_blocking(move || {
                             if let Err(error) = reader::control_from_tray(&app,&id) {
+                                reader::report_shortcut_error(&app,error);
+                            }
+                        });
+                    }
+                    "reader-export-cancel" => reader_export::cancel(app),
+                    "reader-export" => {
+                        let app = app.clone();
+                        tauri::async_runtime::spawn_blocking(move || {
+                            if let Err(error) = reader_export::save(&app,None) {
                                 reader::report_shortcut_error(&app,error);
                             }
                         });
@@ -651,6 +662,7 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             ai_usage::ai_usage_snapshot, ai_usage::ai_usage_connect_claude, ai_usage::ai_usage_open_provider,
             reader::reader_status, reader::reader_speak, reader::reader_control, reader::reader_preferences, reader::reader_configure,
+            reader_export::reader_export_mp3, reader_export::reader_export_cancel,
             permissions::platform_permissions, permissions::platform_request_permission,
             replay::replay_preferences, replay::replay_status, replay::replay_create_folder, replay::replay_save_preferences, replay::replay_save,
             video_trim::video_trim_open, video_trim::video_trim_context, video_trim::video_trim_close, video_trim::video_trim_save,

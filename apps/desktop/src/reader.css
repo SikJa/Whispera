@@ -12,6 +12,7 @@
 .reader-options input[type=range] { width:100%; accent-color:var(--ring,#c6b3e6); padding:8px 0; margin:0; }
 .reader-transport { display:flex; gap:8px; flex-wrap:wrap; }
 .reader-state { min-height:36px; color:var(--reader-muted); font-size:12px; line-height:1.5; padding-top:12px; }
+.reader-export-state { color:var(--reader-muted); font-size:12px; line-height:1.5; margin-top:12px; overflow-wrap:anywhere; }
 .reader-error { border-top:1px solid var(--reader-border); padding-top:12px; font-size:13px; }
 .reader-error button { margin-top:8px; }
 .reader-compact { margin-top:20px; padding-top:16px; border-top:1px solid var(--reader-border); }

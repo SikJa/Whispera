@@ -53,6 +53,9 @@ jobs:
       - name: Claude quota collector tests (isolated fixtures)
         shell: pwsh
         run: node apps/desktop/tests/ai-usage-collector.mjs apps/desktop/src-tauri/target/reader/WhisperaClaudeUsage.exe
+      - name: Reader MP3 export (silent, temporary files)
+        shell: pwsh
+        run: node apps/desktop/tests/reader-mp3.mjs apps/desktop/src-tauri/target/reader/WhisperaReader.exe apps/desktop/node_modules/ffmpeg-static/ffmpeg.exe
       - name: Windows startup provider regression (isolated registry keys)
         if: env.WHISPERA_LIGHT_CHECKS != 'true'
         shell: pwsh

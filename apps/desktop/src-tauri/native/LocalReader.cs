@@ -72,7 +72,7 @@ internal static class LocalReader {
                     if (!installed.Enabled) continue;
                     VoiceInfo voice = installed.VoiceInfo;
                     VoiceNames.Add(voice.Name);
-                    Voices.Add(new { id = voice.Name, name = voice.Name, language = voice.Culture.Name });
+                    Voices.Add(new { id = voice.Name, name = voice.Name, language = voice.Culture.Name, code = voice.Culture.ThreeLetterISOLanguageName });
                 }
                 string line;
                 while ((line = Console.ReadLine()) != null) {

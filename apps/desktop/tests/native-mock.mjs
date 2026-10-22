@@ -2,11 +2,13 @@ export function installNativeMock({kind='video',width=640,height=480,scale=1,set
   const view=new URLSearchParams(location.search).get('view');
   const label=windowLabel??(view==='screen-select'?'screen-select-0':view==='screen-freeze'?'screen-freeze-0':view?.startsWith('screen-')?view:'main');
   window.updateStatus={currentVersion:'0.2.15',version:null,notes:'',phase:'idle',downloaded:0,total:null,error:''};
-  window.readerStatus={supported:true,phase:"idle",voices:[{id:"fixture-es",name:"Voz de prueba",language:"es-ES"}]};
+  window.readerStatus={supported:true,phase:"idle",voices:[{id:"fixture-es",name:"Voz de prueba",language:"es-ES",code:"spa"},{id:"fixture-es-mx",name:"Voz de México",language:"es-MX",code:"spa"},{id:"fixture-en",name:"English voice",language:"en-US",code:"eng"}]};
+  window.readerAnalysis={kind:'matched',language:'spa',voice:window.readerStatus.voices[0]};
+  window.pendingReaderAnalyses=[];
   window.calls=[]; const callbacks=new Map(), listeners=new Map();let next=1;
   window.videoPreferences={audio:'none',hotkey:'Control+Shift+F9',image_hotkey:'Control+Shift+F10',frame_color:'#ffffff',image_auto_copy:false};
   window.voiceShortcut='Alt+KeyZ';
-  window.readerPreferences={hotkey:'Control+Alt+KeyR',voice:'',rate:0};
+  window.readerPreferences={hotkey:'Control+Alt+KeyR',voice:'',rate:0,favorites:{}};
   window.libraryPreferences={toggleHotkey:'Alt+C',captureGlobal:true,incognito:false,historyLimit:250,autoDeleteHours:48};
   window.videoStatus={phase:selectionPhase??(new URLSearchParams(location.search).get('view')==='screen-select'?'selecting':'idle'),seconds:0,path:'',error:'',copied:false};
   window.editorContext={id:'test-session',kind,width,height,scale};
@@ -21,9 +23,14 @@ export function installNativeMock({kind='video',width=640,height=480,scale=1,set
       if(command==='reader_preferences')return window.readerPreferences;
       if(command==='reader_configure'){Object.assign(window.readerPreferences,args);return null;}
       if(command==='reader_status')return window.readerStatus;
-      if(command==='reader_speak'){if(window.readerFailure)throw Error('Terminá el dictado antes de leer.');window.readerStatus={...window.readerStatus,phase:'speaking',has_reading:true};return window.readerStatus;}
+      if(command==='reader_analyze'){
+        if(window.holdReaderAnalysis)return new Promise(resolve=>window.pendingReaderAnalyses.push({text:args.text,resolve}));
+        return structuredClone(window.readerAnalysis);
+      }
+      if(command==='reader_speak'){if(window.readerFailure)throw Error('Terminá el dictado antes de leer.');window.readerReading={...args,voice:args.voice==='auto'?window.readerAnalysis.voice.id:args.voice};window.readerStatus={...window.readerStatus,phase:'speaking',has_reading:true};return window.readerStatus;}
       if(command==='reader_control'){window.readerStatus={...window.readerStatus,phase:args.action==='pause'?'paused':args.action==='resume'?'speaking':'idle'};return window.readerStatus;}
       if(command==='reader_export_mp3'){
+        window.readerExportReading=args.reading??window.readerReading;
         if(window.readerExportMode==='error')throw Error('No se pudo guardar el MP3.');
         if(window.readerExportMode==='cancel')return null;
         if(window.readerExportMode==='pending'){window.readerStatus.exporting=true;return new Promise(resolve=>{window.finishReaderExport=resolve;});}

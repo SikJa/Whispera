@@ -1,4 +1,4 @@
-# Local reading preview — 0.3.0-readaloud.5
+# Local reading preview — 0.3.0-readaloud.6
 
 This fork adds Windows text-to-speech independently of Groq transcription.
 
@@ -12,6 +12,50 @@ This fork adds Windows text-to-speech independently of Groq transcription.
 - Select text in a compatible Windows application and press **Ctrl+Alt+R** to read it; press again to stop. Change it in **Atajos → Lectura en voz alta**. Selection uses UI Automation: no simulated Copy, clipboard reads or clipboard changes. Password fields, empty selections, unsupported apps and selections over the limit are rejected. The shortcut uses the voice/speed most recently chosen in Lectura.
 - Right-click the Whispera icon next to the Windows clock to **Pausar lectura**, **Continuar lectura** or **Detener lectura**. These controls also work for selection-shortcut playback with Settings hidden. Pause preserves the current position; Stop ends playback. Controls disable after completion or Stop, and do not start a reader when idle.
 - This is not a screen reader, OCR or PDF importer. Apps must expose their selection through Windows accessibility. No full-document or clipboard fallback is used.
+
+## Automatic language and voice
+
+Select **Automático · detectar idioma** under Voz. This is the default for a new
+profile; an existing manually selected voice and speed are preserved on upgrade.
+Choose Automatic explicitly to enable detection for an existing profile. Before
+reading, a local preview shows the detected language and compatible installed voice.
+No text is sent to Groq or any other service, and no subscription quota is used.
+
+The same native selector handles the editor, History, Ctrl+Alt+R selections, and
+new MP3 exports. It detects one predominant language for the entire text; it does
+not change voices between sentences. It ignores Windows' interface language and
+does not infer your preferred regional accent. Mixed-language text may be classified
+by its predominant language and is less predictable than a single-language passage.
+
+Expand **Voces preferidas por idioma** to choose the accent/voice for each available
+language. Switching from a manual voice to Automatic initially preserves that voice
+as the preference for its language if no preference exists. If a preferred voice
+is removed, another installed voice of the same language is used. A manual choice
+always overrides detection, including for very short or mixed-language text.
+
+The detector is whatlang 0.18.0, pinned in Cargo.lock with compiled-in language
+models (70 supported languages). Windows voices provide ISO language codes, with
+aliases normalized for Mandarin, Persian, Norwegian and Filipino. Detection is
+never restricted to installed voice languages: a detected French passage without
+a French voice is reported as missing, not guessed as English or Spanish.
+
+Insufficiently reliable detection, fewer than 12 alphabetic characters, or fewer
+than three words in Latin script require a manual voice. Missing compatible voices
+also prevent automatic playback/export. The panel explains how to proceed; the
+shortcut opens the existing reader error notice. Installing a new Windows desktop
+voice may require restarting Whispera so its speech helper discovers that voice.
+Unsupported detector languages can still be read with an explicitly chosen voice.
+
+Only voice IDs, speed, and per-language voice preferences are persisted. Preferences
+load from the native store before the UI can save them, preserving existing manual
+settings. Local previews are debounced, and late results for an older text or voice
+configuration cannot enable playback or replace the current preview.
+
+Once playback begins, its actual resolved voice is stored with the latest reading
+in memory. Saving that reading from the tray or while it is playing/paused keeps
+that exact voice even if the editor, automatic detection, or preferences change.
+There is no new inference service, login, runtime model download or background
+document scan. Dependency attribution is bundled in the licenses directory.
 
 ## Save a reading as MP3
 

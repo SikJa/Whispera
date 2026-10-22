@@ -96,7 +96,10 @@ fn render(app: &tauri::AppHandle, reading: &Reading, destination: &Path, token: 
 }
 pub fn save(app: &tauri::AppHandle, reading: Option<Reading>) -> Result<Option<String>, String> {
     if !cfg!(windows) { return Err("Guardar lecturas requiere Windows en esta versión.".into()); }
-    let reading = reading.or_else(||reader::current(app)).ok_or("Primero leé un texto o escribilo en Lectura.")?;
+    let reading = match reading {
+        Some(reading)=>reader::resolve_reading(app,reading)?,
+        None=>reader::current(app).ok_or("Primero leé un texto o escribilo en Lectura.")?,
+    };
     reader::validate(&reading.text,reading.rate)?;
     if reading.voice.is_empty() || reading.voice.len() > 512 { return Err("Elegí una voz instalada.".into()); }
     let token = Arc::new(AtomicBool::new(false));

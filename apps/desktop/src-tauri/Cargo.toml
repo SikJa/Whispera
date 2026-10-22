@@ -1,6 +1,6 @@
 [package]
 name = "whispera-desktop"
-version = "0.3.0-readaloud.5"
+version = "0.3.0-readaloud.6"
 edition = "2021"
 license = "MIT"
 description = "Floating voice dictation, captures and clipboard for Windows and macOS"
@@ -31,6 +31,7 @@ image = { version = "0.25", default-features = false, features = ["png"] }
 tauri-plugin-global-shortcut = "2"
 dotenvy = "0.15"
 base64 = "0.22"
+whatlang = "=0.18.0"
 drag = "2.1.1"
 raw-window-handle = "0.6.2"
 tauri-plugin-updater = "~2.12.0"

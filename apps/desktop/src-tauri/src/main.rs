@@ -1,6 +1,7 @@
 #![cfg_attr(target_os = "windows", windows_subsystem = "windows")]
 mod replay;
 mod reader;
+mod reader_language;
 mod reader_export;
 mod ai_usage;
 mod reader_selection;
@@ -661,7 +662,7 @@ fn main() {
         })
         .invoke_handler(tauri::generate_handler![
             ai_usage::ai_usage_snapshot, ai_usage::ai_usage_connect_claude, ai_usage::ai_usage_open_provider,
-            reader::reader_status, reader::reader_speak, reader::reader_control, reader::reader_preferences, reader::reader_configure,
+            reader::reader_status, reader::reader_speak, reader::reader_control, reader::reader_preferences, reader::reader_configure, reader::reader_analyze,
             reader_export::reader_export_mp3, reader_export::reader_export_cancel,
             permissions::platform_permissions, permissions::platform_request_permission,
             replay::replay_preferences, replay::replay_status, replay::replay_create_folder, replay::replay_save_preferences, replay::replay_save,

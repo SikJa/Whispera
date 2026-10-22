@@ -5,8 +5,8 @@ use std::{io::{BufRead, BufReader, Write}, process::{Child, ChildStdin, Command,
 use tauri::{Manager, Emitter};
 use tauri_plugin_global_shortcut::GlobalShortcutExt;
 
-#[derive(Clone, Default, Deserialize, Serialize)]
-pub struct Voice { pub id: String, pub name: String, pub language: String }
+pub use crate::reader_language::Voice;
+use crate::reader_language::{self, Analysis, Favorites, AUTO};
 #[derive(Clone, Default, Deserialize, Serialize)]
 pub struct Status { pub supported: bool, pub phase: String, #[serde(default)] pub voices: Vec<Voice>, #[serde(default)] pub exporting: bool, #[serde(default)] pub has_reading: bool }
 #[derive(Clone, Deserialize, Serialize)]
@@ -80,7 +80,7 @@ pub fn control_from_tray(app: &tauri::AppHandle, id: &str) -> Result<(), String>
     }
 }
 #[derive(Serialize)]
-pub struct Preferences { pub hotkey: String, pub voice: String, pub rate: i32 }
+pub struct Preferences { pub hotkey: String, pub voice: String, pub rate: i32, pub favorites: Favorites }
 pub fn hotkey(app: &tauri::AppHandle) -> String {
     app.state::<crate::storage::Store>().get::<Option<String>>("reader_hotkey").unwrap_or_default().unwrap_or_else(|| "Control+Alt+KeyR".into())
 }
@@ -90,13 +90,30 @@ pub fn reader_preferences(app: tauri::AppHandle, window: tauri::WebviewWindow) -
 }
 fn preferences(app: &tauri::AppHandle) -> Preferences {
     let store = app.state::<crate::storage::Store>();
-    Preferences { hotkey: hotkey(app), voice: store.get("reader_voice").unwrap_or_default(), rate: store.get("reader_rate").unwrap_or_default() }
+    let voice: String = store.get("reader_voice").unwrap_or_default();
+    Preferences { hotkey: hotkey(app), voice: if voice.is_empty(){AUTO.into()}else{voice}, rate: store.get("reader_rate").unwrap_or_default(), favorites: store.get("reader_language_voices").unwrap_or_default() }
 }
 #[tauri::command]
-pub fn reader_configure(app: tauri::AppHandle, window: tauri::WebviewWindow, voice: String, rate: i32) -> Result<(), String> {
+pub fn reader_configure(app: tauri::AppHandle, window: tauri::WebviewWindow, voice: String, rate: i32, favorites: Option<Favorites>) -> Result<(), String> {
     authorize(&window)?; validate("preferences", rate)?;
     if voice.len() > 512 { return Err("Voz no válida.".into()); }
-    app.state::<crate::storage::Store>().put_many(&[("reader_voice",json!(voice)),("reader_rate",json!(rate))])
+    let mut changes = vec![("reader_voice",json!(voice)),("reader_rate",json!(rate))];
+    if let Some(favorites) = favorites { reader_language::validate_favorites(&favorites)?;changes.push(("reader_language_voices",json!(favorites))); }
+    app.state::<crate::storage::Store>().put_many(&changes)
+}
+#[tauri::command]
+pub async fn reader_analyze(app: tauri::AppHandle, window: tauri::WebviewWindow, text: String) -> Result<Analysis, String> {
+    authorize(&window)?;validate(&text,0)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let voices = request(&app,json!({"action":"status"}))?.voices;
+        Ok(reader_language::analyze(&text,AUTO,&voices,&preferences(&app).favorites))
+    }).await.map_err(|_|"No se pudo comprobar el idioma.".to_string())?
+}
+pub(crate) fn resolve_reading(app: &tauri::AppHandle, mut reading: Reading) -> Result<Reading, String> {
+    validate(&reading.text,reading.rate)?;
+    let voices = request(app,json!({"action":"status"}))?.voices;
+    reading.voice = reader_language::analyze(&reading.text,&reading.voice,&voices,&preferences(app).favorites).require_voice()?.id;
+    Ok(reading)
 }
 pub fn enabled(app: &tauri::AppHandle) -> bool { app.state::<Reader>().3.load(Ordering::SeqCst) }
 pub fn registered(app: &tauri::AppHandle, value: bool) { app.state::<Reader>().3.store(value, Ordering::SeqCst); }
@@ -128,9 +145,7 @@ pub fn toggle_selection(app: &tauri::AppHandle, source: isize) -> Result<(), Str
     if reader.2.load(Ordering::SeqCst) != ticket { return Ok(()); }
     let text = selection?;
     let prefs = preferences(app); validate(&text,prefs.rate)?;
-    let voice = status.voices.iter().find(|v| v.id == prefs.voice)
-        .or_else(|| status.voices.iter().find(|v| v.language.starts_with("es"))).or(status.voices.first())
-        .ok_or("No hay voces de escritorio instaladas.")?;
+    let voice = reader_language::analyze(&text,&prefs.voice,&status.voices,&prefs.favorites).require_voice()?;
     if reader.2.load(Ordering::SeqCst) != ticket { return Ok(()); }
     request_guarded(app,json!({"action":"speak","text":text,"voice":voice.id,"rate":prefs.rate}),Some(ticket))?;
     Ok(())
@@ -199,7 +214,9 @@ fn exchange(session: &mut Session, value: &Value) -> Result<Status, String> {
         let line = session.replies.recv_timeout(Duration::from_secs(8)).map_err(|_| "El lector local no respondió a tiempo.")?;
         let reply: Value = serde_json::from_str(line.trim_start_matches('\u{feff}')).map_err(|_| "Respuesta del lector no válida.")?;
         if reply["ok"] != true { return Err(reply["error"].as_str().unwrap_or("No se pudo completar la lectura.").to_owned()); }
-        serde_json::from_value(reply).map_err(|_| "Estado del lector no válido.".into())
+        let mut status: Status = serde_json::from_value(reply).map_err(|_| "Estado del lector no válido.".to_string())?;
+        for voice in &mut status.voices {voice.code=reader_language::canonical(&voice.code).to_owned();}
+        Ok(status)
 }
 #[tauri::command]
 pub async fn reader_status(app: tauri::AppHandle, window: tauri::WebviewWindow) -> Result<Status, String> {
@@ -215,8 +232,9 @@ pub async fn reader_speak(app: tauri::AppHandle, window: tauri::WebviewWindow, t
         let engine = app.state::<crate::engine::Engine>();
         let _gate = engine.gate.lock().map_err(|_| "Motor ocupado.")?;
         available(&app,&engine)?;
+        let reading = resolve_reading(&app,Reading{text,voice,rate})?;
         app.state::<Reader>().2.fetch_add(1, Ordering::SeqCst);
-        request(&app, json!({"action":"speak","text":text,"voice":voice,"rate":rate}))
+        request(&app, json!({"action":"speak","text":reading.text,"voice":reading.voice,"rate":reading.rate}))
     }).await.map_err(|e| e.to_string())?
 }
 #[tauri::command]

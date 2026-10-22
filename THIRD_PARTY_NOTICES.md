@@ -13,6 +13,17 @@
 
 Before public release, review the complete dependency license inventory, including transitive packages.
 This notice is attribution, not a claim that a complete legal audit has been performed.
+# Local reading language detection
+
+whatlang 0.18.0: Sergey Potapov and upstream contributors, MIT.
+Source: https://github.com/greyblake/whatlang-rs . Full notice:
+`docs/licenses/whatlang.txt`, bundled as `licenses/whatlang.txt`.
+Its newly enabled allocator-api2 0.2.21 dependency is used under MIT;
+the notice is retained in `docs/licenses/allocator-api2.txt` and bundled
+as `licenses/allocator-api2.txt`. Existing hashbrown/foldhash/equivalent
+dependencies retain their upstream licenses. No language models are downloaded
+at runtime; the detector and profiles compile into the desktop binary.
+
 # Screen recording
 
 ## Clipboard library

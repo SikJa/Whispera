@@ -11,6 +11,12 @@
 .reader-options select { width:100%; max-width:100%; }
 .reader-options input[type=range] { width:100%; accent-color:var(--ring,#c6b3e6); padding:8px 0; margin:0; }
 .reader-transport { display:flex; gap:8px; flex-wrap:wrap; }
+.reader-language-note { color:var(--reader-muted); font-size:13px; line-height:1.6; margin:0 0 16px; }
+.reader-language-note[data-blocked="true"] { color:var(--reader-text); border-left:2px solid var(--ring,#c6b3e6); padding-left:12px; }
+.reader-language-preferences { border-top:1px solid var(--reader-border); padding:12px 0; margin-bottom:12px; font-size:13px; }
+.reader-language-preferences summary { cursor:pointer; }
+.reader-language-preferences>p { color:var(--reader-muted); font-size:12px; line-height:1.6; margin-top:12px; }
+.reader-language-preferences .reader-options { margin:16px 0 0; }
 .reader-state { min-height:36px; color:var(--reader-muted); font-size:12px; line-height:1.5; padding-top:12px; }
 .reader-export-state { color:var(--reader-muted); font-size:12px; line-height:1.5; margin-top:12px; overflow-wrap:anywhere; }
 .reader-error { border-top:1px solid var(--reader-border); padding-top:12px; font-size:13px; }

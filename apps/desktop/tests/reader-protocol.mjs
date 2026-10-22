@@ -15,6 +15,7 @@ assert.equal(result.error,undefined);assert.equal(result.status,0,result.stderr)
 const replies=result.stdout.replace(/^\uFEFF/,'').trim().split(/\r?\n/).map(line=>JSON.parse(line));
 assert.equal(replies.length,requests.length);
 assert.equal(replies[0].phase,'idle');assert.ok(Array.isArray(replies[0].voices));
+for(const voice of replies[0].voices)assert.match(voice.code,/^[a-z]{3}$/);
 for(const reply of replies.slice(1,7))assert.equal(reply.ok,false);
 assert.equal(replies[7].ok,true);assert.equal(replies[8].phase,'idle');
 assert.ok(!result.stdout.includes('Missing fixture voice'));

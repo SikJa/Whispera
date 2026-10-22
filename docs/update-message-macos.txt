@@ -1,1 +1,1 @@
-Beta 3 para Intel y Apple Silicon: transcripción optimizada, marcas de tiempo por frase en videos, capas de captura estables y seis temas. Incluye mejoras de audio, arrastre y contraste. Mantiene tus datos y el logo Cristal.
+Capturas y audio de video corregidos. Guardá imágenes desde el portapapeles y personalizá el fondo con la paleta. Corregimos el «gracias» sin hablar e incluimos las mejoras previas de transcripción para Mac. Tus preferencias y el logo Cristal se conservan.

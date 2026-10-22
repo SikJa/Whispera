@@ -167,6 +167,10 @@ async fn request_format(path: &Path, settings: &Settings, rules: &[Rule], granul
     if ext == "wav" && digital_silence(&bytes) {
         return Ok(serde_json::json!({"text":"","words":[],"segments":[]}));
     }
+    // Quiet microphone noise is not digital zero. Only reject the known closing
+    // hallucination when the *original* PCM is stationary background; quiet or
+    // brief speech keeps its modulation and is never rejected by volume alone.
+    let stationary_background = ext == "wav" && stationary_background(&bytes);
     let (bytes,ext)=crate::lossless_upload::prepare(bytes,ext).await;
     if bytes.is_empty() {return Err("No se pudo preparar el envío. El audio original sigue guardado.".into());}
     let key = entry()?
@@ -203,11 +207,42 @@ async fn request_format(path: &Path, settings: &Settings, rules: &[Rule], granul
             response.status().as_u16()
         ));
     }
-    let json: serde_json::Value = response
+    let mut json: serde_json::Value = response
         .json()
         .await
         .map_err(|_| "Groq devolvio una respuesta no valida")?;
+    suppress_background_closing(&mut json, stationary_background);
     Ok(json)
+}
+
+fn suppress_background_closing(json: &mut serde_json::Value, background: bool) {
+    let normalized: String=json["text"].as_str().unwrap_or("").chars().filter(|c|c.is_alphanumeric()).flat_map(char::to_lowercase).collect();
+    if background && normalized == "gracias" {
+        json["text"]=serde_json::json!("");
+        for key in ["segments","words"] {if json.get(key).is_some(){json[key]=serde_json::json!([]);}}
+    }
+}
+
+fn stationary_background(bytes: &[u8]) -> bool {
+    let Ok(mut wav)=hound::WavReader::new(std::io::Cursor::new(bytes)) else{return false};
+    let spec=wav.spec();
+    if spec.channels!=1 || spec.bits_per_sample!=16 || spec.sample_format!=hound::SampleFormat::Int || spec.sample_rate<8000 {return false;}
+    let size=(spec.sample_rate/50) as usize; // 20ms windows, no resampling or model.
+    let (mut count,mut sum,mut squares,mut windows)=(0usize,0f64,0f64,0usize);
+    let (mut low,mut high)=(f64::INFINITY,0f64);
+    for sample in wav.samples::<i16>() {
+        let Ok(sample)=sample else{return false};let sample=f64::from(sample);
+        sum+=sample;squares+=sample*sample;count+=1;
+        if count==size {
+            let power=(squares/count as f64-(sum/count as f64).powi(2)).max(0.);
+            low=low.min(power);high=high.max(power);windows+=1;
+            (count,sum,squares)=(0,0.,0.);
+        }
+    }
+    // Any quiet/short/unsupported/ambiguous signal is kept. This is intentionally
+    // narrower than VAD: it does not remove words or trim the user's recording.
+    if count>0 && squares/count as f64-(sum/count as f64).powi(2)>high*1.8{return false;}
+    windows>=5 && high>0. && low>0. && high/low<1.8
 }
 
 // Exact digital zero only: do not classify quiet speech or noise as silence.
@@ -222,6 +257,63 @@ fn digital_silence(bytes:&[u8])->bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn stationary_background_filter_preserves_voice_and_real_thanks() {
+        let mut noise=serde_json::json!({"text":" Gracias.","segments":[{"text":" Gracias."}],"duration":3});
+        suppress_background_closing(&mut noise,true);assert_eq!(noise["text"],"");assert_eq!(noise["segments"],serde_json::json!([]));assert_eq!(noise["duration"],3);
+        for (text,background) in [("Gracias.",false),("Gracias por ayudarme.",true),("Esta es mi voz",true)] {
+            let mut result=serde_json::json!({"text":text});suppress_background_closing(&mut result,background);assert_eq!(result["text"],text);
+        }
+        for rate in [8000,16000,44100,48000,96000] {
+            let mut bytes=std::io::Cursor::new(Vec::new());let mut seed=71u32;
+            {let mut writer=hound::WavWriter::new(&mut bytes,hound::WavSpec{channels:1,sample_rate:rate,bits_per_sample:16,sample_format:hound::SampleFormat::Int}).unwrap();
+            for _ in 0..rate*2{seed=seed.wrapping_mul(1664525).wrapping_add(1013904223);writer.write_sample(((seed>>16)%161) as i16-80).unwrap();}writer.finalize().unwrap();}
+            assert!(stationary_background(bytes.get_ref()),"stationary microphone noise at {rate}");
+        }
+        assert!(!stationary_background(b"invalid"));
+    }
+    #[test]
+    fn quiet_modulated_signal_is_not_stationary_noise() {
+        for level in [2.,8.,32.,1000.] {
+            let mut bytes=std::io::Cursor::new(Vec::new());
+            {let mut writer=hound::WavWriter::new(&mut bytes,hound::WavSpec{channels:1,sample_rate:16000,bits_per_sample:16,sample_format:hound::SampleFormat::Int}).unwrap();
+            for i in 0..32000{let envelope=if (i/1600)%3==0{0.}else{1.};let sample=(level*envelope*(i as f64*0.1).sin()).round() as i16;writer.write_sample(sample).unwrap();}writer.finalize().unwrap();}
+            assert!(!stationary_background(bytes.get_ref()),"quiet modulation at amplitude {level}");
+        }
+    }
+    #[test]
+    #[ignore = "Local CPU benchmark over synthetic 20-second PCM; no network or devices"]
+    fn background_guard_latency() {
+        let mut bytes=std::io::Cursor::new(Vec::new());let mut seed=13u32;
+        {let mut writer=hound::WavWriter::new(&mut bytes,hound::WavSpec{channels:1,sample_rate:48000,bits_per_sample:16,sample_format:hound::SampleFormat::Int}).unwrap();for _ in 0..960000{seed=seed.wrapping_mul(1664525).wrapping_add(1013904223);writer.write_sample(((seed>>16)%161) as i16-80).unwrap();}writer.finalize().unwrap();}
+        let mut times=vec![];for _ in 0..21{let start=std::time::Instant::now();assert!(stationary_background(std::hint::black_box(bytes.get_ref())));times.push(start.elapsed().as_secs_f64()*1000.);}
+        times.sort_by(f64::total_cmp);eprintln!("Background guard: synthetic 20s 48000Hz mono PCM, 21 trials; median={:.3}ms min={:.3}ms max={:.3}ms",times[10],times[0],times[20]);
+    }
+    #[test]
+    #[ignore = "Explicit authorization: sends only locally generated synthetic voice/noise to Groq"]
+    fn synthetic_silence_and_quiet_voice() {
+        let root=std::path::PathBuf::from(std::env::var("WHISPERA_SILENCE_QA").expect("Synthetic fixture directory required"));
+        let phase=std::env::var("WHISPERA_SILENCE_PHASE").unwrap_or_else(|_|"probe".into());
+        let mut report=vec![];
+        tauri::async_runtime::block_on(async {
+            for model in ["whisper-large-v3-turbo","whisper-large-v3"] {
+                for file in ["noise-low.wav","noise-room.wav","hum.wav","voice.wav","voice-quiet.wav","voice-thanks.wav"] {
+                    let mut settings=Settings::default();settings.model=model.into();settings.language="es".into();
+                    let start=std::time::Instant::now();
+                    let result=request_segments(&root.join(file),&settings,&[]).await.unwrap();
+                    report.push(serde_json::json!({"model":model,"file":file,"ms":start.elapsed().as_secs_f64()*1000.,"response":result}));
+                }
+            }
+        });
+        std::fs::write(root.join(format!("{phase}.json")),serde_json::to_vec_pretty(&report).unwrap()).unwrap();
+        if phase=="validated" {
+            for row in &report {
+                let text=row["response"]["text"].as_str().unwrap().to_lowercase();
+                if row["file"].as_str().unwrap().starts_with("voice") {assert!(text.contains("gracias")&&(row["file"]=="voice-thanks.wav"||text.contains("palabras")),"Quiet speech was lost: {row}");}
+                else {assert!(text.trim().is_empty(),"Non-speech hallucination: {row}");}
+            }
+        }
+    }
     #[test]
     fn exact_silence_never_suppresses_even_one_quiet_sample() {
         for value in [0i16,1,-1,100] {

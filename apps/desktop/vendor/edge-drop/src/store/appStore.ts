@@ -53,6 +53,8 @@ export interface UpdateProgress {
 }
 
 interface AppState {
+  /** Keep the shelf open while the operating system's Save As dialog owns focus. */
+  nativeDialogOpen: boolean
   items: ClipboardItemDto[]
   settings: Settings
   /** True until the first `state:load` resolves. */
@@ -219,6 +221,7 @@ export const useStore = create<AppState>((set, get) => ({
     }
   },
   dragActive: false,
+  nativeDialogOpen: false,
   nativeDragActive: false,
   expandedStackId: null,
   setExpandedStackId: (expandedStackId) => set({ expandedStackId }),

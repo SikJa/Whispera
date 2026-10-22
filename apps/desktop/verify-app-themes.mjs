@@ -25,6 +25,25 @@ try {
    assert.ok(await page.evaluate(()=>window.calls.some(c=>c.command==='save_settings'&&c.args.settings.appTheme===document.documentElement.dataset.appTheme)));
  }
  await page.screenshot({path:'../../.local/themes-arena.png'});
+ await page.locator('.app-background-picker .palette-trigger').click();
+ await page.getByRole('button',{name:'Personalizado',exact:true}).click();
+ for(const color of ['#ffffff','#000000','#777777','#ff0000','#00ff00','#0000ff','#708090']) {
+   await page.getByRole('textbox',{name:'Código HEX'}).fill(color);
+   await page.getByRole('textbox',{name:'Código HEX'}).press('Enter');
+   await page.waitForFunction(color=>getComputedStyle(document.documentElement).getPropertyValue('--app-background').trim().toLowerCase()===color,color);
+   const colors=await page.evaluate(()=>Object.fromEntries(['background','surface','card','ink','muted','accent'].map(key=>[key,getComputedStyle(document.documentElement).getPropertyValue(`--app-${key}`).trim()])));
+   for(const surface of ['background','surface','card'])for(const text of ['ink','muted'])assert.ok(contrast(colors[text],colors[surface])>=4.5,`${color}: ${text}/${surface}`);
+   for(const selector of ['.desktop-brand strong','.artwork-model-name','.artwork-arrow']) {
+     const ink=await page.locator(selector).first().evaluate(el=>'#'+getComputedStyle(el).color.match(/\d+/g).slice(0,3).map(n=>Number(n).toString(16).padStart(2,'0')).join(''));
+     assert.ok(contrast(ink,colors.background)>=4.5,`${color}: visible text ${selector}`);
+   }
+   await page.waitForTimeout(650);
+   assert.ok(await page.evaluate(color=>window.calls.some(c=>c.command==='save_settings'&&c.args.settings.appBackground?.toLowerCase()===color),color));
+ }
+ await page.getByRole('button',{name:'Cerrar paleta',exact:true}).click();
+ await page.screenshot({path:'../../.local/app-background-custom.png'});
+ await page.getByRole('button',{name:'Usar fondo del tema',exact:true}).click();
+ await page.waitForFunction(()=>getComputedStyle(document.documentElement).getPropertyValue('--app-background').trim()==='#28221d');
  await page.setViewportSize({width:620,height:760});
  assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true,'theme picker must not create horizontal scrolling');
  await page.getByRole('button',{name:'Transcripción',exact:true}).click();

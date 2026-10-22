@@ -22,6 +22,7 @@ pub struct Settings {
     pub metallic_color: String,
     pub metallic_original: bool,
     pub app_theme: String,
+    pub app_background: String,
     pub trim_silence: bool,
     pub watchdog: bool,
     pub incremental_transcription: bool,
@@ -44,6 +45,7 @@ impl Default for Settings {
             metallic_color: "#ffffff".into(),
             metallic_original: true,
             app_theme: "plum".into(),
+            app_background: String::new(),
             trim_silence: true,
             watchdog: true,
             incremental_transcription: true,
@@ -52,6 +54,7 @@ impl Default for Settings {
 }
 impl Settings {
     pub fn validate(&self) -> Result<(), String> {
+        if !self.app_background.is_empty() && (self.app_background.len()!=7 || !self.app_background.starts_with('#') || !self.app_background[1..].bytes().all(|b|b.is_ascii_hexdigit())) {return Err("Color de fondo inválido".into());}
         if !["plum","graphite","navy","forest","slate","sand"].contains(&self.app_theme.as_str()) {
             return Err("Tema de aplicación no admitido".into());
         }
@@ -327,13 +330,16 @@ mod tests {
     fn app_themes_validate_migrate_and_persist_without_resetting_preferences() {
         let old:Settings=serde_json::from_str(r##"{"color":"#123456","autoPaste":false}"##).unwrap();
         assert_eq!(old.app_theme,"plum");
+        assert_eq!(old.app_background,"");
         let store=Store::open(Path::new(":memory:")).unwrap();
         for theme in ["plum","graphite","navy","forest","slate","sand"] {
-            let mut settings=old.clone();settings.app_theme=theme.into();settings.validate().unwrap();
+            let mut settings=old.clone();settings.app_theme=theme.into();settings.app_background="#708090".into();settings.validate().unwrap();
             store.put("settings",&settings).unwrap();let saved:Settings=store.get("settings").unwrap();
             assert_eq!(saved.app_theme,theme);assert_eq!(saved.color,"#123456");assert!(!saved.auto_paste);
+            assert_eq!(saved.app_background,"#708090");
         }
-        let mut bad=old;bad.app_theme="#ff00ff".into();assert!(bad.validate().is_err());
+        let mut bad=old.clone();bad.app_theme="#ff00ff".into();assert!(bad.validate().is_err());
+        for color in ["red","#fff","#gggggg","url(test)","#000000;"] {let mut bad=old.clone();bad.app_background=color.into();assert!(bad.validate().is_err());}
     }
     #[test]
     fn malformed_color_rejected() {

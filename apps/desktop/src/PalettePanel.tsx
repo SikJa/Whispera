@@ -21,9 +21,9 @@ export function PaletteContents({ value, onChange, title = "Color de carpeta", c
           </ColorPicker>}
         </>;
 }
-export default function PalettePanel({ value, onChange, title = "Color de carpeta" }: { value: Selection; onChange: (value: Selection) => void; title?: string }) {
+export default function PalettePanel({ value, onChange, title = "Color de carpeta", label = "Elegir color" }: { value: Selection; onChange: (value: Selection) => void; title?: string; label?: string }) {
   return <DialogTrigger>
-    <Button className="palette-trigger" aria-label="Elegir color"><i style={{ background: selectionHex(value) }} />{paletteLabel(value)}<ChevronDown size={15} /></Button>
+    <Button className="palette-trigger" aria-label={label}><i style={{ background: selectionHex(value) }} />{paletteLabel(value)}<ChevronDown size={15} /></Button>
     <Popover className="palette-popover" placement="top start" offset={12} containerPadding={12}>
       <Dialog className="palette-dialog">{({ close }) => <PaletteContents value={value} onChange={onChange} title={title} close={close}/>}</Dialog>
     </Popover>

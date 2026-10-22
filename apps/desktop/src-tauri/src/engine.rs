@@ -237,7 +237,7 @@ fn schedule(
                     .get::<Settings>("settings")
                     .unwrap_or_default();
                 let target = engine.paste_target.lock().ok().and_then(|mut p| p.take());
-                if live_dictation && settings.auto_paste {
+                if live_dictation && settings.auto_paste && !text.trim().is_empty() {
                     if let Some(window) = app.get_webview_window("recorder") {
                         let _ = window.hide();
                     }
@@ -342,8 +342,8 @@ async fn process(app: &tauri::AppHandle, id: &str) -> Result<String, String> {
     if !result.exists() {
         audio::write_new(&result, text.as_bytes())?;
     }
-    app.state::<Store>().append_once(id, &text)?;
-    if settings.auto_copy {
+    if !text.trim().is_empty() { app.state::<Store>().append_once(id, &text)?; }
+    if settings.auto_copy && !text.trim().is_empty() {
         if app.clipboard().write_text(&text).is_err() {
             engine
                 .recorder

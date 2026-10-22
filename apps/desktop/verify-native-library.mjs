@@ -44,6 +44,7 @@ try{
         window.__qa.calls.push({command,args});
         if(command==='library_cursor')return window.__qa.cursor;
         if(command==='library_drag')return new Promise((resolve,reject)=>{window.__qa.finishDrag=resolve;window.__qa.failDrag=reject;});
+        if(command==='library_media_save')return new Promise((resolve,reject)=>{window.__qa.finishSave=resolve;window.__qa.failSave=reject;});
         if(command==='plugin:event|listen'){window.__qa.events.set(args.event,args.handler);return 1;}
         if(command==='library_media_info')return{previewPath:'C:\\poster.png',duration:12.7,video:true};
         if(command==='video_transcript_action')return{status:'ready',text:'Transcripcion de prueba del video.',error:''};
@@ -68,9 +69,32 @@ try{
   await page.evaluate(()=>{window.__qa.cursor={...window.__qa.cursor,x:120};});
   await page.locator('.item-main[data-id="image"]').hover();
   const tile=page.locator('.item-main[data-id="image"]');
+  const saveButton=tile.getByRole('button',{name:'Guardar imagen',exact:true});
+  assert.equal(await saveButton.count(),1);
+  assert.equal(await page.locator('.item-main[data-id="text"] button[aria-label="Guardar imagen"]').count(),0);
+  assert.equal(await page.locator('.item-main[data-id="video"] button[aria-label="Guardar imagen"]').count(),0);
+  for(const result of ['success','cancel','failure']) {
+    await tile.hover();
+    const before=await page.evaluate(()=>window.__qa.calls.filter(c=>c.command==='library_media_save').length);
+    await saveButton.click();
+    await page.waitForFunction(count=>window.__qa.calls.filter(c=>c.command==='library_media_save').length===count+1,before);
+    assert.equal(await saveButton.isDisabled(),true);
+    await page.evaluate(()=>{window.__qa.calls=window.__qa.calls.filter(c=>c.command!=='library_window');window.__qa.cursor={...window.__qa.cursor,x:1100};window.dispatchEvent(new Event('blur'));window.dispatchEvent(new Event('panel:leave'));});
+    await page.waitForTimeout(650);
+    assert.equal(await page.evaluate(()=>window.__qa.calls.some(c=>c.command==='library_window'&&c.args.operation==='hide')),false,'Save As keeps shelf open while native dialog owns focus');
+    await page.evaluate(result=>{window.__qa.cursor={...window.__qa.cursor,x:120};if(result==='failure')window.__qa.failSave(Error('Destino de prueba inaccesible'));else window.__qa.finishSave(result==='cancel'?null:'C:\\Pruebas\\captura.png');},result);
+    await page.waitForFunction(()=>!document.querySelector('button[aria-label="Guardar imagen"]').disabled);
+    if(result==='success')await page.getByText('Imagen guardada',{exact:true}).waitFor();
+    if(result==='failure')await page.getByText('No se pudo guardar la imagen. Revisá la carpeta de destino y volvé a intentar.',{exact:true}).waitFor();
+  }
+  assert.equal(await page.evaluate(()=>window.__qa.calls.some(c=>c.command==='library_action'&&['copy','paste'].includes(c.args.action))),false,'Saving must not replace clipboard or paste');
+  const actionsBox=await tile.locator('.actions').boundingBox(),cardBox=await tile.boundingBox();
+  assert.ok(actionsBox.x>=cardBox.x&&actionsBox.x+actionsBox.width<=cardBox.x+cardBox.width,'Quick actions fit inside the image tile');
+  await tile.screenshot({path:'../../.local/save-image-shortcut.png'});
+  await page.getByText('No se pudo guardar la imagen. Revisá la carpeta de destino y volvé a intentar.',{exact:true}).waitFor({state:'hidden'});
   assert.equal(await tile.getAttribute('draggable'),'false','Tauri files must not enter a second HTML5 OS drag');
   const tileBox=await tile.boundingBox();
-  const dragX=tileBox.x+tileBox.width*.35,dragY=tileBox.y+tileBox.height*.55;
+  const dragX=tileBox.x+10,dragY=tileBox.y+tileBox.height*.55;
   await page.mouse.move(dragX,dragY);await page.mouse.down();await page.mouse.move(dragX+25,dragY);
   await page.waitForFunction(()=>window.__qa.calls.some(c=>c.command==='library_drag'&&c.args.id==='image'));
   await page.mouse.move(dragX+40,dragY);await page.mouse.up();

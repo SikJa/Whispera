@@ -67,7 +67,7 @@ function SettingsApp({sidebarExpanded}:{sidebarExpanded:boolean}) {
   const updater=useUpdates();
   const [historyKind,setHistoryKind] = useState<'text'|'captures'>('text');
   const [data, setData] = useState<api.Snapshot>();
-  useLayoutEffect(()=>{if(data)applyAppTheme(data.settings.appTheme);},[data?.settings.appTheme]);
+  useLayoutEffect(()=>{if(data)applyAppTheme(data.settings.appTheme,data.settings.appBackground);},[data?.settings.appTheme,data?.settings.appBackground]);
   const [route, setRoute] = useState<Route>("transcription");
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
@@ -165,7 +165,7 @@ function SettingsApp({sidebarExpanded}:{sidebarExpanded:boolean}) {
         </>}
 
         {route === "appearance" && <>
-          <AppThemePicker value={data.settings.appTheme} onChange={appTheme=>patch({appTheme})}/>
+          <AppThemePicker value={data.settings.appTheme} background={data.settings.appBackground} onChange={appTheme=>patch({appTheme,appBackground:''})} onBackgroundChange={appBackground=>patch({appBackground})}/>
           <div className="artwork-picker" role="group" aria-label="Modelo de carpeta"><button className="artwork-arrow" aria-label="Modelo anterior" onClick={()=>changeArtwork(-1)}><ChevronLeft size={22}/></button><div className="appearance-preview">{data.settings.dictationArtwork==='metallic'?<IndicatorArtwork kind="folder" original={data.settings.metallicOriginal??true} color={data.settings.metallicColor??'#ffffff'}/>:<ControlledFolder color="black" customColor={data.settings.color} size="sm" visualState="rest" />}</div><button className="artwork-arrow" aria-label="Modelo siguiente" onClick={()=>changeArtwork(1)}><ChevronRight size={22}/></button></div><div className="artwork-model-name" aria-live="polite">{artworkModels[artworkIndex].name}<small>{artworkIndex+1} / {artworkModels.length}</small></div>
           <h3>Color de carpeta</h3><div className="form-row"><label>Color de carpeta<span>{data.settings.dictationArtwork==='metallic'?'Tinte metálico · conserva sombras y reflejos':'Superficie, bordes e iconos'}</span></label><PalettePanel value={{ base: "black", hex: appearanceColor }} onChange={value => patch(data.settings.dictationArtwork==='metallic'?{metallicColor:selectionHex(value),metallicOriginal:false}:{color:selectionHex(value)})} /></div>{data.settings.dictationArtwork==='metallic'&&<button className="text-link" onClick={()=>patch({metallicColor:'#ffffff',metallicOriginal:true})}>Restaurar color original</button>}<div className="color-values"><span style={{ background: appearanceColor }} /><code>{appearanceColor.toUpperCase()}</code></div>
             <h3>Carpeta de transcripción</h3><div className="form-row"><label htmlFor="pattern">Movimiento de los papeles</label><select id="pattern" disabled={data.settings.dictationArtwork==='metallic'} value={data.settings.pattern} onChange={e => patch({ pattern: e.target.value as api.Settings["pattern"] })}><option value="wave">Ola</option><option value="stairs">Escalera</option></select></div>
@@ -197,8 +197,8 @@ function SettingsRoot(){
 }
 const view=new URLSearchParams(location.search).get("view");
 if(!view||['settings','import'].includes(view)) {
-  try{applyAppTheme(localStorage.getItem('whispera.app.theme')??'plum');}catch{applyAppTheme('plum');}
-  if(view==='import')void api.readSettings().then(s=>applyAppTheme(s.appTheme)).catch(()=>{});
+  try{applyAppTheme(localStorage.getItem('whispera.app.theme')??'plum',localStorage.getItem('whispera.app.background')??'');}catch{applyAppTheme('plum');}
+  if(view==='import')void api.readSettings().then(s=>applyAppTheme(s.appTheme,s.appBackground)).catch(()=>{});
 }
 if(!view||view==='settings')document.documentElement.dataset.settingsShell='true';
 if (view?.startsWith('screen-')) document.documentElement.dataset.screenSelect = 'true';

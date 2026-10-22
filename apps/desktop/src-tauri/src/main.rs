@@ -36,6 +36,7 @@ mod onboarding;
 mod startup;
 mod paste;
 mod paste_focus;
+mod video_audio_clock;
 mod profile;
 mod windows_capture_keys;
 mod screen;

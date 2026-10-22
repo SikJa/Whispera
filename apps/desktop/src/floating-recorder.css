@@ -11,6 +11,11 @@
 .float-readout i { width: 5px; height: 5px; border-radius: 50%; background: currentColor; }
 .float-readout i[data-phase="recording"] { background: #ff5f62; }
 .float-readout output { display: block; margin-top: 5px; font-size: 25px; font-variant-numeric: tabular-nums; }
+.float-rig[data-artwork=metallic] .float-readout { left:111px; top:163px; bottom:auto; transform:rotate(-15deg) skewX(-8deg); transform-origin:left top; }
+.float-rig[data-artwork=metallic] .float-readout output { font-size:22px; margin-top:2px; }
+.floating-recorder:is([data-phase=recording],[data-phase=processing]) .float-rig[data-artwork=metallic] .float-readout { animation:metallic-readout-breathe 2s ease-in-out infinite; }
+@keyframes metallic-readout-breathe { 0%,100% { translate:0 0; } 50% { translate:0 -3px; } }
+@media(prefers-reduced-motion:reduce) { .floating-recorder .float-rig[data-artwork=metallic] .float-readout { animation:none; } }
 .float-actions { position: absolute; right: 18px; bottom: 27px; z-index: 9; display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; width: 168px; }
 .float-actions button { width: 36px; height: 36px; padding: 7px; display: grid; place-items: center; color: var(--folder-ink); border: 1px solid #ffffff50; border-radius: 12px; background: color-mix(in srgb, var(--folder-color) 30%, transparent); box-shadow: inset 0 1px #ffffff38,0 3px 9px #0002; backdrop-filter: blur(8px); transition: background var(--duration-quick, 150ms) ease, transform var(--duration-quick, 150ms) ease; }
 .float-actions button:hover { background: color-mix(in srgb, var(--folder-color) 65%, white 15%); }

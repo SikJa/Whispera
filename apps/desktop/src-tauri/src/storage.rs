@@ -21,6 +21,7 @@ pub struct Settings {
     pub dictation_artwork: String,
     pub metallic_color: String,
     pub metallic_original: bool,
+    pub app_theme: String,
     pub trim_silence: bool,
     pub watchdog: bool,
     pub incremental_transcription: bool,
@@ -42,6 +43,7 @@ impl Default for Settings {
             dictation_artwork: "original".into(),
             metallic_color: "#ffffff".into(),
             metallic_original: true,
+            app_theme: "plum".into(),
             trim_silence: true,
             watchdog: true,
             incremental_transcription: true,
@@ -50,6 +52,9 @@ impl Default for Settings {
 }
 impl Settings {
     pub fn validate(&self) -> Result<(), String> {
+        if !["plum","graphite","navy","forest","slate","sand"].contains(&self.app_theme.as_str()) {
+            return Err("Tema de aplicación no admitido".into());
+        }
         if !["original", "metallic"].contains(&self.dictation_artwork.as_str()) {
             return Err("Indicador de dictado no admitido".into());
         }
@@ -317,6 +322,18 @@ mod tests {
     #[test]
     fn defaults_valid() {
         assert!(Settings::default().validate().is_ok());
+    }
+    #[test]
+    fn app_themes_validate_migrate_and_persist_without_resetting_preferences() {
+        let old:Settings=serde_json::from_str(r##"{"color":"#123456","autoPaste":false}"##).unwrap();
+        assert_eq!(old.app_theme,"plum");
+        let store=Store::open(Path::new(":memory:")).unwrap();
+        for theme in ["plum","graphite","navy","forest","slate","sand"] {
+            let mut settings=old.clone();settings.app_theme=theme.into();settings.validate().unwrap();
+            store.put("settings",&settings).unwrap();let saved:Settings=store.get("settings").unwrap();
+            assert_eq!(saved.app_theme,theme);assert_eq!(saved.color,"#123456");assert!(!saved.auto_paste);
+        }
+        let mut bad=old;bad.app_theme="#ff00ff".into();assert!(bad.validate().is_err());
     }
     #[test]
     fn malformed_color_rejected() {

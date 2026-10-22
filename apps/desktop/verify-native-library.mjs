@@ -67,6 +67,15 @@ try{
   assert.equal(await page.evaluate(()=>window.__qa.calls.some(c=>c.command==='library_window'&&c.args.operation==='hide')),false,'Keyboard-opened shelf must wait for the pointer to enter');
   await page.evaluate(()=>{window.__qa.cursor={...window.__qa.cursor,x:120};});
   await page.locator('.item-main[data-id="image"]').hover();
+  const tile=page.locator('.item-main[data-id="image"]');
+  assert.equal(await tile.getAttribute('draggable'),'false','Tauri files must not enter a second HTML5 OS drag');
+  const tileBox=await tile.boundingBox();
+  const dragX=tileBox.x+tileBox.width*.35,dragY=tileBox.y+tileBox.height*.55;
+  await page.mouse.move(dragX,dragY);await page.mouse.down();await page.mouse.move(dragX+25,dragY);
+  await page.waitForFunction(()=>window.__qa.calls.some(c=>c.command==='library_drag'&&c.args.id==='image'));
+  await page.mouse.move(dragX+40,dragY);await page.mouse.up();
+  assert.equal(await page.evaluate(()=>window.__qa.calls.filter(c=>c.command==='library_drag').length),1,'one native drag per pointer gesture');
+  await page.evaluate(()=>window.__qa.finishDrag(true));await page.waitForTimeout(250);
   for(const id of ['image','video']){
     await page.evaluate(id=>{
       window.__qa.calls.length=0;
@@ -167,6 +176,16 @@ try{
   await page.waitForFunction(()=>getComputedStyle(document.querySelector('.setting-card')).backgroundColor==='rgb(225, 225, 225)');
   await page.waitForFunction(()=>getComputedStyle(document.querySelector('.header .icon-btn.active')).color==='rgb(23, 23, 23)');
   await page.screenshot({path:'../../.local/library-background-white.png',omitBackground:true});
+  await page.getByRole('button',{name:'Cerrar paleta',exact:true}).click();
+  await page.locator('.header .icon-btn.active').click();
+  await page.locator('.item-main[data-id="image"]').hover();
+  const ink=await page.locator('.item-main[data-id="image"] .actions .act').first().evaluate(el=>getComputedStyle(el).color);
+  assert.equal(ink,'rgb(244, 244, 244)','dark action pill retains white icons on a white shelf');
+  await page.locator('.header button[title="Configuración"]').click();
+  await page.getByRole('button',{name:'Apariencia',exact:true}).click();
+  await page.locator('.library-background-card .palette-trigger').click();
+  await page.evaluate(()=>window.dispatchEvent(new Event('blur')));await page.waitForTimeout(600);
+  assert.equal(await page.locator('.library-background-card').isVisible(),true,'appearance settings must not close while choosing a color');
   await page.getByRole('button',{name:'Personalizado',exact:true}).click();
   await page.getByRole('textbox',{name:'Código HEX'}).fill('#12AB67');
   await page.getByRole('textbox',{name:'Código HEX'}).press('Enter');

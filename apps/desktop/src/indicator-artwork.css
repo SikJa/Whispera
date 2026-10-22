@@ -4,7 +4,7 @@
 .indicator-filter{position:absolute;pointer-events:none}
 .indicator-artwork[data-compact=true]{width:32px;height:32px;flex:none}
 .indicator-artwork[data-kind=camera][data-compact=true]{width:40px;height:40px}
-.float-rig[data-artwork=metallic]{--folder-ink:#f4f4f6}
+.float-rig[data-artwork=metallic]{--folder-ink:var(--metallic-ink,#f4f4f6)}
 .appearance-indicators{display:flex;align-items:center;gap:20px;flex-wrap:wrap}
 .appearance-indicators .indicator-artwork{width:100px;height:90px}
 .capture-hud.capture-line-hud .capture-hud-controls{gap:2px;padding:0 3px}

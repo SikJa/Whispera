@@ -183,10 +183,12 @@ const ClipboardItemBase = forwardRef<HTMLDivElement, Props>(({ item }, ref) => {
     }
   }, [item.data.kind, isPreviewing, item.id])
 
-  const pointerStartRef = useRef<{ x: number; y: number; moved: boolean } | null>(null)
+  const nativePointerDrag = !!(window as any).__TAURI_INTERNALS__ && item.data.kind !== 'text'
+  const pointerStartRef = useRef<{ x: number; y: number; moved: boolean; started?:boolean } | null>(null)
   const wasPreviewingRef = useRef(false)
 
   const handlePointerDown = useCallback((e: React.PointerEvent) => {
+    if((e.target as Element).closest('button,a,input,textarea')){pointerStartRef.current=null;return}
     // Track if THIS card was the actively previewed (blurred) card when pointer clicked
     wasPreviewingRef.current = (useStore.getState().previewItemId === item.id) || isPreviewing
     if (e.button === 0) {
@@ -200,8 +202,14 @@ const ClipboardItemBase = forwardRef<HTMLDivElement, Props>(({ item }, ref) => {
     const dist = Math.hypot(e.clientX - pointerStartRef.current.x, e.clientY - pointerStartRef.current.y)
     if (dist > 5) {
       pointerStartRef.current.moved = true
+      // Tauri owns the OS drag. Starting a second HTML drag first can retain
+      // WebView's mouse capture and strand the isolated native drag helper.
+      if(nativePointerDrag&&!isPreviewing&&(!isBundle||!expanded)&&!pointerStartRef.current.started&&(e.buttons&1)) {
+        pointerStartRef.current.started=true
+        startDrag({id:item.id})
+      }
     }
-  }, [])
+  }, [nativePointerDrag,isPreviewing,isBundle,expanded,startDrag,item.id])
 
   const handleCardClick = useCallback((e: React.MouseEvent) => {
     if (pointerStartRef.current?.moved) {
@@ -276,7 +284,7 @@ const ClipboardItemBase = forwardRef<HTMLDivElement, Props>(({ item }, ref) => {
       <div
         className={`item-main${isPreviewing ? ' force-actions previewing' : ''}`}
         data-id={item.id}
-        draggable={!isPreviewing && (!isBundle || !expanded)}
+        draggable={!nativePointerDrag && !isPreviewing && (!isBundle || !expanded)}
         onMouseEnter={handlePrestage}
         onPointerDown={handlePointerDown}
         onPointerMove={handlePointerMove}

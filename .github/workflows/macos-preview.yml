@@ -127,4 +127,4 @@ jobs:
       - name: Publish verified DMGs, portable apps and the separate Mac update feed
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: node scripts/publish-macos-preview.mjs --artifacts .local/macos-artifacts --source "$GITHUB_SHA" --notes docs/releases/0.3.0-beta.2.md --publish
+        run: node scripts/publish-macos-preview.mjs --artifacts .local/macos-artifacts --source "$GITHUB_SHA" --notes docs/releases/0.3.0-beta.3.md --publish

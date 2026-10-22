@@ -258,7 +258,11 @@ pub async fn screen_escape(app: tauri::AppHandle) -> Result<(), String> {
 #[cfg(target_os = "macos")]
 pub(crate) fn protect(window: &tauri::WebviewWindow) -> Result<(), String> {
     window.set_content_protected(true).map_err(|e| e.to_string())?;
-    crate::screen_capture::macos::window_action(window, 0, None)
+    crate::screen_capture::macos::window_action(window, 0, None)?;
+    let label=window.label();
+    let base=if label.starts_with("image-"){10}else{0};
+    let layer=if label.contains("-freeze-"){0}else if label.ends_with("-ink"){1}else if label.contains("-select-"){2}else if label.ends_with("-tools"){3}else{4};
+    crate::screen_capture::macos::window_action(window,20+base+layer,None)
 }
 #[cfg(windows)]
 pub(crate) fn protect(window: &tauri::WebviewWindow) -> Result<(), String> {
@@ -485,6 +489,8 @@ fn select_locked(app: &tauri::AppHandle, screen: &Screen, kind: &str) -> Result<
                 .map_err(|e| e.to_string())?;
             if kind=="image" {
                 let frozen=selector_window(app,&label.replace("-select-","-freeze-"))?;
+                #[cfg(windows)]
+                crate::screen_editor::freeze_order(&frozen,false)?;
                 frozen.set_focusable(false).map_err(|e|e.to_string())?;
                 frozen.set_ignore_cursor_events(false).map_err(|e|e.to_string())?;
                 #[cfg(windows)]
@@ -693,7 +699,10 @@ pub fn screen_frozen_ready(app:tauri::AppHandle,window:tauri::WebviewWindow,gene
     // A late response from a closed capture must never cover the live desktop.
     if frozen_generation(&screen)!=Some(generation){return Ok(true);}
     if !screen.selection_ready.load(Ordering::SeqCst){return Ok(false);}
+    if screen.frozen_ready.lock().map_err(|_|"Captura ocupada")?.contains(window.label()){return Ok(true);}
     window.show().map_err(|e|e.to_string())?;
+    #[cfg(windows)]
+    crate::screen_editor::freeze_order(&window,true)?;
     screen.frozen_ready.lock().map_err(|_|"Captura ocupada")?.insert(window.label().into());
     let frozen=window.clone();let app_copy=app.clone();
     app.run_on_main_thread(move||{
@@ -1090,6 +1099,7 @@ struct AudioTrack {
 fn samples<T: Copy>(
     data: &[T],
     convert: impl Fn(T) -> f32,
+    time: Instant,
     tx: &mpsc::SyncSender<(Instant, Vec<i16>)>,
     fault: &Mutex<String>,
 ) {
@@ -1097,7 +1107,7 @@ fn samples<T: Copy>(
         .iter()
         .map(|s| (convert(*s).clamp(-1., 1.) * 32767.).round() as i16)
         .collect();
-    if tx.try_send((Instant::now(), values)).is_err() {
+    if tx.try_send((time, values)).is_err() {
         if let Ok(mut err) = fault.lock() {
             *err = "El audio no pudo escribirse a tiempo".into();
         }
@@ -1133,24 +1143,25 @@ impl AudioTrack {
             }
         };
         let cfg: cpal::StreamConfig = config.clone().into();
+        let mut clock = crate::video_audio_clock::CaptureClock::default();
         // CPAL's WASAPI backend enables loopback when an output device is opened as input.
         let stream = match config.sample_format() {
             cpal::SampleFormat::F32 => device.build_input_stream(
                 &cfg,
-                move |d: &[f32], _| samples(d, |v| v, &tx, &callback_fault),
+                move |d: &[f32], info| samples(d, |v| v, clock.end(info,d.len(),cfg.sample_rate.0,cfg.channels), &tx, &callback_fault),
                 on_error,
                 None,
             ),
             cpal::SampleFormat::I16 => device.build_input_stream(
                 &cfg,
-                move |d: &[i16], _| samples(d, |v| v as f32 / 32768., &tx, &callback_fault),
+                move |d: &[i16], info| samples(d, |v| v as f32 / 32768., clock.end(info,d.len(),cfg.sample_rate.0,cfg.channels), &tx, &callback_fault),
                 on_error,
                 None,
             ),
             cpal::SampleFormat::U16 => device.build_input_stream(
                 &cfg,
-                move |d: &[u16], _| {
-                    samples(d, |v| (v as f32 - 32768.) / 32768., &tx, &callback_fault)
+                move |d: &[u16], info| {
+                    samples(d, |v| (v as f32 - 32768.) / 32768., clock.end(info,d.len(),cfg.sample_rate.0,cfg.channels), &tx, &callback_fault)
                 },
                 on_error,
                 None,
@@ -1214,8 +1225,8 @@ impl AudioTrack {
         while let Ok((time, values)) = self.rx.try_recv() {
             if time <= start { continue; }
             let end_frame =
-                (time.saturating_duration_since(start).as_secs_f64() * self.rate as f64) as u64;
-            let (silence, skip) = crate::screen_capture::capture_geometry::pcm_span(end_frame, values.len(), self.channels, self.written);
+                (time.saturating_duration_since(start).as_secs_f64() * self.rate as f64).round() as u64;
+            let (silence, skip) = crate::video_audio_clock::span(end_frame, values.len(), self.channels, self.written, self.rate);
             if silence > 0 { self.silence(silence)?; }
             let values = &values[skip..];
             pcm_bytes(values,&mut self.scratch);
@@ -1805,6 +1816,35 @@ mod tests {
         for invalid in ["white", "#fff", "#12345z", "#1234567", ""] {
             assert!(!valid_frame_color(invalid));
         }
+    }
+    #[test]
+    #[cfg(windows)]
+    #[ignore = "Plays a quiet synthetic tone and records only system loopback; run explicitly"]
+    fn synthetic_system_audio_has_no_periodic_gaps_or_cuts() {
+        let device=cpal::default_host().default_output_device().expect("No default output device");
+        let config=device.default_output_config().unwrap();
+        assert_eq!(config.sample_format(),cpal::SampleFormat::F32,"Synthetic output fixture requires Float32");
+        let cfg:cpal::StreamConfig=config.into();let channels=cfg.channels as usize;let rate=cfg.sample_rate.0;
+        let mut frame=0u64;
+        let output=device.build_output_stream(&cfg,move |data:&mut [f32],_|{
+            for values in data.chunks_exact_mut(channels){let value=(frame as f64*997.*std::f64::consts::TAU/rate as f64).sin() as f32*0.06;values.fill(value);frame+=1;}
+        },|error|eprintln!("Synthetic output: {error}"),None).unwrap();
+        let root=PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target/synthetic-video-audio").join(uuid::Uuid::new_v4().to_string());
+        fs::create_dir_all(&root).unwrap();
+        let mut track=AudioTrack::new(true,&root).unwrap();output.play().unwrap();
+        let start=Instant::now();
+        while start.elapsed()<Duration::from_secs(3){std::thread::sleep(Duration::from_millis(25));track.drain(start).unwrap();}
+        track.finish(start,start.elapsed().as_secs_f64()).unwrap();output.pause().unwrap();
+        let bytes=fs::read(&track.path).unwrap();
+        let values:Vec<f64>=bytes.chunks_exact(2).map(|v|i16::from_le_bytes([v[0],v[1]]) as f64/32768.).step_by(track.channels as usize).collect();
+        let values=&values[track.rate as usize/2..track.rate as usize*5/2];
+        let peak=values.iter().copied().map(f64::abs).fold(0.,f64::max);
+        assert!(peak>0.0001,"No tone in loopback: output may be muted or routed elsewhere");
+        let discontinuities=values.windows(2).filter(|pair|(pair[1]-pair[0]).abs()>peak*0.8).count();
+        let silent_windows=values.chunks(track.rate as usize/100).filter(|chunk|chunk.iter().all(|s|s.abs()<peak*0.001)).count();
+        eprintln!("Synthetic loopback: rate={} channels={} frames={} peak={peak:.6} discontinuities={discontinuities} silent_10ms_windows={silent_windows}; PCM={}",track.rate,track.channels,values.len(),track.path.display());
+        assert_eq!(silent_windows,0,"Periodic silence damages video audio");
+        assert!(discontinuities<5,"Periodic sample cuts damage video audio");
     }
     #[test]
     fn shortcut_queued_during_startup_stops_the_recording() {

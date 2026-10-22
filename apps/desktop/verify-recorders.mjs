@@ -17,6 +17,10 @@ try{
  const base=process.env.WHISPERA_TEST_URL||`http://127.0.0.1:${server.httpServer.address().port}`;
  await page.goto(base+'/?view=record',{timeout:90000});await page.getByRole('button',{name:'Grabar',exact:true}).click();
  await page.getByLabel('Tiempo grabado').filter({hasText:'01:01'}).waitFor();
+ const readout=await page.locator('.float-readout').boundingBox(),art=await page.locator('.indicator-artwork').boundingBox();
+ assert.ok(readout.x>art.x+art.width*.25&&readout.x+readout.width<art.x+art.width*.85,'metallic readout fits inside the folder face');
+ assert.ok(readout.y>art.y+art.height*.35&&readout.y+readout.height<art.y+art.height*.9);
+ assert.notEqual(await page.locator('.float-readout').evaluate(e=>getComputedStyle(e).transform),'none','readout follows folder angle');
  await page.getByRole('button',{name:'Pausar',exact:true}).click();await page.getByRole('button',{name:'Reanudar',exact:true}).click();
  await page.getByRole('button',{name:'Mutear sonido',exact:true}).click();await page.getByRole('button',{name:'Restaurar sonido',exact:true}).click();
  await page.getByRole('button',{name:'Detener grabación',exact:true}).click();await page.locator('.floating-recorder[data-phase="processing"]').waitFor();

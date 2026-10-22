@@ -1,1 +1,1 @@
-Beta 2 para Mac: recuperacion de capturas, cierre seguro de paneles y mejoras del portapapeles. DMG y ZIP para Apple Silicon e Intel, con pruebas de extraccion y arranque. Sin notarizacion de Apple; falta validar dispositivos en una Mac real.
+Beta 3 para Intel y Apple Silicon: transcripción optimizada, marcas de tiempo por frase en videos, capas de captura estables y seis temas. Incluye mejoras de audio, arrastre y contraste. Mantiene tus datos y el logo Cristal.

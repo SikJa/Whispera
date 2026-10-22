@@ -13,6 +13,7 @@ suites.push('capture-startup');
 suites.push('window-lifecycle');
 suites.push('performance');
 suites.push('copy-export');
+suites.push('app-themes');
 const failures=[];
 try {
   for (const name of suites) {

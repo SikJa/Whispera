@@ -1,1 +1,1 @@
-Capturas y audio de video corregidos. Guardá imágenes desde el portapapeles, personalizá el fondo con la paleta y elegí entre seis temas. También corregimos el «gracias» al dictar sin hablar. Tus preferencias y el logo Cristal se conservan.
+Corregimos los saltos de la paleta al personalizar colores: el selector permanece quieto mientras arrastrás. Incluye las mejoras de capturas, audio, guardado de imágenes y transcripción de la versión anterior. Tus preferencias se conservan.

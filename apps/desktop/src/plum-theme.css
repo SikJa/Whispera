@@ -34,6 +34,8 @@ html[data-settings-shell=true] body,.desktop-app{background:var(--app-background
 .app-background-picker p {font-size:12px;color:var(--app-muted);margin:6px 0 0;max-width:38ch;}
 .app-background-controls {display:flex;align-items:center;flex-wrap:wrap;gap:12px;}
 .app-background-controls>button {color:var(--app-muted);font-size:12px;}
+/* Keep the palette anchor still when a first custom color enables reset. */
+.app-background-reset:disabled {visibility:hidden;}
 .desktop-app .palette-trigger {background:var(--app-card);color:var(--app-ink);}
 .desktop-app,.desktop-app-modal {--secondary-foreground:var(--app-ink);--border:var(--app-border);--foreground:var(--app-ink);--background:var(--app-background);--secondary:var(--app-card);--primary:var(--app-accent);--primary-foreground:var(--app-background);--ring:var(--app-accent);--muted-foreground:var(--app-muted);}
 .desktop-app .desktop-brand,.desktop-app .artwork-model-name,.desktop-app .artwork-arrow,.desktop-app .rule-row strong,.desktop-app .empty-state h2,.desktop-app .key-line label,.desktop-app .groq-guide summary,.desktop-app .guide-step strong {color:var(--app-ink);}

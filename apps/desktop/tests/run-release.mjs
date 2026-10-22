@@ -14,6 +14,7 @@ suites.push('window-lifecycle');
 suites.push('performance');
 suites.push('copy-export');
 suites.push('app-themes');
+suites.push('palette-stability');
 const failures=[];
 try {
   for (const name of suites) {

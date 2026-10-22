@@ -38,16 +38,22 @@ export function ShortcutSettings({ voice, onSaved }: { voice:string; onSaved:()=
   </section>;
 }
 
-export function VideoAudioSettings({value,disabled,onChange}:{value:CapturePreferences['audio'];disabled:boolean;onChange:(value:CapturePreferences['audio'])=>void}) {
+type AudioChoiceProps = {value:CapturePreferences['audio'];disabled:boolean;onChange:(value:CapturePreferences['audio'])=>void};
+
+export function VideoAudioChoice({value,disabled,onChange}:AudioChoiceProps) {
+  return <div className="audio-mode-grid" role="group" aria-label="Sonido del video">
+    {([['none','Sin audio','Solo la imagen',VolumeX],['microphone','Micrófono','Tu voz',Mic],['system','Computadora','Sonido del sistema',Monitor],['both','Ambos','Tu voz y la computadora',AudioLines]] as const).map(([mode,label,hint,Icon])=><button key={mode} type="button" className="audio-mode" aria-pressed={value===mode} disabled={disabled} onClick={()=>onChange(mode)}><Icon size={19}/><strong>{label}</strong><small>{hint}</small></button>)}
+  </div>;
+}
+
+export function VideoAudioSettings({value,disabled,onChange}:AudioChoiceProps) {
   const [devices,setDevices]=useState<Devices>();
   const [error,setError]=useState('');
   const [loading,setLoading]=useState(false);
   const refresh=async()=>{setLoading(true);setError('');try{setDevices(await invoke<Devices>('screen_audio_devices'));}catch(e){setError(String(e));}finally{setLoading(false);}};
   useEffect(()=>{let alive=true;if(native)void invoke<Devices>('screen_audio_devices').then(d=>{if(alive)setDevices(d);}).catch(e=>{if(alive)setError(String(e));});return()=>{alive=false;};},[]);
   return <div className="video-audio-settings">
-    <div className="audio-mode-grid" role="group" aria-label="Sonido del video">
-      {([['none','Sin audio','Solo la imagen',VolumeX],['microphone','Micrófono','Tu voz',Mic],['system','Computadora','Sonido del sistema',Monitor],['both','Ambos','Tu voz y la computadora',AudioLines]] as const).map(([mode,label,hint,Icon])=><button key={mode} type="button" className="audio-mode" aria-pressed={value===mode} disabled={disabled} onClick={()=>onChange(mode)}><Icon size={19}/><strong>{label}</strong><small>{hint}</small></button>)}
-    </div>
+    <VideoAudioChoice value={value} disabled={disabled} onChange={onChange}/>
     <div className="capture-device-info" role="status"><div><span>Micrófono de {systemName}</span><strong>{devices?.microphone??(devices?'No se detectó un micrófono':'Detectando…')}</strong>{(value==='system'||value==='both')&&<><span>Salida de audio</span><strong>{devices?.system??'No se detectó una salida'}</strong></>}</div><button type="button" title="Actualizar dispositivos" aria-label="Actualizar dispositivos" disabled={!native||disabled||loading} onClick={()=>void refresh()}><RefreshCw size={16}/></button></div>
     {error&&<p role="alert" className="notice">{error}</p>}
   </div>;

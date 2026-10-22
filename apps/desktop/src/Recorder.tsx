@@ -5,6 +5,8 @@ import { Mic, Square, Copy, Check, RotateCcw, FolderOpen, Pencil, X, Save, Loade
 import { Dialog, Modal, ModalOverlay } from 'react-aria-components';
 import { native, readSettings, type Settings } from './client';
 import './recorder.css';
+import {visiblePoll} from './visible-poll';
+import {shallowEqual} from './shallow-equal';
 
 type State={phase:string;seconds:number;level:number;session:string;error:string;text:string;muted:boolean;progress:string};
 type Recovery={id:string;createdAt:string;seconds:number;path:string};
@@ -15,17 +17,17 @@ export default function Recorder(){
   const [pending,setPending]=useState<Recovery[]>([]);const [busy,setBusy]=useState(false);const [error,setError]=useState('');
   const [copied,setCopied]=useState(false);const [editing,setEditing]=useState(false);const [text,setText]=useState('');
   const recording=['recording','paused'].includes(state.phase);
-  useEffect(()=>{let disposed=false;let timer:ReturnType<typeof setTimeout>;let refreshed=0;let previousPhase='';
+  useEffect(()=>{let disposed=false;let refreshed=0;let previousPhase='';
     async function poll(){try{
-      const view=await invoke<State>('recording_state');if(disposed)return;setState(view);
+      const view=await invoke<State>('recording_state');if(disposed)return;setState(previous=>shallowEqual(previous,view)?previous:view);
       if(Date.now()-refreshed>3000||view.phase!==previousPhase){
         previousPhase=view.phase;refreshed=Date.now();
         const [config,recoveries]=await Promise.all([readSettings(),invoke<Recovery[]>('pending_recordings')]);
         if(!disposed){setSettings(config);setPending(recoveries);}
       }
-    }catch(e){if(!disposed)setError(String(e));}finally{if(!disposed)timer=setTimeout(poll,300);}}
-    if(native)void poll();else{void readSettings().then(setSettings);}
-    return()=>{disposed=true;clearTimeout(timer);};
+    }catch(e){if(!disposed)setError(String(e));}}
+    const stop=native?visiblePoll(poll,300):()=>{};if(!native){void readSettings().then(setSettings);}
+    return()=>{disposed=true;stop();};
   },[]);
   useEffect(()=>{setText(state.text);setCopied(false);},[state.text]);
   async function run(command:string,args?:Record<string,unknown>){if(busy)return false;setBusy(true);setError('');try{await invoke(command,args);return true;}catch(e){setError(String(e));return false;}finally{setBusy(false);}}

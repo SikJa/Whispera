@@ -1699,6 +1699,7 @@ fn record(
         }
         std::thread::sleep(Duration::from_millis(50));
     }
+    if transcribe_microphone { crate::video_timing::record_part_duration(&output, dir); }
     let mut preserve_microphone = false;
     if transcribe_microphone {
         if let Some(track) = tracks.iter().find(|track| track.path.file_name().is_some_and(|name| name == "microphone.pcm")) {

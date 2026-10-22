@@ -21,6 +21,10 @@ mod screen_capture;
 mod engine;
 mod floating_window;
 mod groq;
+mod video_timing;
+mod lossless_upload;
+#[cfg(test)]
+mod timestamp_bench;
 mod health;
 mod lifecycle;
 mod incremental;
@@ -474,6 +478,7 @@ fn main() {
                 .event("Whispera 2 iniciada")
                 .map_err(std::io::Error::other)?;
             app.manage(store);
+            if let Ok(binary)=screen::ffmpeg(app.handle()) {lossless_upload::configure(binary);}
             let startup_app=app.handle().clone();
             tauri::async_runtime::spawn_blocking(move || {
                 if let Err(error)=startup::reconcile() {

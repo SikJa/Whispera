@@ -16,7 +16,12 @@ pub fn entry() -> Result<keyring::Entry, String> {
         .map_err(|_| "No se pudo abrir el almacen seguro de credenciales del sistema".into())
 }
 pub fn corrections(text: &str, rules: &[Rule]) -> String {
-    let mut output = text.to_owned();
+    corrections_many(&[text], rules).pop().unwrap_or_default()
+}
+// Compile each dictionary rule once for the full transcript and its segments.
+// Recompiling the same regex for every phrase adds avoidable latency.
+pub fn corrections_many(texts: &[&str], rules: &[Rule]) -> Vec<String> {
+    let mut outputs: Vec<String> = texts.iter().map(|text|(*text).to_owned()).collect();
     let mut active: Vec<_> = rules
         .iter()
         .filter(|r| r.enabled && !r.source.trim().is_empty())
@@ -29,6 +34,7 @@ pub fn corrections(text: &str, rules: &[Rule]) -> String {
         {
             static WORD: OnceLock<regex::Regex> = OnceLock::new();
             let word = WORD.get_or_init(|| regex::Regex::new(r"^\w$").unwrap());
+            for output in &mut outputs {
             let mut next = String::new();
             let mut previous = 0;
             for m in pattern.find_iter(&output) {
@@ -44,10 +50,11 @@ pub fn corrections(text: &str, rules: &[Rule]) -> String {
                 previous = m.end();
             }
             next.push_str(&output[previous..]);
-            output = next;
+            *output = next;
+            }
         }
     }
-    output
+    outputs
 }
 pub fn validate_rules(rules: &[Rule]) -> Result<(), String> {
     let mut seen = std::collections::HashSet::new();
@@ -126,6 +133,14 @@ pub async fn request(
     rules: &[Rule],
     word_times: bool,
 ) -> Result<serde_json::Value, String> {
+    request_format(path, settings, rules, word_times.then_some("word")).await
+}
+
+pub async fn request_segments(path: &Path, settings: &Settings, rules: &[Rule]) -> Result<serde_json::Value, String> {
+    request_format(path, settings, rules, Some("segment")).await
+}
+
+async fn request_format(path: &Path, settings: &Settings, rules: &[Rule], granularity: Option<&str>) -> Result<serde_json::Value, String> {
     let ext = path
         .extension()
         .and_then(|s| s.to_str())
@@ -152,6 +167,8 @@ pub async fn request(
     if ext == "wav" && digital_silence(&bytes) {
         return Ok(serde_json::json!({"text":"","words":[],"segments":[]}));
     }
+    let (bytes,ext)=crate::lossless_upload::prepare(bytes,ext).await;
+    if bytes.is_empty() {return Err("No se pudo preparar el envío. El audio original sigue guardado.".into());}
     let key = entry()?
         .get_password()
         .map_err(|_| "Configura la clave de Groq en Transcripcion")?;
@@ -161,11 +178,11 @@ pub async fn request(
         .text("model", settings.model.clone())
         .text(
             "response_format",
-            if word_times { "verbose_json" } else { "json" },
+            if granularity.is_some() { "verbose_json" } else { "json" },
         )
         .text("temperature", "0");
-    if word_times {
-        form = form.text("timestamp_granularities[]", "word");
+    if let Some(value) = granularity {
+        form = form.text("timestamp_granularities[]", value.to_owned());
     }
     if !rules.is_empty() {
         form = form.text("prompt", prompt(rules));

@@ -11,6 +11,7 @@ suites.push('dictionary');
 suites.push('macos-ui');
 suites.push('capture-startup');
 suites.push('window-lifecycle');
+suites.push('performance');
 const failures=[];
 try {
   for (const name of suites) {

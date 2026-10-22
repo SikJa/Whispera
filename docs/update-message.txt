@@ -1,1 +1,1 @@
-Corregimos capturas y videos bloqueados, paneles invisibles que interceptaban clics y el cierre del portapapeles. Mejoramos el arrastre, la apertura de herramientas y los atajos segun el teclado. Conservamos tu diccionario y configuracion.
+Transcripción más ágil con envío de audio sin pérdida. Los videos ahora incluyen marcas de tiempo por frase. Quitamos esperas al detener y reducimos el trabajo de las ventanas ocultas. Conservamos el logo Cristal y tus ajustes.

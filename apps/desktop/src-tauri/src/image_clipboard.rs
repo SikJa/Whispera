@@ -21,10 +21,23 @@ pub(crate) fn bitmap(image:&image::RgbaImage)->Result<Vec<u8>,String> {
 #[cfg(windows)]
 pub(crate) fn write(png:&[u8],dib:&[u8])->Result<(),String> {
     let format=clipboard_win::register_format("PNG").ok_or("No se pudo registrar el formato PNG")?;
-    let _clipboard=clipboard_win::Clipboard::new_attempts(1).map_err(|e|e.to_string())?;
+    // Preserve the previous provider's six attempts, spaced 5 ms apart, in
+    // addition to the export-level retries. Yield-only spins are not equivalent.
+    let _clipboard=open()?;
     clipboard_win::raw::empty().map_err(|e|e.to_string())?;
     clipboard_win::raw::set_without_clear(format.get(),png).map_err(|e|e.to_string())?;
-    clipboard_win::raw::set_without_clear(17,dib).map_err(|e|e.to_string())
+    clipboard_win::raw::set_without_clear(clipboard_win::formats::CF_DIBV5,dib).map_err(|e|e.to_string())
+}
+#[cfg(windows)]
+fn open()->Result<clipboard_win::Clipboard,String> {
+    for attempt in 0..6 {
+        match clipboard_win::Clipboard::new() {
+            Ok(clipboard)=>return Ok(clipboard),
+            Err(error) if attempt==5=>return Err(error.to_string()),
+            Err(_)=>std::thread::sleep(std::time::Duration::from_millis(5)),
+        }
+    }
+    unreachable!()
 }
 #[cfg(all(test,windows))]
 mod tests {

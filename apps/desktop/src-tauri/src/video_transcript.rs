@@ -706,7 +706,14 @@ mod tests {
         // Exercise the real image publisher on this private station too.
         let pixels=image::RgbaImage::from_raw(2,2,vec![10,20,30,255,40,50,60,128,70,80,90,0,100,110,120,64]).unwrap();
         let png=crate::screen_capture::rgba_png(&pixels).unwrap();let dib=crate::image_clipboard::bitmap(&pixels).unwrap();
+        let (ready,held)=std::sync::mpsc::channel();
+        let holder=std::thread::spawn(move||{
+            let clipboard=clipboard_win::Clipboard::new().unwrap();ready.send(()).unwrap();
+            std::thread::sleep(Duration::from_millis(15));drop(clipboard);
+        });
+        held.recv().unwrap();
         crate::image_clipboard::write(&png,&dib).unwrap();
+        holder.join().unwrap();
         {
             let _clipboard=clipboard_win::Clipboard::new_attempts(5).unwrap();
             let format=clipboard_win::register_format("PNG").unwrap().get();

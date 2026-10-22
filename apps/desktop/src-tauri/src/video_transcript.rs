@@ -703,6 +703,18 @@ mod tests {
             clipboard_win::raw::get_file_list(&mut preserved).unwrap();
             assert_eq!(preserved, files);
         }
+        // Exercise the real image publisher on this private station too.
+        let pixels=image::RgbaImage::from_raw(2,2,vec![10,20,30,255,40,50,60,128,70,80,90,0,100,110,120,64]).unwrap();
+        let png=crate::screen_capture::rgba_png(&pixels).unwrap();let dib=crate::image_clipboard::bitmap(&pixels).unwrap();
+        crate::image_clipboard::write(&png,&dib).unwrap();
+        {
+            let _clipboard=clipboard_win::Clipboard::new_attempts(5).unwrap();
+            let format=clipboard_win::register_format("PNG").unwrap().get();
+            let mut actual=vec![0;png.len()];assert_eq!(clipboard_win::raw::get(format,&mut actual).unwrap(),png.len());
+            assert_eq!(image::load_from_memory(&actual).unwrap().into_rgba8(),pixels);
+            let mut actual=vec![0;dib.len()];assert_eq!(clipboard_win::raw::get(17,&mut actual).unwrap(),dib.len());assert_eq!(actual,dib);
+            assert!(!clipboard_win::raw::is_format_avail(15));assert!(!clipboard_win::raw::is_format_avail(13));
+        }
         fs::remove_dir_all(root).unwrap();
     }
     #[test]

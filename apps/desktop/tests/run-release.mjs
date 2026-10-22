@@ -12,6 +12,7 @@ suites.push('macos-ui');
 suites.push('capture-startup');
 suites.push('window-lifecycle');
 suites.push('performance');
+suites.push('copy-export');
 const failures=[];
 try {
   for (const name of suites) {

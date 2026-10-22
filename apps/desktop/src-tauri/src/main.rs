@@ -23,6 +23,7 @@ mod floating_window;
 mod groq;
 mod video_timing;
 mod lossless_upload;
+mod image_clipboard;
 #[cfg(test)]
 mod timestamp_bench;
 mod health;

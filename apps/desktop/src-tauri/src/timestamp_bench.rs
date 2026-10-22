@@ -3,6 +3,32 @@ use crate::{groq, storage::Settings};
 use std::{fs, path::PathBuf, time::Instant};
 
 #[test]
+#[cfg(windows)]
+#[ignore = "Local screenshot preparation benchmark; synthetic pixels only, no desktop clipboard"]
+fn synthetic_capture_copy_preparation() {
+    use image::{ImageEncoder,codecs::png::PngEncoder};
+    let mut rows=Vec::new();
+    for (width,height) in [(1920,1080),(3840,2160)] {
+        let mut pixels=image::RgbaImage::new(width,height);
+        for (x,y,pixel) in pixels.enumerate_pixels_mut(){*pixel=image::Rgba([((x*7+y*3)%256) as u8,((x+y*13)%256) as u8,((x*19+y)%256) as u8,255]);}
+        let original=crate::screen_capture::rgba_png(&pixels).unwrap();
+        for trial in 0..4 {
+            let at=Instant::now();
+            let _validated=tauri::image::Image::from_bytes(&original).unwrap();
+            let png=crate::screen_capture::rounded_png(&original,1.).unwrap();
+            let decoded=tauri::image::Image::from_bytes(&png).unwrap();
+            // Existing Windows provider re-encodes PNG with the default encoder.
+            let mut provider_png=Vec::new();PngEncoder::new(&mut provider_png).write_image(decoded.rgba(),width,height,image::ExtendedColorType::Rgba8).unwrap();
+            let before_ms=at.elapsed().as_secs_f64()*1000.;
+            let at=Instant::now();let rounded=crate::screen_capture::rounded_image(&original,1.).unwrap();let after_png=crate::screen_capture::rgba_png(&rounded).unwrap();let _dib=crate::image_clipboard::bitmap(&rounded).unwrap();let after_ms=at.elapsed().as_secs_f64()*1000.;
+            assert_eq!(image::load_from_memory(&provider_png).unwrap().into_rgba8(),rounded);assert_eq!(image::load_from_memory(&after_png).unwrap().into_rgba8(),rounded);
+            rows.push(serde_json::json!({"width":width,"height":height,"trial":trial,"warmup":trial==0,"beforeMs":before_ms,"afterMs":after_ms,"originalBytes":original.len(),"pixelsIdentical":true,"clipboardWriteMeasured":false}));
+        }
+    }
+    fs::write(std::env::var_os("WHISPERA_CAPTURE_RESULTS").expect("Results path"),serde_json::to_vec_pretty(&rows).unwrap()).unwrap();
+}
+
+#[test]
 #[ignore = "Sends only the explicitly supplied synthetic 20-second fixture to Groq"]
 fn synthetic_segment_latency() {
     crate::lossless_upload::configure(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(if cfg!(windows){"../node_modules/ffmpeg-static/ffmpeg.exe"}else{"../node_modules/ffmpeg-static/ffmpeg"}));

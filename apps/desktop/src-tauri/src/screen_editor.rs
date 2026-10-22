@@ -782,17 +782,33 @@ pub async fn screen_image_export(
         if ctx.kind != "image" || window.label() != session::label(&id,"screen-ink") || bytes.len() > 64 * 1024 * 1024 {
             return Err("Imagen no disponible".into());
         }
-        let image = tauri::image::Image::from_bytes(&bytes).map_err(|e| e.to_string())?;
-        if image.width() > 8192 || image.height() > 8192 {
+        let started=Instant::now();
+        let bytes=if bytes.is_empty() {session::editor(&app,&id).image.lock().map_err(|_|"Editor ocupado")?.clone()}else{bytes};
+        let rgba=crate::screen_capture::rounded_image(&bytes,ctx.scale)?;
+        if rgba.width() > 8192 || rgba.height() > 8192 {
             return Err("Imagen demasiado grande".into());
         }
-        let bytes = crate::screen_capture::rounded_png(&bytes, ctx.scale)?;
-        let image = tauri::image::Image::from_bytes(&bytes).map_err(|e| e.to_string())?;
+        let bytes=crate::screen_capture::rgba_png(&rgba)?;
+        let prepared_ms=started.elapsed().as_millis();
+        // Escape/cancel must not let an old conversion overwrite a newer clipboard.
+        context(&app,&id)?;
         let saved_path = match action.as_str() {
             "copy" => {
-                retry_clipboard_image(|| app.clipboard().write_image(&image).map_err(|e| e.to_string()))?;
+                let copying=Instant::now();
+                #[cfg(windows)]
+                {
+                    let dib=crate::image_clipboard::bitmap(&rgba)?;
+                    retry_clipboard_image(||crate::image_clipboard::write(&bytes,&dib))?;
+                }
+                #[cfg(not(windows))]
+                {
+                    let image=tauri::image::Image::new(rgba.as_raw(),rgba.width(),rgba.height());
+                    retry_clipboard_image(||app.clipboard().write_image(&image).map_err(|e|e.to_string()))?;
+                }
+                let copied_ms=copying.elapsed().as_millis();let closing=Instant::now();
                 // Clipboard success releases the desktop before optional disk/history work.
                 screen::finish_image(app.clone(), &id)?;
+                let _=app.state::<crate::storage::Store>().event(&format!("Captura copiada: preparacion {prepared_ms} ms; portapapeles {copied_ms} ms; cierre {} ms",closing.elapsed().as_millis()));
                 let archived = (|| -> Result<(), String> {
                     let root = app.path().app_cache_dir().map_err(|e| e.to_string())?.join("screenshots");
                     fs::create_dir_all(&root).map_err(|e| e.to_string())?;

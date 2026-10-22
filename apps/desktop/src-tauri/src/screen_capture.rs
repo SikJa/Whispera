@@ -113,6 +113,9 @@ fn crop_png(bytes: &[u8], monitor: Region, region: Region) -> Result<Vec<u8>, St
     Ok(png)
 }
 pub fn rounded_png(bytes: &[u8], scale: f64) -> Result<Vec<u8>, String> {
+    rgba_png(&rounded_image(bytes, scale)?)
+}
+pub(crate) fn rounded_image(bytes: &[u8], scale: f64) -> Result<image::RgbaImage, String> {
     let mut image = image::load_from_memory_with_format(bytes, image::ImageFormat::Png)
         .map_err(|e| e.to_string())?.into_rgba8();
     let (width, height) = image.dimensions();
@@ -140,6 +143,10 @@ pub fn rounded_png(bytes: &[u8], scale: f64) -> Result<Vec<u8>, String> {
             }
         }
     }
+    Ok(image)
+}
+pub(crate) fn rgba_png(image: &image::RgbaImage) -> Result<Vec<u8>, String> {
+    let (width,height)=image.dimensions();
     let mut png = Vec::new();
     PngEncoder::new_with_quality(&mut png, CompressionType::Fast, FilterType::Sub)
         .write_image(image.as_raw(), width, height, image::ExtendedColorType::Rgba8)

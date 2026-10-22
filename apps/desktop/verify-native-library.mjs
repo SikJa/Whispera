@@ -134,7 +134,7 @@ try{
   assert.equal(await page.locator('.item-main').getAttribute('data-id'),'video');
   await page.locator('.wh-video-time').waitFor();
   await page.waitForFunction(()=>document.querySelector('.wh-video-time')?.textContent==='0:12');
-  assert.equal(await page.locator('.wh-video-time').innerText(),'0:12');
+  assert.equal(await page.locator('.wh-video-time').textContent(),'0:12');
   await page.waitForFunction(()=>document.querySelector('.wh-video-tile img')?.naturalWidth>0);
   assert.ok(await page.locator('.wh-video-tile img').evaluate(image=>image.naturalWidth>0));
   await page.getByText('Voz transcrita',{exact:true}).waitFor();

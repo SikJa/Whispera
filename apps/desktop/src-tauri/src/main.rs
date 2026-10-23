@@ -29,6 +29,7 @@ mod timestamp_bench;
 mod health;
 mod lifecycle;
 mod incremental;
+mod upload_tail;
 mod retention;
 mod unification;
 mod legacy;

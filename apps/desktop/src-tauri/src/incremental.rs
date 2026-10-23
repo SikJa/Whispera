@@ -396,6 +396,37 @@ async fn finish_parts(dir: &Path, p: &Plan) -> Result<String, String> {
 mod tests {
     use super::*;
     #[test]
+    #[ignore = "Synthetic-only real Groq boundary regression; no microphone, personal recordings or clipboard"]
+    fn synthetic_spoken_thanks_crossing_minute_is_preserved_once() {
+        let fixtures=PathBuf::from(std::env::var_os("WHISPERA_THANKS_FIXTURES").expect("Synthetic fixtures"));
+        let manifest:serde_json::Value=serde_json::from_slice(&fs::read(fixtures.join("manifest.json")).unwrap()).unwrap();
+        assert_eq!(manifest["syntheticOnly"],true);
+        crate::upload_tail::BENCHMARK_BYPASS.store(std::env::var("WHISPERA_THANKS_BASELINE").as_deref()==Ok("1"),Ordering::SeqCst);
+        crate::lossless_upload::configure(Path::new(env!("CARGO_MANIFEST_DIR")).join(if cfg!(windows){"../node_modules/ffmpeg-static/ffmpeg.exe"}else{"../node_modules/ffmpeg-static/ffmpeg"}));
+        let mut report=vec![];
+        for file in ["boundary65.wav","boundary65-quiet.wav"] {
+            let mut wave=hound::WavReader::open(fixtures.join(file)).unwrap();let rate=wave.spec().sample_rate;
+            assert_eq!(wave.spec().channels,1);assert_eq!(wave.spec().bits_per_sample,16);
+            let pcm:Vec<u8>=wave.samples::<i16>().map(Result::unwrap).flat_map(i16::to_le_bytes).collect();
+            assert_eq!(pcm.len() as u64,65*u64::from(rate)*2);
+            let root=std::env::temp_dir().join(format!("whispera-boundary-{}",uuid::Uuid::new_v4()));fs::create_dir(&root).unwrap();
+            atomic_json(&root.join("session.json"),&audio::Manifest{id:"synthetic".into(),sample_rate:rate,created_at:"synthetic".into()}).unwrap();
+            fs::write(root.join("audio.pcm"),&pcm).unwrap();prepare(&root,Settings::default(),vec![]).unwrap();
+            let text=tauri::async_runtime::block_on(finish(&root)).unwrap();
+            report.push(serde_json::json!({"file":file,"text":text,"fallback":root.join("full-audio-fallback.json").exists()}));
+            fs::write(std::env::var_os("WHISPERA_BOUNDARY_RESULTS").expect("Results"),serde_json::to_vec_pretty(&report).unwrap()).unwrap();
+            let thanks=text.split_whitespace().filter(|word|word.chars().filter(|c|c.is_alphanumeric()).collect::<String>().to_lowercase()=="gracias").count();
+            assert_eq!(thanks,1,"The real word at the minute boundary must remain once: {file}");
+            assert!(text.to_lowercase().contains("seguimos"),"Final words missing: {file}");
+            // Word timestamps at a spoken boundary can disagree even before tail
+            // preparation. The existing full-audio fallback must preserve the word;
+            // compare its frequency with the explicit baseline in the saved report.
+            assert_eq!(fs::read(root.join("audio.pcm")).unwrap(),pcm);
+            assert_eq!(tauri::async_runtime::block_on(finish(&root)).unwrap(),text);
+            fs::remove_dir_all(root).unwrap();
+        }
+    }
+    #[test]
     #[ignore = "65-second paced synthetic PCM; real Groq, no microphone or personal recordings"]
     fn synthetic_long_dictation_preserves_completed_chunks_and_final_tail() {
         let fixture=PathBuf::from(std::env::var_os("WHISPERA_TIMING_FIXTURES").expect("Synthetic fixtures"));let reference:serde_json::Value=serde_json::from_slice(&fs::read(fixture.join("reference.json")).unwrap()).unwrap();assert_eq!(reference["syntheticOnly"],true);
@@ -409,6 +440,9 @@ mod tests {
             let producer=std::thread::spawn(move ||{let mut file=fs::OpenOptions::new().append(true).open(dir.join("audio.pcm")).unwrap();for (i,block) in pcm.chunks(rate as usize/10*2).enumerate(){std::thread::sleep((began+Duration::from_millis((i as u64+1)*100)).saturating_duration_since(Instant::now()));file.write_all(block).unwrap();}file.sync_all().unwrap();Instant::now()});
             let stopped=tauri::async_runtime::spawn_blocking(move ||producer.join().unwrap()).await.unwrap();stop.store(true,Ordering::SeqCst);wake.notify_one();let cached_before_finish=root.join("live-0000.json").exists();let _=worker.await.unwrap();let text=finish(&root).await.unwrap();let elapsed=stopped.elapsed().as_secs_f64()*1000.;
             let lower=text.to_lowercase();assert!(lower.matches("carpeta").count()>=3,"Completed speech missing");assert!(lower.matches("prueba").count()>=4,"Final recorded speech missing");
+            assert!(!lower.contains("gracias"),"A closing word was invented over the synthetic silent tail");
+            assert!(cached_before_finish,"First minute must finish before stop in this paced fixture");
+            assert!(!root.join("full-audio-fallback.json").exists(),"Silent-tail preparation must not break the join");
             let cached=Instant::now();assert_eq!(finish(&root).await.unwrap(),text);let report=serde_json::json!({"syntheticOnly":true,"seconds":65,"sampleRate":rate,"firstChunkCachedAtStop":cached_before_finish,"stopToTextMs":elapsed,"cachedRetryMs":cached.elapsed().as_secs_f64()*1000.,"fallback":root.join("full-audio-fallback.json").exists(),"text":text});fs::write(std::env::var_os("WHISPERA_LONG_RESULTS").expect("Results file"),serde_json::to_vec_pretty(&report).unwrap()).unwrap();
         });fs::remove_dir_all(root).unwrap();
     }

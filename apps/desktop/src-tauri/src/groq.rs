@@ -161,15 +161,20 @@ async fn request_format(path: &Path, settings: &Settings, rules: &[Rule], granul
             "Selecciona un archivo de audio de hasta 24 MB. El original no se modifica.".into(),
         );
     }
-    let bytes = tokio::fs::read(path)
+    let mut bytes = tokio::fs::read(path)
         .await
         .map_err(|_| "No se pudo leer el audio")?;
     if ext == "wav" && digital_silence(&bytes) {
         return Ok(serde_json::json!({"text":"","words":[],"segments":[]}));
     }
+    // Keep every nonzero sample and its original time coordinate. Long digital
+    // silence at the end can make Whisper invent a closing phrase. This only
+    // shortens the upload copy; it never filters recognized words or the source.
+    if ext == "wav" { crate::upload_tail::trim(&mut bytes); }
     // Quiet microphone noise is not digital zero. Only reject the known closing
-    // hallucination when the *original* PCM is stationary background; quiet or
-    // brief speech keeps its modulation and is never rejected by volume alone.
+    // hallucination when the PCM is stationary background; quiet or brief speech
+    // keeps its modulation and is never rejected by volume alone. The retained
+    // 200 ms zero tail also preserves the non-stationary classification after trim.
     let stationary_background = ext == "wav" && stationary_background(&bytes);
     let (bytes,ext)=crate::lossless_upload::prepare(bytes,ext).await;
     if bytes.is_empty() {return Err("No se pudo preparar el envío. El audio original sigue guardado.".into());}
@@ -257,6 +262,39 @@ fn digital_silence(bytes:&[u8])->bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    #[ignore = "Explicit synthetic-only probe for repeated speech and genuine thanks; no microphone or profile writes"]
+    fn synthetic_thanks_probe() {
+        let root=std::path::PathBuf::from(std::env::var_os("WHISPERA_THANKS_FIXTURES").expect("Synthetic fixtures"));
+        let manifest:serde_json::Value=serde_json::from_slice(&std::fs::read(root.join("manifest.json")).unwrap()).unwrap();
+        assert_eq!(manifest["syntheticOnly"],true);
+        crate::upload_tail::BENCHMARK_BYPASS.store(std::env::var("WHISPERA_THANKS_BASELINE").as_deref()==Ok("1"),std::sync::atomic::Ordering::SeqCst);
+        crate::lossless_upload::configure(Path::new(env!("CARGO_MANIFEST_DIR")).join(if cfg!(windows){"../node_modules/ffmpeg-static/ffmpeg.exe"}else{"../node_modules/ffmpeg-static/ffmpeg"}));
+        let files=std::env::var("WHISPERA_THANKS_FILES").expect("Explicit fixture names");
+        let output=std::path::PathBuf::from(std::env::var_os("WHISPERA_THANKS_RESULTS").expect("Output"));
+        let mut rows=vec![];
+        tauri::async_runtime::block_on(async {
+            for file in files.split(',') {
+                assert!(file.ends_with(".wav")&&!file.contains(['/', '\\']));
+                let mut settings=Settings::default();
+                if let Ok(model)=std::env::var("WHISPERA_THANKS_MODEL") {settings.model=model;}
+                let granularity=std::env::var("WHISPERA_THANKS_GRANULARITY").unwrap_or_else(|_|"word".into());
+                let began=std::time::Instant::now();
+                let response=request_format(&root.join(file),&settings,&[],if granularity=="json"{None}else{Some(&granularity)}).await.unwrap();
+                rows.push(serde_json::json!({"file":file,"model":settings.model,"granularity":granularity,"elapsedMs":began.elapsed().as_secs_f64()*1000.,"response":response}));
+                std::fs::write(&output,serde_json::to_vec_pretty(&rows).unwrap()).unwrap();
+                eprintln!("Synthetic {file}: {:.1} ms",rows.last().unwrap()["elapsedMs"].as_f64().unwrap());
+            }
+        });
+        if std::env::var("WHISPERA_THANKS_VALIDATE").as_deref()==Ok("1") {
+            for row in &rows {
+                let case=manifest["cases"].as_array().unwrap().iter().find(|case|case["file"]==row["file"]).expect("Reference case");
+                let expected=case["expectedThanksCount"].as_u64().unwrap() as usize;
+                let actual=row["response"]["text"].as_str().unwrap().split_whitespace().filter(|word|word.chars().filter(|c|c.is_alphanumeric()).collect::<String>().to_lowercase()=="gracias").count();
+                assert_eq!(actual,expected,"Wrong thanks count: {}",row["file"]);
+            }
+        }
+    }
     #[test]
     fn stationary_background_filter_preserves_voice_and_real_thanks() {
         let mut noise=serde_json::json!({"text":" Gracias.","segments":[{"text":" Gracias."}],"duration":3});

@@ -1,4 +1,4 @@
-# Local reading preview — 0.3.0-readaloud.6
+# Local reading preview — 0.3.0-readaloud.8
 
 This fork adds Windows text-to-speech independently of Groq transcription.
 
@@ -12,6 +12,36 @@ This fork adds Windows text-to-speech independently of Groq transcription.
 - Select text in a compatible Windows application and press **Ctrl+Alt+R** to read it; press again to stop. Change it in **Atajos → Lectura en voz alta**. Selection uses UI Automation: no simulated Copy, clipboard reads or clipboard changes. Password fields, empty selections, unsupported apps and selections over the limit are rejected. The shortcut uses the voice/speed most recently chosen in Lectura.
 - Right-click the Whispera icon next to the Windows clock to **Pausar lectura**, **Continuar lectura** or **Detener lectura**. These controls also work for selection-shortcut playback with Settings hidden. Pause preserves the current position; Stop ends playback. Controls disable after completion or Stop, and do not start a reader when idle.
 - This is not a screen reader, OCR or PDF importer. Apps must expose their selection through Windows accessibility. No full-document or clipboard fallback is used.
+
+## Windows Terminal and WSL selections
+
+The focused-control selection path remains the first choice. If that path cannot
+provide a selection in a Windows Terminal window, Whispera can search that same
+window for visible `TermControl` accessibility controls. It accepts exactly one
+explicit, bounded selection. Hidden tabs are skipped; multiple selected panes,
+provider errors, password fields, focus changes, and incomplete/timed-out searches
+are rejected. A focused terminal pane with no selection never falls back to an
+older selection in another pane. Other applications keep the original path.
+
+This does not copy text, inspect the clipboard, read the whole terminal buffer,
+connect to WSL, invoke Claude/Codex, or persist selected text. Search is limited to
+128 elements, 24 levels and the existing two-second request deadline. An OS
+accessibility call already in progress can outlive that deadline; the waiting
+caller still times out. It does not add an accessibility polling loop.
+
+Select text in the active Windows Terminal pane and press the configured reading
+shortcut while that window remains active. If the terminal application handles
+mouse input, hold **Shift** while dragging to make a native terminal selection;
+release Shift before pressing the reading shortcut. This is documented by
+[Microsoft](https://learn.microsoft.com/en-us/windows/terminal/selection).
+Highlighting drawn by an application inside the terminal is not necessarily an
+accessibility text selection. The error notice explains empty/ambiguous/expired
+selections. This fallback targets Windows Terminal, including WSL profiles; it
+does not expand support to every terminal application.
+
+Validation includes the real fallback policy with synthetic accessibility trees
+and Windows API compilation. Confirmation in the user's Windows Terminal/WSL
+session is still a manual check; issue #3 remains open until that succeeds.
 
 ## Automatic language and voice
 

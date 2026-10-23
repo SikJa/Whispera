@@ -11,7 +11,7 @@ try{
   await page.addInitScript(installNativeMock,{kind:'video'});
   await page.goto(base + '/overlay.html?view=screen-select');
   await page.locator('.screen-selection').waitFor();
-  await page.mouse.move(100,100);await page.mouse.down();await page.mouse.move(500,300);
+  await page.mouse.move(100,300);await page.mouse.down();await page.mouse.move(500,460);
   assert.equal(await page.locator('.screen-selection-rect span').count(),0,'selection must not show pixel dimensions');
   await page.mouse.up();
   await page.setViewportSize({width:260,height:56});

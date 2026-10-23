@@ -44,7 +44,7 @@ try {
   await page.locator('.screen-selection').waitFor();
   await page.goto((process.env.WHISPERA_TEST_URL || 'http://127.0.0.1:5190') + '/?view=screen-select');
   await page.locator('.screen-selection').waitFor();
-  await page.mouse.move(200, 200); await page.mouse.down(); await page.mouse.move(203, 204); await page.mouse.up();
+  await page.mouse.move(200, 300); await page.mouse.down(); await page.mouse.move(203, 304); await page.mouse.up();
   await page.getByText('Seleccioná un área más grande.').waitFor();
   assert.equal(await page.evaluate(() => window.calls.some(c => c.command === 'screen_start')), false);
   await page.keyboard.press('Escape');

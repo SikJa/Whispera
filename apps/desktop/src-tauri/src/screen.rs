@@ -398,6 +398,16 @@ fn save_preferences(preferences: Preferences, app: tauri::AppHandle) -> Result<(
     }
     Ok(())
 }
+// A selection may override audio for this session without changing saved defaults.
+fn recording_preferences(mut preferences: Preferences, audio: Option<String>) -> Result<Preferences, String> {
+    if let Some(audio) = audio {
+        preferences.audio = audio;
+    }
+    if !["none", "system", "microphone", "both"].contains(&preferences.audio.as_str()) {
+        return Err("Modo de audio del video no válido".into());
+    }
+    Ok(preferences)
+}
 fn valid_frame_color(color: &str) -> bool {
     color.len() == 7 && color.starts_with('#') && color[1..].bytes().all(|v| v.is_ascii_hexdigit())
 }
@@ -786,7 +796,9 @@ pub async fn screen_start(
     app: tauri::AppHandle,
     window: tauri::WebviewWindow,
     rect: Rect,
+    audio: Option<String>,
 ) -> Result<(), String> {
+    crate::reader::stop(&app);
     tauri::async_runtime::spawn_blocking(move || {
         if !session::selector(window.label()) {
             return Err("Seleccion no disponible".into());
@@ -805,6 +817,8 @@ pub async fn screen_start(
         #[cfg(target_os = "macos")]
         let region = crate::screen_capture::macos::bind(&window, region)?;
         let kind = screen.kind.lock().map_err(|_| "Estado ocupado")?.clone();
+        let preferences: Preferences = app.state::<Store>().get("screen_preferences").unwrap_or_default();
+        let prefs = if kind == "video" { recording_preferences(preferences, audio)? } else { preferences };
         let editor_started=Instant::now();
         for (label, other) in app.webview_windows() {
             if label.starts_with(if screen.secondary {"image-select-"} else {"screen-select-"}) && label != window.label() {
@@ -854,10 +868,6 @@ pub async fn screen_start(
             }
             return Ok(());
         }
-        let prefs: Preferences = app
-            .state::<Store>()
-            .get("screen_preferences")
-            .unwrap_or_default();
         let binary = ffmpeg(&app)?;
         // Each session has a private directory. Files remain available for pasting/recovery.
         let dir = app
@@ -1808,6 +1818,18 @@ mod tests {
         assert_eq!(p.image_hotkey, "Control+Shift+F10");
         assert_eq!(p.frame_color, "#ffffff");
         assert!(!p.image_auto_copy);
+    }
+    #[test]
+    fn video_audio_override_preserves_defaults_and_rejects_invalid_modes() {
+        let saved = Preferences { audio: "system".into(), hotkey: "Alt+F9".into(), ..Default::default() };
+        assert_eq!(recording_preferences(saved.clone(), None).unwrap().audio, "system");
+        for audio in ["none", "system", "microphone", "both"] {
+            let session = recording_preferences(saved.clone(), Some(audio.into())).unwrap();
+            assert_eq!(session.audio, audio);
+            assert_eq!(session.hotkey, "Alt+F9");
+            assert_eq!(saved.audio, "system");
+        }
+        assert!(recording_preferences(saved, Some("invalid".into())).is_err());
     }
     #[test]
     fn border_color_is_validated() {

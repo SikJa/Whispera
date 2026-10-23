@@ -12,7 +12,7 @@ import CaptureFrame from './CaptureFrame';
 import {useAutoSave,AutoSaveStatus} from './useAutoSave';
 import EditableCaptureFrame,{type CaptureContext} from './EditableCaptureFrame';
 import { SettingsSwitch } from './ResourceControls';
-import { type CapturePreferences as Preferences, defaultCapturePreferences, VideoAudioSettings } from './CaptureSettings';
+import { type CapturePreferences as Preferences, defaultCapturePreferences, VideoAudioSettings, VideoAudioChoice } from './CaptureSettings';
 import { commandKey, isMac, systemName } from './platform';
 
 type Appearance = Pick<Settings,'color'|'pattern'|'recorderScale'> & {frameColor:string};
@@ -69,6 +69,21 @@ export function ScreenSelection({kind='video',frameColor='#ffffff',snapshot,onPr
   const [end, setEnd] = useState<Point>();
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+  const [audio,setAudio] = useState<Preferences['audio']>('none');
+  const [audioReady,setAudioReady] = useState(kind==='image'||!native);
+  const [audioError,setAudioError] = useState('');
+  const [audioAttempt,setAudioAttempt] = useState(0);
+  const selectedAudio = useRef<Preferences['audio']|undefined>(kind==='image'||!native?'none':undefined);
+  const starting = useRef(false);
+  useEffect(()=>{
+    if(kind==='image'||!native)return;
+    let alive=true;selectedAudio.current=undefined;setAudioReady(false);setAudioError('');
+    void invoke<Preferences>('screen_preferences').then(preferences=>{
+      if(!alive)return;
+      selectedAudio.current=preferences.audio;setAudio(preferences.audio);setAudioReady(true);
+    }).catch(error=>{if(alive)setAudioError(String(error));});
+    return()=>{alive=false;};
+  },[kind,audioAttempt]);
   const anchor = useRef<Point | undefined>(undefined);
   const boundedPoint=(x:number,y:number):Point=>({x:Math.max(0,Math.min(innerWidth,x)),y:Math.max(0,Math.min(innerHeight,y))});
   const interruptSelection=()=>{
@@ -89,12 +104,13 @@ export function ScreenSelection({kind='video',frameColor='#ffffff',snapshot,onPr
   }, []);
   const rect = origin && end ? { x: Math.min(origin.x, end.x), y: Math.min(origin.y, end.y), width: Math.abs(end.x - origin.x), height: Math.abs(end.y - origin.y) } : undefined;
   const beginCapture=async(rect:Rect)=>{
-    if(busy)return;setBusy(true);onPreparing?.(rect);
+    if(starting.current||(kind==='video'&&selectedAudio.current===undefined))return;
+    starting.current=true;setBusy(true);onPreparing?.(rect);
     await new Promise(requestAnimationFrame);await new Promise(requestAnimationFrame);
-    try{await invoke('screen_start',{rect});}catch(e){setError(String(e));setBusy(false);}
+    try{await invoke('screen_start',{rect,...(kind==='video'?{audio:selectedAudio.current}:{})});}catch(e){setError(String(e));starting.current=false;setBusy(false);}
   };
   return <div className="screen-selection" style={snapshot?{backgroundImage:`url("${snapshot}")`,backgroundSize:'100% 100%'}:undefined} data-frozen={!!snapshot} data-has-selection={!!rect} onPointerDown={e => {
-    if (busy || e.button !== 0 || (e.target as HTMLElement).closest('button')) return;
+    if (busy || e.button !== 0 || (e.target as HTMLElement).closest('button, .screen-selection-help')) return;
     e.currentTarget.setPointerCapture(e.pointerId);
     anchor.current = boundedPoint(e.clientX,e.clientY); setOrigin(anchor.current); setEnd(anchor.current); setError('');
   }} onPointerMove={e => { if (anchor.current && !busy) setEnd(boundedPoint(e.clientX,e.clientY)); }} onPointerUp={async e => {
@@ -105,7 +121,16 @@ export function ScreenSelection({kind='video',frameColor='#ffffff',snapshot,onPr
     if (rect.width < 16 || rect.height < 16) { setError('Seleccioná un área más grande.'); return; }
     await beginCapture(rect);
   }} onPointerCancel={interruptSelection} onLostPointerCapture={interruptSelection}>
-    <div className="screen-selection-help" role="status">{busy ? 'Preparando…' : error || (kind==='image'?'Seleccioná el área para capturar.':'Seleccioná el área. Al soltar empieza a grabar.')} <kbd>{commandKey}+A: pantalla completa</kbd><kbd>Esc: salir</kbd></div>
+    <div className="screen-selection-help" data-video={kind==='video'}>
+      <div role="status">{busy ? 'Preparando…' : error || (kind==='image'?'Seleccioná el área para capturar.':!audioReady?'Cargando audio…':'Seleccioná el área. Al soltar empieza a grabar.')} <kbd>{commandKey}+A: pantalla completa</kbd><kbd>Esc: salir</kbd></div>
+      {kind==='video'&&<div className="screen-selection-audio">
+        <span>Audio de este video</span>
+        <VideoAudioChoice value={audio} disabled={!audioReady||busy} onChange={value=>{selectedAudio.current=value;setAudio(value);}}/>
+        <small>Solo para esta grabación. El valor predeterminado se cambia en Capturas y video.</small>
+        {audioReady&&audio==='none'&&<p role="status">Este video se grabará sin sonido.</p>}
+        {audioError&&<p role="alert">No se pudo cargar el audio: {audioError} <button type="button" onClick={()=>setAudioAttempt(value=>value+1)}>Reintentar</button></p>}
+      </div>}
+    </div>
     {rect && <CaptureFrame className="screen-selection-rect" width={rect.width} height={rect.height} color={frameColor} style={{left:rect.x,top:rect.y}}/>}
   </div>;
 }
@@ -158,6 +183,7 @@ export default function ScreenRecorder() {
     {preferencesError&&<p className="notice" role="alert">No se pudieron cargar las preferencias: {preferencesError} <button onClick={()=>setPreferencesAttempt(value=>value+1)}>Volver a cargar preferencias</button></p>}
     <>
       <h3>Audio predeterminado</h3>
+      <p className="muted-note">Se usa al iniciar desde el atajo o el icono. También podés elegir otro audio antes de seleccionar el área.</p>
       <VideoAudioSettings value={preferences.audio} disabled={occupied||busy} onChange={audio=>changePreferences({...preferences,audio})}/>
       <h3>Capturas de imagen</h3>
       {!isMac && <div className="form-row"><label htmlFor="windows-capture-shortcuts">Impr Pant para Whispera<span>Mientras Whispera está abierto, las capturas de Windows pasan a Ctrl + Alt + Shift + F12.</span></label><SettingsSwitch id="windows-capture-shortcuts" label="Impr Pant para Whispera" checked={windowsShortcuts} disabled={!native||occupied||busy} onChange={enabled=>void run(async()=>{await invoke('save_windows_capture_shortcuts',{enabled});setWindowsShortcuts(enabled);},'Atajos de captura guardados.')}/></div>}

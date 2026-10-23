@@ -52,7 +52,7 @@ fn enabled(store: &Store, name: &str) -> bool {
     library::settings(store)
         .ok()
         .and_then(|p| p[name].as_bool())
-        .unwrap_or(true)
+        .unwrap_or(false)
 }
 pub fn recording_enabled(store: &Store) -> bool {
     enabled(store, "transcribeVideo")
@@ -60,6 +60,7 @@ pub fn recording_enabled(store: &Store) -> bool {
 
 // Replay trimming transcribes the final MP4 soundtrack, never discarded intervals.
 pub fn transcribe_selection(app:&tauri::AppHandle,video:&Path)->Result<(),String>{
+    if !recording_enabled(&app.state::<Store>()) { return Ok(()); }
     let _guard=GATE.lock().map_err(|_|"Transcripciones ocupadas")?;
     let store=app.state::<Store>();
     let root=app.path().app_cache_dir().map_err(|e|e.to_string())?.join("trim-speech").join(uuid::Uuid::new_v4().to_string());
@@ -552,7 +553,8 @@ mod tests {
         let first=root.join("part-0000");let second=root.join("part-0001");fs::create_dir(&first).unwrap();fs::create_dir(&second).unwrap();
         wave(&first.join("speech-0000.wav"),1.25);wave(&first.join("speech-0001.wav"),0.75);wave(&second.join("speech-0000.wav"),1.);
         fs::write(first.join("speech-timing.json"),r#"{"videoSeconds":2.345}"#).unwrap();
-        let store=Store::open(Path::new(":memory:")).unwrap();enqueue(&store,&video).unwrap();
+        let store=Store::open(Path::new(":memory:")).unwrap();
+        store.put("library_settings", &serde_json::json!({"transcribeVideo":true,"videoTranscriptAttachment":true})).unwrap();enqueue(&store,&video).unwrap();
         assert_eq!(get(&store,&video).unwrap().part_offsets,vec![Some(0.),Some(1.25),Some(2.345)]);
         let result=process_timed_with(&store,&video,|_,_,_|Ok(timed("Frase."))).unwrap();
         assert!(result.timing_complete);assert_eq!(result.cues.len(),3);assert!((result.cues[2].start-2.545).abs()<0.000001);
@@ -564,6 +566,7 @@ mod tests {
     #[test]
     fn timed_retry_preserves_completed_cues_without_uploading_audio_twice() {
         let root=root();let video=root.join("retry.mp4");fs::write(&video,b"fixture").unwrap();let store=Store::open(Path::new(":memory:")).unwrap();
+        store.put("library_settings", &serde_json::json!({"transcribeVideo":true})).unwrap();
         store.put(&key(&video),&Transcript{status:"pending".into(),parts:vec![root.join("first.wav"),root.join("second.wav")],part_offsets:vec![Some(0.),Some(7.5)],..Default::default()}).unwrap();
         let mut calls=0;let failed=process_timed_with(&store,&video,|_,_,_|{calls+=1;if calls==1 {Ok(timed("Primera."))}else{Err("offline".into())}}).unwrap();
         assert_eq!(failed.status,"error");assert_eq!(failed.cues.len(),1);assert!(!failed.timing_complete);
@@ -576,6 +579,7 @@ mod tests {
         let value=serde_json::json!({"status":"ready","text":"Anterior.","error":"","parts":[],"completed":[]});
         let old:Transcript=serde_json::from_value(value).unwrap();assert!(!old.timing_complete);assert!(old.cues.is_empty());
         let root=root();let video=root.join("legacy.mp4");let store=Store::open(Path::new(":memory:")).unwrap();
+        store.put("library_settings", &serde_json::json!({"transcribeVideo":true})).unwrap();
         store.put(&key(&video),&Transcript{parts:vec![root.join("first.wav")],..Default::default()}).unwrap();
         let result=process_timed_with(&store,&video,|_,_,_|Ok(timed("Texto completo."))).unwrap();assert_eq!(result.status,"ready");assert!(!result.timing_complete);
         assert_eq!(fs::read_to_string(video.with_extension("transcript.txt")).unwrap(),"Texto completo.");fs::remove_dir_all(root).unwrap();
@@ -611,7 +615,8 @@ mod tests {
         command.args(["-hide_banner","-loglevel","error","-y","-f","lavfi","-i","color=size=320x180:rate=30:color=navy","-i"]).arg(fixture.join("synthetic-20s.wav")).args(["-t","20","-c:v","libx264","-preset","ultrafast","-c:a","aac"]).arg(&video).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null());
         crate::replay::run_command(&mut command,Duration::from_secs(30)).unwrap();
         let part=root.join("part-0000");fs::create_dir(&part).unwrap();fs::copy(fixture.join("synthetic-20s.wav"),part.join("speech-0000.wav")).unwrap();video_timing::record_part_duration(&video,&part);
-        let store=Store::open(Path::new(":memory:")).unwrap();let mut settings=Settings::default();settings.language="es".into();store.put("settings",&settings).unwrap();
+        let store=Store::open(Path::new(":memory:")).unwrap();
+        store.put("library_settings", &serde_json::json!({"transcribeVideo":true,"videoTranscriptAttachment":true})).unwrap();let mut settings=Settings::default();settings.language="es".into();store.put("settings",&settings).unwrap();
         let mut rows=Vec::new();
         for trial in 0..3 {
             let at=std::time::Instant::now();enqueue(&store,&video).unwrap();let result=process(&store,&video).unwrap();let (files,_)=package(&store,&[video.clone()]).unwrap();
@@ -744,6 +749,7 @@ mod tests {
         let root = root();
         let video = root.join("fixture.mp4");
         let store = Store::open(Path::new(":memory:")).unwrap();
+        store.put("library_settings", &serde_json::json!({"transcribeVideo":true})).unwrap();
         store.put(&key(&video), &Transcript {
             status: "pending".into(),
             parts: vec![root.join("first.wav"), root.join("second.wav")],
@@ -792,6 +798,7 @@ mod tests {
         let root=root();let video=root.join("public-qa.mp4");fs::write(&video,b"clipboard packaging fixture").unwrap();
         let part=root.join("part-0000");fs::create_dir_all(&part).unwrap();fs::copy(fixture,part.join("speech-0000.wav")).unwrap();
         let store=Store::open(Path::new(":memory:")).unwrap();
+        store.put("library_settings", &serde_json::json!({"transcribeVideo":true,"videoTranscriptAttachment":true})).unwrap();
         let mut settings=Settings::default();settings.language="es".into();store.put("settings",&settings).unwrap();
         enqueue(&store,&video).unwrap();let started=std::time::Instant::now();let result=process(&store,&video).unwrap();
         assert_eq!(result.status,"ready","{}",result.error);assert!(!result.text.trim().is_empty());
@@ -811,6 +818,7 @@ mod tests {
         let video = root.join("fixture.mp4");
         fs::write(&video, b"fixture").unwrap();
         let store = Store::open(Path::new(":memory:")).unwrap();
+        store.put("library_settings", &serde_json::json!({"videoTranscriptAttachment":true})).unwrap();
         fs::write(
             video.with_extension("transcript.txt"),
             "Untrusted neighboring text",
@@ -919,5 +927,18 @@ mod trim_live_tests {
         let files=vec![output.to_string_lossy().into_owned(),output.with_extension("transcript.txt").to_string_lossy().into_owned()];
         {let _clipboard=clipboard_win::Clipboard::new_attempts(20).unwrap();let mut old=Vec::new();let _=clipboard_win::raw::get_string(&mut old);let mut old_files=Vec::<String>::new();let _=clipboard_win::raw::get_file_list(&mut old_files);write_open(&files,&text).unwrap();let mut actual=Vec::<String>::new();clipboard_win::raw::get_file_list(&mut actual).unwrap();assert_eq!(actual,files);if !old_files.is_empty(){write_open(&old_files,&String::from_utf8_lossy(&old)).unwrap();}else{clipboard_win::raw::set_string(&String::from_utf8_lossy(&old)).unwrap();}}
         eprintln!("LIVE QA passed: discarded speech excluded, selected speech transcribed, MP4 plus TXT on Windows clipboard");fs::remove_dir_all(root).unwrap();
+    }
+}
+
+#[cfg(test)]
+mod consent_tests {
+    use super::*;
+    #[test] fn video_speech_and_attachments_require_explicit_opt_in() {
+        let store=Store::open(Path::new(":memory:")).unwrap();
+        assert!(!recording_enabled(&store)); assert!(!enabled(&store,"videoTranscriptAttachment"));
+        store.put("library_settings", &serde_json::json!({"transcribeVideo":true})).unwrap();
+        assert!(recording_enabled(&store));
+        store.put("library_settings", &serde_json::json!({"transcribeVideo":false})).unwrap();
+        assert!(!recording_enabled(&store));
     }
 }

@@ -6,8 +6,10 @@ mkdirSync('../../.local', {recursive:true});
 const server = await createServer({server:{host:'127.0.0.1',port:0,strictPort:false,fs:{allow:[process.cwd(),realpathSync('node_modules')]}}});
 await server.listen();
 const base = `http://127.0.0.1:${server.httpServer.address().port}`;
-const suites = ['screen','capture-loading','selection-ready','selection-recovery','screen-frozen','adjustable-frame','editor','editor-races','capture-events','editor-paint','line-toolbar','capture-controls','history','hotkeys','hotkey-accessibility','setup','updates','settings-layout','sounds','autosave','application','file-import','recorders','replay','native-library','library-settings','library-loading','library-media'];
+const suites = ['screen','capture-loading','selection-ready','selection-recovery','screen-frozen','adjustable-frame','editor','editor-races','capture-events','editor-paint','line-toolbar','capture-controls','capture-audio','history','hotkeys','hotkey-accessibility','setup','updates','settings-layout','sounds','autosave','application','file-import','recorders','replay','native-library','library-settings','library-loading','library-media'];
 suites.push('dictionary');
+suites.push('reader');
+suites.push('ai-usage');
 suites.push('macos-ui');
 suites.push('capture-startup');
 suites.push('window-lifecycle');
@@ -15,6 +17,9 @@ suites.push('performance');
 suites.push('copy-export');
 suites.push('app-themes');
 suites.push('palette-stability');
+suites.push('settings-search');
+const requested=process.argv.slice(2);
+if(requested.length){if(requested.some(name=>!suites.includes(name)))throw Error('Unknown suite');suites.splice(0,suites.length,...requested);}
 const failures=[];
 try {
   for (const name of suites) {

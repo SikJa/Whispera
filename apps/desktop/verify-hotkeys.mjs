@@ -8,6 +8,9 @@ try {
   await page.addInitScript(installNativeMock,{});
   await page.goto((process.env.WHISPERA_TEST_URL || 'http://127.0.0.1:5190') + '/');
   await page.getByRole('button',{name:'Atajos',exact:true}).click();
+  const reading=page.locator('#shortcut-reading');await reading.click();await page.waitForFunction(()=>document.querySelector('#shortcut-reading').parentElement.dataset.listening==='true');
+  await page.keyboard.press('Control+Alt+KeyL');await page.keyboard.press('Tab');
+  await page.waitForFunction(()=>window.readerPreferences.hotkey==='Control+Alt+KeyL');
   const video=page.locator('#shortcut-video'),image=page.locator('#shortcut-image');
   await video.click();await page.locator('.hotkey-field[data-listening="true"]').waitFor();
   await page.keyboard.down('Alt');assert.equal(await video.inputValue(),'Alt + …');

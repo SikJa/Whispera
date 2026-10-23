@@ -8,13 +8,18 @@ completan solos. Guardá los cambios; cada función necesita un atajo distinto.
 Mientras editás el atajo se suspende su activación para que no empiece a grabar.
 Los atajos existentes se conservan. En instalaciones nuevas: **Control+Shift+F9**, sin audio.
 
-1. Pulsá el atajo o «Seleccionar área y grabar».
+1. Pulsá el atajo, «Iniciar video» en el icono o «Seleccionar área y grabar».
+   Antes de seleccionar el área, revisá **Audio de este video**: Sin audio,
+   Micrófono, Computadora o Ambos. La selección comienza con tu valor guardado;
+   cambiarla afecta solo a ese video. Para cambiar el valor de futuros videos,
+   usá **Configuración → Capturas y video → Audio predeterminado**.
+   «Computadora» graba lo que suena en la salida predeterminada; «Ambos» agrega tu voz.
 2. Arrastrá un rectángulo en una pantalla. Al soltar comienza la grabación.
 3. Pulsá otra vez el mismo atajo o **Escape**.
 4. Esperá a que termine de preparar el video y pegalo con **Ctrl+V**.
 
 Escape cancela la selección o el editor de imagen; durante el video lo termina
-y copia, incluso si estás usando otra ventana. No hay botones para detener.
+y copia, incluso si estás usando otra ventana. También podés usar el botón Detener.
 Cada selección pertenece a un monitor; reconoce
 su escala de Windows y monitores colocados a la izquierda del principal.
 El área no sigue automáticamente a una ventana. Podés moverla arrastrando el

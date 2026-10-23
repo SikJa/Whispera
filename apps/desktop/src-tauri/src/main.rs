@@ -1,5 +1,10 @@
 #![cfg_attr(target_os = "windows", windows_subsystem = "windows")]
 mod replay;
+mod reader;
+mod reader_language;
+mod reader_export;
+mod ai_usage;
+mod reader_selection;
 #[cfg(all(test, windows))]
 mod audit_tests;
 mod platform;
@@ -358,6 +363,9 @@ fn main() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_clipboard_manager::init())
+        .manage(reader::Reader::default())
+        .manage(reader_export::Exports::default())
+        .manage(ai_usage::Usage::default())
         .plugin(
             tauri_plugin_global_shortcut::Builder::new()
                 .with_handler(|app, shortcut, event| {
@@ -370,6 +378,13 @@ fn main() {
                     }
                     if event.state == tauri_plugin_global_shortcut::ShortcutState::Pressed {
                         let app = app.clone();
+                        if reader::matches(&app, shortcut) {
+                            let source = reader_selection::foreground();
+                            tauri::async_runtime::spawn_blocking(move || {
+                                if let Err(error) = reader::toggle_selection(&app, source) { reader::report_shortcut_error(&app,error); }
+                            });
+                            return;
+                        }
                         if shortcuts::parse(&library::hotkey(&app)).map(|key| key == *shortcut).unwrap_or(false) {
                             tauri::async_runtime::spawn(async move { let _ = library::library_toggle(app).await; });
                             return;
@@ -504,7 +519,8 @@ fn main() {
             app.manage(replay::Replay::default());
             app.manage(video_trim::Editors::default());
             app.manage(updates::Updates::default());
-            updates::start(app.handle());
+            // Fork preview: upstream updates could replace the local reader build.
+            // updates::start is intentionally disabled until this fork signs its releases.
             health::start(app.handle());
             retention::start(app.handle());
             let settings: Settings = app
@@ -525,6 +541,7 @@ fn main() {
                 let _ = app.state::<Store>().event(&e);
             }
             replay::initialize(app.handle());
+            if let Err(error) = reader::initialize(app.handle()) { let _ = app.state::<Store>().event(&error); }
             windows_capture_keys::start(app.handle());
             let capture_app = app.handle().clone();
             tauri::async_runtime::spawn_blocking(move || {
@@ -534,6 +551,7 @@ fn main() {
             });
             use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
             let show = MenuItem::with_id(app, "settings", "Configuracion", true, None::<&str>)?;
+            let usage_menu = MenuItem::with_id(app, "ai-usage", "Uso de IA", true, None::<&str>)?;
             let record = MenuItem::with_id(app, "recorder", "Abrir grabadora", true, None::<&str>)?;
             let import =
                 MenuItem::with_id(app, "import", "Transcribir archivo...", true, None::<&str>)?;
@@ -545,13 +563,45 @@ fn main() {
             let quit = MenuItem::with_id(app, "quit", "Salir / Quit Whispera", true, None::<&str>)?;
             let library_menu = MenuItem::with_id(app, "library", "Biblioteca / Portapapeles", true, None::<&str>)?;
             let sep = PredefinedMenuItem::separator(app)?;
+            let reading_sep = PredefinedMenuItem::separator(app)?;
+            let reading_end = PredefinedMenuItem::separator(app)?;
+            let reader_menu = reader::TrayMenu::new(app.handle())?;
             let menu =
-                Menu::with_items(app, &[&record, &video, &image, &import, &library_menu, &show, &update_menu, &sep, &quit])?;
+                Menu::with_items(app, &[&record, &video, &image, &import, &library_menu])?;
+            if cfg!(windows) {
+                menu.append_items(&[&reading_sep, &reader_menu.pause, &reader_menu.stop, &reader_menu.export, &reader_menu.cancel_export, &reading_end])?;
+            }
+            menu.append_items(&[&usage_menu, &show, &update_menu, &sep, &quit])?;
+            app.manage(reader_menu);
             tauri::tray::TrayIconBuilder::new()
                 .icon(tauri::image::Image::from_bytes(include_bytes!("../icons/cristal/32x32.png"))?)
                 .tooltip("Whispera")
                 .menu(&menu)
                 .on_menu_event(|app, event| match event.id.as_ref() {
+                    "ai-usage" => {
+                        if open_settings(app.clone()).is_ok() {
+                            use tauri::Emitter;
+                            let _ = app.emit_to("main","ai-usage-open",());
+                        }
+                    }
+                    "reader-pause" | "reader-stop" => {
+                        let app = app.clone();
+                        let id = event.id.as_ref().to_owned();
+                        tauri::async_runtime::spawn_blocking(move || {
+                            if let Err(error) = reader::control_from_tray(&app,&id) {
+                                reader::report_shortcut_error(&app,error);
+                            }
+                        });
+                    }
+                    "reader-export-cancel" => reader_export::cancel(app),
+                    "reader-export" => {
+                        let app = app.clone();
+                        tauri::async_runtime::spawn_blocking(move || {
+                            if let Err(error) = reader_export::save(&app,None) {
+                                reader::report_shortcut_error(&app,error);
+                            }
+                        });
+                    }
                     "library" => { let app=app.clone(); tauri::async_runtime::spawn(async move { let _ = library::library_toggle(app).await; }); }
                     "settings" => {
                         if let Err(error) = open_settings(app.clone()) { let _ = app.state::<Store>().event(&error); }
@@ -580,6 +630,7 @@ fn main() {
                             let _ = screen::stop(&app);
                             engine::shutdown(&app);
                             replay::stop(&app);
+                            reader::stop(&app);
                             app.exit(0);
                         });
                     }
@@ -602,6 +653,7 @@ fn main() {
                     _ => {}
                 })
                 .build(app)?;
+            reader::start_tray_monitor(app.handle());
             if std::env::args().any(|arg| arg == "--settings")
                 || !app
                     .state::<Store>()
@@ -616,6 +668,9 @@ fn main() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            ai_usage::ai_usage_snapshot, ai_usage::ai_usage_connect_claude, ai_usage::ai_usage_open_provider,
+            reader::reader_status, reader::reader_speak, reader::reader_control, reader::reader_preferences, reader::reader_configure, reader::reader_analyze,
+            reader_export::reader_export_mp3, reader_export::reader_export_cancel,
             permissions::platform_permissions, permissions::platform_request_permission,
             replay::replay_preferences, replay::replay_status, replay::replay_create_folder, replay::replay_save_preferences, replay::replay_save,
             video_trim::video_trim_open, video_trim::video_trim_context, video_trim::video_trim_close, video_trim::video_trim_save,
@@ -740,6 +795,7 @@ fn main() {
                 });
             }
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                if window.label() == "main" { reader::stop(window.app_handle()); }
                 if !lifecycle::keep_on_close(window.label()) { return; }
                 api.prevent_close();
                 let _ = window.hide();

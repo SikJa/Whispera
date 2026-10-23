@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Whispera",
-  "version": "0.3.0-beta.4",
+  "version": "0.3.0-readaloud.10",
   "identifier": "app.whispera.desktop.preview",
   "build": {
     "beforeDevCommand": "npm run dev",
@@ -14,7 +14,7 @@
     "windows": [
       {
         "label": "main",
-        "title": "Whispera · Configuración",
+        "title": "Whispera \u00b7 Configuraci\u00f3n",
         "width": 900,
         "height": 720,
         "minWidth": 620,
@@ -42,6 +42,8 @@
     "resources": {
       "../../../LICENSE": "LICENSE",
       "../../../THIRD_PARTY_NOTICES.md": "THIRD_PARTY_NOTICES.md",
+      "../../../docs/licenses/whatlang.txt": "licenses/whatlang.txt",
+      "../../../docs/licenses/allocator-api2.txt": "licenses/allocator-api2.txt",
       "../vendor/LICENSE": "vendor/LICENSE",
       "../public/sound-lab/HANDY-LICENSE.txt": "sound-lab/HANDY-LICENSE.txt"
     },
@@ -65,7 +67,7 @@
         "displayLanguageSelector": true
       }
     },
-    "createUpdaterArtifacts": true
+    "createUpdaterArtifacts": false
   },
   "plugins": {
     "updater": {

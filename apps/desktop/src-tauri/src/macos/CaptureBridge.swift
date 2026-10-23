@@ -411,6 +411,9 @@ func whisperaCaptureWindow(_ pointer: UnsafeMutableRawPointer?, _ action: Int32,
     captureOnMain {
         let window = Unmanaged<NSWindow>.fromOpaque(pointer).takeUnretainedValue()
         switch action {
+        // Stable capture layers: frozen desktop, ink, frame, tools, HUD. The
+        // independent still-image session stays above an ongoing video.
+        case 20...34: window.level = NSWindow.Level(rawValue: NSWindow.Level.floating.rawValue + Int(action - 20))
         case 0: window.sharingType = .none
         case 1: window.orderFrontRegardless()
         case 2, 3:

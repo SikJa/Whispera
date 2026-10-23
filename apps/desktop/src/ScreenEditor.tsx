@@ -72,7 +72,7 @@ function Ink({ context }: { context: Context }) {
   const [tool, setTool] = useState<Tool>('pointer'), [error, setError] = useState(''), [busy, setBusy] = useState(false);
   const [text, setText] = useState<{ point: Point; value: string }>();
   const actions = useRef<(a: Action) => void>(() => {}), live = useRef(true), working = useRef(false);
-  const shown = useRef(false);
+  const shown = useRef(false), exporting = useRef(false);
   const paintBackground=(ctx:CanvasRenderingContext2D)=>{
     if(!background.current)return;
     if(fullBackground.current&&context.rect) {
@@ -114,9 +114,15 @@ function Ink({ context }: { context: Context }) {
     finally{draft.current=null;working.current=false;if(live.current){setBusy(false);changed();}}
   };
   const exportImage = async (action: 'copy' | 'save') => {
-    if (context.kind !== 'image' || working.current || !background.current) return;
-    working.current = true; setBusy(true); setError(''); selected.current = undefined; draw();
+    if (context.kind !== 'image' || working.current || exporting.current || !background.current) return;
+    exporting.current = true; working.current = true; setBusy(true); setError(''); selected.current = undefined; draw();
     try {
+      // The native editor already owns the exact frozen crop. Without marks,
+      // avoid another canvas PNG encode and a potentially huge JSON byte array.
+      if (!history.current.present.length) {
+        await invoke('screen_image_export', { id: context.id, action, bytes: [] });
+        return;
+      }
       const result = document.createElement('canvas'); result.width = Math.round(context.width*context.scale); result.height = Math.round(context.height*context.scale);
       const ctx = result.getContext('2d')!; ctx.setTransform(context.scale,0,0,context.scale,0,0);
       paintBackground(ctx);
@@ -124,7 +130,7 @@ function Ink({ context }: { context: Context }) {
       const blob = await new Promise<Blob>((resolve,reject) => result.toBlob(b => b ? resolve(b) : reject(new Error('No se pudo preparar la imagen')), 'image/png'));
       await invoke('screen_image_export', { id: context.id, action, bytes: Array.from(new Uint8Array(await blob.arrayBuffer())) });
     } catch (e) { if (live.current) setError(String(e)); }
-    finally { working.current = false; if (live.current) setBusy(false); }
+    finally { exporting.current = false; working.current = false; if (live.current) setBusy(false); }
   };
   actions.current = a => {
     if (working.current && !['tool','color','width','close','escape'].includes(a.action)) return;

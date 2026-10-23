@@ -63,7 +63,9 @@ jobs:
       - name: Install headless WebKit
         run: npx playwright install webkit
       - name: Validate Mac interface in WebKit
-        run: WHISPERA_TEST_BROWSER=webkit node verify-macos-ui.mjs
+        run: |
+          WHISPERA_TEST_BROWSER=webkit node verify-macos-ui.mjs
+          WHISPERA_TEST_BROWSER=webkit node verify-palette-stability.mjs
       - name: Build ad-hoc signed app and DMG
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
@@ -111,6 +113,43 @@ jobs:
         working-directory: apps/desktop/src-tauri
       - run: npx playwright install chromium
       - run: npm run test:release
+      - name: Prepare Windows candidate version without publishing
+        id: windows-version
+        working-directory: .
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          WHISPERA_STABLE_BASE: '0.2.28'
+        run: node scripts/release-version.mjs
+      - name: Build signed Windows candidate installer
+        if: steps.windows-version.outputs.skip != 'true'
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ''
+        run: npm run tauri build -- --bundles nsis --ci
+      - name: Verify Windows process identity
+        if: steps.windows-version.outputs.skip != 'true'
+        shell: pwsh
+        run: |
+          $identity=(Get-Item -LiteralPath 'src-tauri/target/release/whispera-desktop.exe').VersionInfo
+          if($identity.ProductName -ne 'Whispera' -or $identity.FileDescription -ne 'Whispera'){throw 'El ejecutable no se identifica como Whispera'}
+          $identity | Select-Object ProductName,FileDescription,ProductVersion | ConvertTo-Json
+      - name: Verify Windows updater signature
+        if: steps.windows-version.outputs.skip != 'true'
+        working-directory: apps/desktop/src-tauri
+        shell: pwsh
+        run: |
+          $installer=@(Get-ChildItem -LiteralPath 'target/release/bundle/nsis' -Filter '*-setup.exe')
+          if($installer.Count -ne 1){throw 'Instalador inexistente o ambiguo'}
+          $env:WHISPERA_VERIFY_ARCHIVE=$installer[0].FullName
+          cargo test --locked updates::tests::built_archive_has_a_valid_repository_signature -- --ignored --exact
+      - uses: actions/upload-artifact@v4
+        if: steps.windows-version.outputs.skip != 'true'
+        with:
+          name: whispera-windows-candidate
+          path: |
+            apps/desktop/src-tauri/target/release/bundle/nsis/*-setup.exe*
+            .local/release.json
+          if-no-files-found: error
   publish:
     needs: [native, windows-regression]
     if: github.repository == 'SikJa/Whispera' && github.ref == 'refs/heads/main' && ((github.event_name == 'workflow_dispatch' && inputs.publish) || (github.event_name == 'push' && contains(github.event.head_commit.message, '[publish macos]')))
@@ -129,4 +168,4 @@ jobs:
       - name: Publish verified DMGs, portable apps and the separate Mac update feed
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: node scripts/publish-macos-preview.mjs --artifacts .local/macos-artifacts --source "$GITHUB_SHA" --notes docs/releases/0.3.0-beta.2.md --publish
+        run: node scripts/publish-macos-preview.mjs --artifacts .local/macos-artifacts --source "$GITHUB_SHA" --notes docs/releases/0.3.0-beta.4.md --publish

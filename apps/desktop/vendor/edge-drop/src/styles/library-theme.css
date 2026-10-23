@@ -24,6 +24,15 @@
 :root[data-library-color] :is(.act,.icon-btn,.text-btn,.footer-capsule-btn,.footer-back-pill,.settings-tab-btn,.settings-header-pill,.pill,.bundle-collapse-hit,.bundle-collapse-btn,.slider-label-btn,.version-changelog-link,.subtle-quit-btn) { color: var(--text-primary); }
 :root[data-library-color] :is(.settings-tab-btn.active,.settings-header-pill.active,.pill.active,.slider-label-btn.active) { color: var(--bg-1); background-color: var(--text-primary); }
 :root[data-library-color] .filter-chip { --jf-active: var(--text-primary); --jf-text: var(--text-secondary); }
+/* Action pills retain their dark surface in every theme. Their ink belongs to
+   that surface, not to the shelf background behind it. */
+:root[data-library-color] .actions .act { color:#f4f4f4; }
+:root[data-library-color] .actions .act:hover,
+:root[data-library-color] .actions .act.active { color:#ffffff; }
+:root[data-library-color] .actions .act.danger:hover { color:#f87171; }
+:root[data-library-color] .actions .act:focus-visible { outline:2px solid #ffffff; outline-offset:-2px; }
+:root[data-library-color] .footer-capsule { color:var(--text-primary); border:1px solid var(--edge-strong); }
+:root[data-library-color] .blade { border:1px solid var(--edge-strong); }
 :root[data-library-color] :is(.filter-chip.active,.filter-chip[data-on="true"]) .filter-chip__skin { color: var(--bg-1); background-color: var(--text-primary); }
 
 @media (prefers-reduced-motion: reduce) {

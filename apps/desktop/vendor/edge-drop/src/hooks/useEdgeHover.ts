@@ -219,6 +219,7 @@ export function useEdgeHover(): void {
     const closePanelNow = () => {
       const s = useStore.getState()
       if (s.dragActive || s.internalDragReq) return
+      if (s.nativeDialogOpen || s.settingsOpen || document.querySelector('.palette-popover')) return
       if (s.styleFlyoutOpen) s.setStyleFlyoutOpen(false)
       if (s.languageFlyoutOpen) s.setLanguageFlyoutOpen(false)
       s.setOpen(false)
@@ -233,6 +234,7 @@ export function useEdgeHover(): void {
       graceTimer = undefined
       const state = useStore.getState()
       if (!state.open) return
+      if (state.nativeDialogOpen || state.settingsOpen || document.querySelector('.palette-popover')) return
       if (state.sliderActive || state.edgeTransition?.active) return
       if (state.dragActive || state.internalDragReq) return
 

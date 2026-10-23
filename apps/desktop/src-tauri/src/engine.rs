@@ -120,13 +120,15 @@ pub fn control(app: &tauri::AppHandle, action: &str) -> Result<(), String> {
                 }
                 let stop = Arc::new(AtomicBool::new(false));
                 let signal = stop.clone();
+                let wake=Arc::new(tokio::sync::Notify::new());
+                let wake_worker=wake.clone();
                 let done = Arc::new(AtomicBool::new(false));
                 let completed = done.clone();
                 let view = engine.recorder.clone();
                 let session = id.clone();
                 let app_copy = app.clone();
                 let task = tauri::async_runtime::spawn(async move {
-                    let work = crate::incremental::run(dir, signal.clone());
+                    let work = crate::incremental::run_notified(dir, signal.clone(),wake_worker.clone());
                     tokio::pin!(work);
                     let result = tokio::select! {
                         result = &mut work => result,
@@ -136,6 +138,7 @@ pub fn control(app: &tauri::AppHandle, action: &str) -> Result<(), String> {
                                 let state = view.snapshot();
                                 if state.session != session || state.phase == "error" {
                                     signal.store(true, Ordering::SeqCst);
+                                    wake_worker.notify_one();
                                     break;
                                 }
                             }
@@ -149,7 +152,7 @@ pub fn control(app: &tauri::AppHandle, action: &str) -> Result<(), String> {
                 });
                 let mut jobs = engine.live.lock().map_err(|_| "Cola ocupada")?;
                 jobs.retain(|_, job| !job.done.load(Ordering::SeqCst));
-                jobs.insert(id, crate::incremental::Live { stop, done, task });
+                jobs.insert(id, crate::incremental::Live { stop, wake, done, task });
             }
             *engine.paste_target.lock().map_err(|_| "Destino ocupado")? = original_target;
             crate::sounds::play(&app.state::<Store>().get::<Settings>("settings")?, false);
@@ -174,6 +177,7 @@ pub fn control(app: &tauri::AppHandle, action: &str) -> Result<(), String> {
                 let live = engine.live.lock().map_err(|_| "Cola ocupada")?;
                 if let Some(job) = live.get(&state.session) {
                     job.stop.store(true, Ordering::SeqCst);
+                    job.wake.notify_one();
                 }
                 // An already-sent request may finish caching, but never publishes
                 // or pastes anything after save/cancel.
@@ -234,7 +238,7 @@ fn schedule(
                     .get::<Settings>("settings")
                     .unwrap_or_default();
                 let target = engine.paste_target.lock().ok().and_then(|mut p| p.take());
-                if live_dictation && settings.auto_paste {
+                if live_dictation && settings.auto_paste && !text.trim().is_empty() {
                     if let Some(window) = app.get_webview_window("recorder") {
                         let _ = window.hide();
                     }
@@ -295,6 +299,7 @@ async fn process(app: &tauri::AppHandle, id: &str) -> Result<String, String> {
     };
     if let Some(job) = live {
         job.stop.store(true, Ordering::SeqCst);
+        job.wake.notify_one();
         // Missing/failed parts are retried below from the durable PCM.
         let _ = job.task.await;
     }
@@ -338,8 +343,8 @@ async fn process(app: &tauri::AppHandle, id: &str) -> Result<String, String> {
     if !result.exists() {
         audio::write_new(&result, text.as_bytes())?;
     }
-    app.state::<Store>().append_once(id, &text)?;
-    if settings.auto_copy {
+    if !text.trim().is_empty() { app.state::<Store>().append_once(id, &text)?; }
+    if settings.auto_copy && !text.trim().is_empty() {
         if app.clipboard().write_text(&text).is_err() {
             engine
                 .recorder

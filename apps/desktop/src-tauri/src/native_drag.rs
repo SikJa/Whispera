@@ -23,6 +23,22 @@ pub fn reserve() -> Result<Permit, String> {
 }
 #[cfg(windows)]
 pub fn button_down() -> bool { unsafe { GetAsyncKeyState(VK_LBUTTON.0 as i32) < 0 } }
+#[cfg(windows)]
+pub fn release_source_capture(window:&tauri::WebviewWindow)->Result<(),String> {
+    let source=window.clone();let (send,receive)=std::sync::mpsc::channel();
+    window.run_on_main_thread(move||{
+        use windows::Win32::UI::{Input::KeyboardAndMouse::{GetCapture,ReleaseCapture},WindowsAndMessaging::IsChild};
+        let result=(||{
+            let owner=HWND(source.hwnd().map_err(|e|e.to_string())?.0);
+            let capture=unsafe{GetCapture()};
+            if capture==owner||unsafe{IsChild(owner,capture).as_bool()} {
+                unsafe{ReleaseCapture()}.map_err(|e|e.to_string())?;
+            }
+            Ok(())
+        })();let _=send.send(result);
+    }).map_err(|e|e.to_string())?;
+    receive.recv_timeout(Duration::from_secs(5)).map_err(|_|"No respondió el inicio del arrastre".to_string())?
+}
 #[cfg(target_os = "macos")]
 pub fn button_down() -> bool {
     #[link(name = "CoreGraphics", kind = "framework")]

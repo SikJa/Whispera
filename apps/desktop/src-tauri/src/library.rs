@@ -574,6 +574,8 @@ pub async fn library_drag(
         return Err("El arrastre termino antes de empezar. Mantene pulsado el boton del mouse y volve a arrastrar.".into());
     }
     #[cfg(windows)]
+    crate::native_drag::release_source_capture(&window)?;
+    #[cfg(windows)]
     let source = window.hwnd().map_err(|e| e.to_string())?.0 as usize as i64;
     #[cfg(target_os = "macos")]
     let source = window;

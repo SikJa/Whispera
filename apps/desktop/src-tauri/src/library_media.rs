@@ -280,15 +280,53 @@ pub async fn library_media_save(
             .blocking_save_file();
         if let Some(picked) = picked {
             let target = picked.into_path().map_err(|e| e.to_string())?;
-            if target != source {
-                fs::copy(&source, &target).map_err(|e| e.to_string())?;
-            }
+            save_original_copy(&source, &target)?;
             return Ok(Some(target.to_string_lossy().into_owned()));
         }
         Ok(None)
     })
     .await
     .map_err(|e| e.to_string())?
+}
+fn save_original_copy(source: &Path, target: &Path) -> Result<(), String> {
+    if !source.is_file(){return Err("La imagen original ya no existe".into());}
+    // A differently cased Windows path or a symbolic link can still name the
+    // original file. Never open that file for writing over itself.
+    let same = source == target || fs::canonicalize(source).is_ok_and(|source|
+        fs::canonicalize(target).is_ok_and(|target| source == target));
+    if same { return Ok(()); }
+    let temporary=target.parent().unwrap_or(Path::new(".")).join(format!(".whispera-save-{}.tmp",uuid::Uuid::new_v4()));
+    let mut created=false;
+    let result=(|| {
+        let mut input=fs::File::open(source).map_err(|e|e.to_string())?;
+        let mut output=fs::OpenOptions::new().write(true).create_new(true).open(&temporary).map_err(|e|e.to_string())?;
+        created=true;
+        std::io::copy(&mut input,&mut output).map_err(|e|e.to_string())?;
+        output.sync_all().map_err(|e|e.to_string())?;
+        drop(output);drop(input);
+        // Replacing the directory entry after a complete copy also preserves
+        // the original if the user chose a different hard link to the same file.
+        fs::rename(&temporary,target).map_err(|e|e.to_string())
+    })();
+    if created{let _=fs::remove_file(&temporary);}
+    result
+}
+#[cfg(test)]
+mod save_original_tests {
+    use super::*;
+    #[test]
+    fn save_as_preserves_original_bytes_and_reports_destination_errors() {
+        let root=std::env::temp_dir().join(format!("whispera-save-{}",uuid::Uuid::new_v4()));
+        fs::create_dir(&root).unwrap();let source=root.join("captura original.png");let target=root.join("captura á ñ.png");
+        let original=b"synthetic image bytes";fs::write(&source,original).unwrap();
+        save_original_copy(&source,&source).unwrap();assert_eq!(fs::read(&source).unwrap(),original);
+        save_original_copy(&source,&target).unwrap();assert_eq!(fs::read(&source).unwrap(),original);assert_eq!(fs::read(&target).unwrap(),original);
+        fs::write(&target,b"old destination").unwrap();save_original_copy(&source,&target).unwrap();assert_eq!(fs::read(&target).unwrap(),original);
+        let linked=root.join("linked.png");fs::hard_link(&source,&linked).unwrap();save_original_copy(&source,&linked).unwrap();assert_eq!(fs::read(&source).unwrap(),original);assert_eq!(fs::read(&linked).unwrap(),original);
+        assert!(save_original_copy(&source,&root.join("missing/output.png")).is_err());assert_eq!(fs::read(&source).unwrap(),original);
+        #[cfg(windows)] {save_original_copy(&source,&root.join("CAPTURA ORIGINAL.PNG")).unwrap();assert_eq!(fs::read(&source).unwrap(),original);}
+        fs::remove_dir_all(root).unwrap();
+    }
 }
 #[tauri::command]
 pub async fn library_media_export(

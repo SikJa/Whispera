@@ -1,17 +1,29 @@
 use crate::{
-    groq, library,
+    groq, library, video_timing::{self, Cue, TimedText},
     storage::{Rule, Settings, Store},
 };
 use serde::{Deserialize, Serialize};
 use std::{
     fs,
     path::{Path, PathBuf},
-    sync::Mutex,
+    sync::{Condvar, Mutex},
     time::Duration,
 };
 use tauri::Manager;
 
 static GATE: Mutex<()> = Mutex::new(());
+// Retain the one-second recovery poll, but start newly queued work immediately.
+struct QueueWake { pending: Mutex<bool>, ready: Condvar }
+impl QueueWake {
+    const fn new() -> Self { Self { pending: Mutex::new(false), ready: Condvar::new() } }
+    fn notify(&self) { let mut pending=self.pending.lock().unwrap_or_else(|e|e.into_inner()); *pending=true; self.ready.notify_one(); }
+    fn wait(&self) {
+        let pending=self.pending.lock().unwrap_or_else(|e|e.into_inner());
+        let (mut pending,_)=self.ready.wait_timeout_while(pending,Duration::from_secs(1),|p|!*p).unwrap_or_else(|e|e.into_inner());
+        *pending=false;
+    }
+}
+static WORK_WAKE: QueueWake = QueueWake::new();
 #[derive(Clone, Default, Serialize, Deserialize)]
 pub struct Transcript {
     pub status: String,
@@ -21,6 +33,14 @@ pub struct Transcript {
     completed: Vec<String>,
     #[serde(default)]
     preparation_failed: bool,
+    #[serde(default)]
+    pub cues: Vec<Cue>,
+    #[serde(default)]
+    pub timing_complete: bool,
+    #[serde(default)]
+    part_offsets: Vec<Option<f64>>,
+    #[serde(default)]
+    completed_cues: Vec<Vec<Cue>>,
 }
 fn key(path: &Path) -> String {
     format!("video_transcript:{}", path.to_string_lossy())
@@ -55,9 +75,17 @@ fn transcribe_track(store:&Store,root:&Path,binary:&Path,video:&Path)->Result<()
         command.args(["-hide_banner","-loglevel","error","-y","-i"]).arg(video).args(["-map","0:a:0","-vn","-ar","16000","-ac","1","-c:a","pcm_s16le","-f","segment","-segment_time","300"]).arg(root.join("speech-%04d.wav")).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null());
         crate::replay::run_command(&mut command,Duration::from_secs(60))?;
         let mut parts:Vec<_>=fs::read_dir(&root).map_err(|e|e.to_string())?.filter_map(Result::ok).map(|entry|entry.path()).filter(|path|path.extension().is_some_and(|ext|ext=="wav")).collect();parts.sort();
-        let mut texts=Vec::new();for part in parts{texts.push(tauri::async_runtime::block_on(groq::transcribe(&part,&settings,&rules))?);}
-        let text=texts.join("\n\n");fs::write(video.with_extension("transcript.txt"),&text).map_err(|e|e.to_string())?;
-        store.put(&key(video),&Transcript{status:"ready".into(),text,..Default::default()})
+        let mut texts=Vec::new();let mut cues=Vec::new();let mut offset=Some(0.);let mut complete=true;
+        for part in parts {
+            let value=tauri::async_runtime::block_on(groq::request_segments(&part,&settings,&rules))?;
+            let timed=video_timing::parse(&value,&rules,video_timing::wav_seconds(&part))?;
+            let aligned=offset_cues(&timed.cues,offset);
+            if !timed.text.trim().is_empty() && aligned.is_empty() {complete=false;}
+            cues.extend(aligned);texts.push(timed.text);
+            offset=offset.zip(video_timing::wav_seconds(&part)).map(|(at,duration)|at+duration);
+        }
+        let text=texts.join("\n\n");fs::write(video.with_extension("transcript.txt"),video_timing::render(&text,&cues,complete)).map_err(|e|e.to_string())?;
+        store.put(&key(video),&Transcript{status:"ready".into(),text,cues,timing_complete:complete,..Default::default()})
     })();
     let _=fs::remove_dir_all(root);
     if let Err(error)=&result{let _=store.put(&key(video),&Transcript{status:"error".into(),error:error.clone(),..Default::default()});}
@@ -145,13 +173,14 @@ pub fn enqueue(store: &Store, video: &Path) -> Result<(), String> {
         status: "pending".into(),
         ..Default::default()
     };
+    let mut base=Some(0.);
     for directory in directories {
         if let Ok(error) = fs::read_to_string(directory.join("speech-error.txt")) {
             transcript.status = "error".into();
             transcript.error = error;
             transcript.preparation_failed = true;
         }
-        let mut parts: Vec<_> = fs::read_dir(directory)
+        let mut parts: Vec<_> = fs::read_dir(&directory)
             .map_err(|e| e.to_string())?
             .flatten()
             .map(|e| e.path())
@@ -164,6 +193,12 @@ pub fn enqueue(store: &Store, video: &Path) -> Result<(), String> {
             })
             .collect();
         parts.sort();
+        let mut offset=base;
+        for part in &parts {
+            transcript.part_offsets.push(offset);
+            offset=offset.zip(video_timing::wav_seconds(part)).map(|(at,duration)|at+duration);
+        }
+        base=base.zip(video_timing::part_seconds(&directory)).map(|(at,duration)|at+duration);
         transcript.parts.extend(parts);
     }
     if transcript.parts.is_empty() && transcript.error.is_empty() {
@@ -182,17 +217,37 @@ pub fn enqueue(store: &Store, video: &Path) -> Result<(), String> {
             &key(video),
             serde_json::to_value(transcript).map_err(|e| e.to_string())?,
         ),
-    ])
+    ])?;
+    WORK_WAKE.notify();
+    Ok(())
 }
 fn process(store: &Store, video: &Path) -> Result<Transcript, String> {
-    process_with(store, video, |part, settings, rules| {
-        tauri::async_runtime::block_on(groq::transcribe(part, settings, rules))
+    process_timed_with(store, video, |part, settings, rules| {
+        let value=tauri::async_runtime::block_on(groq::request_segments(part, settings, rules))?;
+        video_timing::parse(&value,rules,video_timing::wav_seconds(part))
     })
 }
+#[cfg(test)]
 fn process_with(
     store: &Store,
     video: &Path,
     mut transcribe: impl FnMut(&Path, &Settings, &[Rule]) -> Result<String, String>,
+) -> Result<Transcript, String> {
+    process_timed_with(store,video,|part,settings,rules|transcribe(part,settings,rules).map(|text|TimedText{text,cues:Vec::new()}))
+}
+fn offset_cues(cues:&[Cue],offset:Option<f64>)->Vec<Cue> {
+    let Some(offset)=offset.filter(|at|at.is_finite() && *at>=0.) else{return Vec::new();};
+    cues.iter().map(|cue|Cue{start:cue.start+offset,end:cue.end+offset,text:cue.text.clone()}).collect()
+}
+fn collect_timing(transcript:&mut Transcript) {
+    transcript.cues=transcript.completed_cues.iter().flatten().cloned().collect();
+    transcript.timing_complete=transcript.completed.len()==transcript.parts.len()
+        && transcript.completed.iter().enumerate().all(|(index,text)|text.trim().is_empty() || transcript.completed_cues.get(index).is_some_and(|c|!c.is_empty()));
+}
+fn process_timed_with(
+    store: &Store,
+    video: &Path,
+    mut transcribe: impl FnMut(&Path, &Settings, &[Rule]) -> Result<TimedText, String>,
 ) -> Result<Transcript, String> {
     let mut transcript = get(store, video)?;
     if transcript.preparation_failed {
@@ -200,29 +255,34 @@ fn process_with(
     }
     transcript.status = "processing".into();
     transcript.error.clear();
+    transcript.completed_cues.resize(transcript.completed.len(),Vec::new());
     store.put(&key(video), &transcript)?;
     let result = (|| -> Result<(), String> {
         let settings: Settings = store.get("settings")?;
         let rules: Vec<Rule> = store.get("rules")?;
-        for part in transcript.parts.iter().skip(transcript.completed.len()) {
+        for index in transcript.completed.len()..transcript.parts.len() {
+            let part=&transcript.parts[index];
             if !recording_enabled(&store) {
                 return Err(
                     "Transcripcion de videos desactivada. Se conservo el audio para reintentar."
                         .into(),
                 );
             }
-            let text = transcribe(part, &settings, &rules)?;
-            transcript.completed.push(text);
+            let timed = transcribe(part, &settings, &rules)?;
+            transcript.completed_cues.push(offset_cues(&timed.cues,transcript.part_offsets.get(index).copied().flatten()));
+            transcript.completed.push(timed.text);
             store.put(&key(video), &transcript)?;
         }
         transcript.text = transcript.completed.join("\n\n");
+        collect_timing(&mut transcript);
         if !transcript.text.trim().is_empty() {
-            fs::write(video.with_extension("transcript.txt"), &transcript.text)
+            fs::write(video.with_extension("transcript.txt"), video_timing::render(&transcript.text,&transcript.cues,transcript.timing_complete))
                 .map_err(|e| e.to_string())?;
         }
         Ok(())
     })();
     transcript.text = transcript.completed.join("\n\n");
+    collect_timing(&mut transcript);
     transcript.status = if result.is_ok() { "ready" } else { "error" }.into();
     transcript.error = result.err().unwrap_or_default();
     store.put(&key(video), &transcript)?;
@@ -283,8 +343,9 @@ pub fn start(app: &tauri::AppHandle) {
                 }
             }
         }
+        WORK_WAKE.notify();
         loop {
-            std::thread::sleep(Duration::from_secs(1));
+            WORK_WAKE.wait();
             if !recording_enabled(&store) {
                 continue;
             }
@@ -326,8 +387,9 @@ pub fn package(store: &Store, original: &[PathBuf]) -> Result<(Vec<String>, Stri
             let sidecar = path.with_extension("transcript.txt");
             if t.status == "ready" && !t.text.trim().is_empty() {
                 // Regenerate only our recorded transcript, never an arbitrary neighboring file.
-                if fs::read_to_string(&sidecar).ok().as_deref() != Some(t.text.as_str()) {
-                    fs::write(&sidecar, &t.text).map_err(|e| e.to_string())?;
+                let content=video_timing::render(&t.text,&t.cues,t.timing_complete);
+                if fs::read_to_string(&sidecar).ok().as_deref() != Some(content.as_str()) {
+                    fs::write(&sidecar, &content).map_err(|e| e.to_string())?;
                 }
                 files.push(sidecar.to_string_lossy().into_owned());
                 texts.push(t.text);
@@ -444,7 +506,7 @@ fn transcript_action(app: tauri::AppHandle, path: String, action: String) -> Res
         "copy" if t.status == "ready" => {
             use tauri_plugin_clipboard_manager::ClipboardExt;
             app.clipboard()
-                .write_text(&t.text)
+                .write_text(video_timing::render(&t.text,&t.cues,t.timing_complete))
                 .map_err(|e| e.to_string())?;
             library::suppress_clipboard(&app);
         }
@@ -465,18 +527,108 @@ fn transcript_action(app: tauri::AppHandle, path: String, action: String) -> Res
                     serde_json::to_value(queue).map_err(|e| e.to_string())?,
                 ),
             ])?;
+            WORK_WAKE.notify();
         }
         _ => return Err("Transcripcion no disponible".into()),
     }
     // Internal audio paths and intermediate partial responses are not part of the UI contract.
     t.parts.clear();
     t.completed.clear();
+    t.part_offsets.clear();
+    t.completed_cues.clear();
     Ok(t)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    fn wave(path:&Path,seconds:f64) {
+        let mut out=hound::WavWriter::create(path,hound::WavSpec{channels:1,sample_rate:16000,bits_per_sample:16,sample_format:hound::SampleFormat::Int}).unwrap();
+        for _ in 0..(seconds*16000.) as usize {out.write_sample(0i16).unwrap();}out.finalize().unwrap();
+    }
+    fn timed(text:&str)->TimedText {TimedText{text:text.into(),cues:vec![Cue{start:0.2,end:0.8,text:text.into()}]}}
+    #[test]
+    fn paused_parts_use_encoded_duration_and_chunks_use_actual_audio_duration() {
+        let root=root();let video=root.join("fixture.mp4");fs::write(&video,b"fixture").unwrap();
+        let first=root.join("part-0000");let second=root.join("part-0001");fs::create_dir(&first).unwrap();fs::create_dir(&second).unwrap();
+        wave(&first.join("speech-0000.wav"),1.25);wave(&first.join("speech-0001.wav"),0.75);wave(&second.join("speech-0000.wav"),1.);
+        fs::write(first.join("speech-timing.json"),r#"{"videoSeconds":2.345}"#).unwrap();
+        let store=Store::open(Path::new(":memory:")).unwrap();
+        store.put("library_settings", &serde_json::json!({"transcribeVideo":true})).unwrap();enqueue(&store,&video).unwrap();
+        assert_eq!(get(&store,&video).unwrap().part_offsets,vec![Some(0.),Some(1.25),Some(2.345)]);
+        let result=process_timed_with(&store,&video,|_,_,_|Ok(timed("Frase."))).unwrap();
+        assert!(result.timing_complete);assert_eq!(result.cues.len(),3);assert!((result.cues[2].start-2.545).abs()<0.000001);
+        let (files,_)=package(&store,&[video.clone()]).unwrap();let text=fs::read_to_string(&files[1]).unwrap();assert!(text.contains("00:00:02.545"));
+        // Re-packaging must not strip the timestamps back to plain text.
+        assert_eq!(text,fs::read_to_string(package(&store,&[video]).unwrap().0[1].clone()).unwrap());
+        fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
+    fn timed_retry_preserves_completed_cues_without_uploading_audio_twice() {
+        let root=root();let video=root.join("retry.mp4");fs::write(&video,b"fixture").unwrap();let store=Store::open(Path::new(":memory:")).unwrap();
+        store.put("library_settings", &serde_json::json!({"transcribeVideo":true})).unwrap();
+        store.put(&key(&video),&Transcript{status:"pending".into(),parts:vec![root.join("first.wav"),root.join("second.wav")],part_offsets:vec![Some(0.),Some(7.5)],..Default::default()}).unwrap();
+        let mut calls=0;let failed=process_timed_with(&store,&video,|_,_,_|{calls+=1;if calls==1 {Ok(timed("Primera."))}else{Err("offline".into())}}).unwrap();
+        assert_eq!(failed.status,"error");assert_eq!(failed.cues.len(),1);assert!(!failed.timing_complete);
+        let mut retries=0;let result=process_timed_with(&store,&video,|path,_,_|{retries+=1;assert!(path.ends_with("second.wav"));Ok(timed("Segunda."))}).unwrap();
+        assert_eq!(retries,1);assert!(result.timing_complete);assert_eq!(result.cues[0],failed.cues[0]);assert_eq!(result.cues[1].start,7.7);
+        assert!(fs::read_to_string(video.with_extension("transcript.txt")).unwrap().contains("00:00:07.700"));fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
+    fn legacy_cache_and_missing_part_alignment_keep_complete_plain_text() {
+        let value=serde_json::json!({"status":"ready","text":"Anterior.","error":"","parts":[],"completed":[]});
+        let old:Transcript=serde_json::from_value(value).unwrap();assert!(!old.timing_complete);assert!(old.cues.is_empty());
+        let root=root();let video=root.join("legacy.mp4");let store=Store::open(Path::new(":memory:")).unwrap();
+        store.put("library_settings", &serde_json::json!({"transcribeVideo":true})).unwrap();
+        store.put(&key(&video),&Transcript{parts:vec![root.join("first.wav")],..Default::default()}).unwrap();
+        let result=process_timed_with(&store,&video,|_,_,_|Ok(timed("Texto completo."))).unwrap();assert_eq!(result.status,"ready");assert!(!result.timing_complete);
+        assert_eq!(fs::read_to_string(video.with_extension("transcript.txt")).unwrap(),"Texto completo.");fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
+    fn queue_notifications_survive_before_wait_and_during_processing() {
+        let signal=std::sync::Arc::new(QueueWake::new());signal.notify();let at=std::time::Instant::now();signal.wait();assert!(at.elapsed()<Duration::from_millis(800));
+        let other=signal.clone();let (tx,rx)=std::sync::mpsc::channel();let worker=std::thread::spawn(move||{other.wait();tx.send(()).unwrap();});
+        signal.notify();rx.recv_timeout(Duration::from_secs(2)).unwrap();worker.join().unwrap();
+        signal.notify();signal.notify();let at=std::time::Instant::now();signal.wait();assert!(at.elapsed()<Duration::from_millis(800));
+    }
+    #[test]
+    #[ignore = "Measured scheduler comparison; no recording, credentials or network"]
+    fn measure_polling_and_notification_delay() {
+        let mut rows=Vec::new();
+        for phase in [0u64,250,500,750] {
+            let signal=std::sync::Arc::new(QueueWake::new());let other=signal.clone();let (tx,rx)=std::sync::mpsc::channel();
+            let worker=std::thread::spawn(move||{other.wait();tx.send(std::time::Instant::now()).unwrap();});
+            std::thread::sleep(Duration::from_millis(phase));let start=std::time::Instant::now();signal.notify();let elapsed=rx.recv_timeout(Duration::from_secs(2)).unwrap().saturating_duration_since(start);worker.join().unwrap();
+            let start=std::time::Instant::now();std::thread::sleep(Duration::from_millis(1000-phase));let previous=start.elapsed();
+            rows.push(serde_json::json!({"phaseMs":phase,"oldPollMs":previous.as_secs_f64()*1000.,"notificationMs":elapsed.as_secs_f64()*1000.}));
+        }
+        let path=std::env::var_os("WHISPERA_WAKE_RESULTS").expect("Result file required");fs::write(path,serde_json::to_vec_pretty(&rows).unwrap()).unwrap();
+    }
+    #[test]
+    #[ignore = "Opt-in: real Groq, explicitly supplied synthetic 20s fixture only; no desktop, microphone or clipboard"]
+    fn synthetic_timed_video_and_trim_pipeline() {
+        crate::lossless_upload::configure(Path::new(env!("CARGO_MANIFEST_DIR")).join("../node_modules/ffmpeg-static/ffmpeg.exe"));
+        let fixture=PathBuf::from(std::env::var_os("WHISPERA_TIMING_FIXTURES").expect("Synthetic fixture directory"));
+        let reference:serde_json::Value=serde_json::from_slice(&fs::read(fixture.join("reference.json")).unwrap()).unwrap();assert_eq!(reference["syntheticOnly"],true);
+        let root=fixture.join(format!("pipeline-{}",uuid::Uuid::new_v4()));fs::create_dir(&root).unwrap();let video=root.join("synthetic.mp4");
+        let binary=Path::new(env!("CARGO_MANIFEST_DIR")).join("../node_modules/ffmpeg-static/ffmpeg.exe");let mut command=crate::replay::command(&binary);
+        command.args(["-hide_banner","-loglevel","error","-y","-f","lavfi","-i","color=size=320x180:rate=30:color=navy","-i"]).arg(fixture.join("synthetic-20s.wav")).args(["-t","20","-c:v","libx264","-preset","ultrafast","-c:a","aac"]).arg(&video).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null());
+        crate::replay::run_command(&mut command,Duration::from_secs(30)).unwrap();
+        let part=root.join("part-0000");fs::create_dir(&part).unwrap();fs::copy(fixture.join("synthetic-20s.wav"),part.join("speech-0000.wav")).unwrap();video_timing::record_part_duration(&video,&part);
+        let store=Store::open(Path::new(":memory:")).unwrap();
+        store.put("library_settings", &serde_json::json!({"transcribeVideo":true})).unwrap();let mut settings=Settings::default();settings.language="es".into();store.put("settings",&settings).unwrap();
+        let mut rows=Vec::new();
+        for trial in 0..3 {
+            let at=std::time::Instant::now();enqueue(&store,&video).unwrap();let result=process(&store,&video).unwrap();let (files,_)=package(&store,&[video.clone()]).unwrap();
+            let elapsed=at.elapsed().as_secs_f64()*1000.;assert_eq!(result.status,"ready","{}",result.error);assert!(result.timing_complete);assert_eq!(files.len(),2);assert!(!result.cues.is_empty());
+            let saved=fs::read_to_string(&files[1]).unwrap();assert!(saved.starts_with('['));
+            rows.push(serde_json::json!({"trial":trial,"enqueueAsrExportMs":elapsed,"cues":result.cues,"text":result.text}));
+        }
+        let trimmed=root.join("selected.mp4");crate::video_trim::trim(&binary,&video,&trimmed,2.,12.).unwrap();let at=std::time::Instant::now();
+        transcribe_track(&store,&root.join("trim-audio"),&binary,&trimmed).unwrap();let result=get(&store,&trimmed).unwrap();assert_eq!(result.status,"ready");assert!(result.timing_complete);assert!(result.cues.iter().all(|cue|cue.start>=0. && cue.end<=10.25));
+        rows.push(serde_json::json!({"trimmed":true,"extractAsrExportMs":at.elapsed().as_secs_f64()*1000.,"cues":result.cues,"text":result.text}));
+        fs::write(fixture.join("pipeline-results.json"),serde_json::to_vec_pretty(&serde_json::json!({"directory":root,"measurements":rows})).unwrap()).unwrap();
+    }
     #[test]
     fn sharing_uses_external_files_reuses_exports_and_preserves_sources() {
         let root = root();
@@ -555,6 +707,25 @@ mod tests {
             let mut preserved = Vec::new();
             clipboard_win::raw::get_file_list(&mut preserved).unwrap();
             assert_eq!(preserved, files);
+        }
+        // Exercise the real image publisher on this private station too.
+        let pixels=image::RgbaImage::from_raw(2,2,vec![10,20,30,255,40,50,60,128,70,80,90,0,100,110,120,64]).unwrap();
+        let png=crate::screen_capture::rgba_png(&pixels).unwrap();let dib=crate::image_clipboard::bitmap(&pixels).unwrap();
+        let (ready,held)=std::sync::mpsc::channel();
+        let holder=std::thread::spawn(move||{
+            let clipboard=clipboard_win::Clipboard::new().unwrap();ready.send(()).unwrap();
+            std::thread::sleep(Duration::from_millis(15));drop(clipboard);
+        });
+        held.recv().unwrap();
+        crate::image_clipboard::write(&png,&dib).unwrap();
+        holder.join().unwrap();
+        {
+            let _clipboard=clipboard_win::Clipboard::new_attempts(5).unwrap();
+            let format=clipboard_win::register_format("PNG").unwrap().get();
+            let mut actual=vec![0;png.len()];assert_eq!(clipboard_win::raw::get(format,&mut actual).unwrap(),png.len());
+            assert_eq!(image::load_from_memory(&actual).unwrap().into_rgba8(),pixels);
+            let mut actual=vec![0;dib.len()];assert_eq!(clipboard_win::raw::get(17,&mut actual).unwrap(),dib.len());assert_eq!(actual,dib);
+            assert!(!clipboard_win::raw::is_format_avail(15));assert!(!clipboard_win::raw::is_format_avail(13));
         }
         fs::remove_dir_all(root).unwrap();
     }

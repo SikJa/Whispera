@@ -189,6 +189,36 @@ pub(crate) fn raise_controls(app: &tauri::AppHandle) {
         }
     });
 }
+#[cfg(windows)]
+const FROZEN_ORDER_GUARD: usize = 0x5746525a;
+#[cfg(windows)]
+unsafe extern "system" fn frozen_order_guard(hwnd:windows::Win32::Foundation::HWND,message:u32,wp:windows::Win32::Foundation::WPARAM,lp:windows::Win32::Foundation::LPARAM,id:usize,_data:usize)->windows::Win32::Foundation::LRESULT {
+    use windows::Win32::{Foundation::LRESULT,UI::{Shell::{DefSubclassProc,RemoveWindowSubclass},WindowsAndMessaging::{WM_MOUSEACTIVATE,MA_NOACTIVATEANDEAT,WM_WINDOWPOSCHANGING,WINDOWPOS,SWP_NOZORDER,WM_NCDESTROY}}};
+    if message==WM_MOUSEACTIVATE {return LRESULT(MA_NOACTIVATEANDEAT as isize);}
+    if message==WM_WINDOWPOSCHANGING&&lp.0!=0 {(*(lp.0 as *mut WINDOWPOS)).flags|=SWP_NOZORDER;}
+    if message==WM_NCDESTROY {let _=RemoveWindowSubclass(hwnd,Some(frozen_order_guard),id);}
+    DefSubclassProc(hwnd,message,wp,lp)
+}
+#[cfg(windows)]
+fn freeze_native_order(hwnd:windows::Win32::Foundation::HWND,locked:bool)->Result<(),String> {
+    use windows::Win32::UI::Shell::{SetWindowSubclass,RemoveWindowSubclass};
+    unsafe {
+        if locked&&!SetWindowSubclass(hwnd,Some(frozen_order_guard),FROZEN_ORDER_GUARD,0).as_bool(){return Err("No se pudo proteger el fondo de captura".into());}
+        if !locked {let _=RemoveWindowSubclass(hwnd,Some(frozen_order_guard),FROZEN_ORDER_GUARD);}
+    }Ok(())
+}
+#[cfg(windows)]
+pub(crate) fn freeze_order(window:&tauri::WebviewWindow,locked:bool)->Result<(),String> {
+    let child=window.clone();let (send,receive)=std::sync::mpsc::channel();
+    window.run_on_main_thread(move||{
+        let result=child.hwnd().map_err(|e|e.to_string()).and_then(|h|{
+            let hwnd=windows::Win32::Foundation::HWND(h.0);
+            if locked {raise_native(hwnd)?;}
+            freeze_native_order(hwnd,locked)
+        });let _=send.send(result);
+    }).map_err(|e|e.to_string())?;
+    receive.recv_timeout(std::time::Duration::from_secs(5)).map_err(|_|"No respondió el fondo de captura".to_string())?
+}
 pub(crate) fn raise_window(window: &tauri::WebviewWindow) -> Result<(), String> {
     #[cfg(windows)]
     { window.hwnd().map_err(|e| e.to_string()).and_then(|hwnd| raise_native(windows::Win32::Foundation::HWND(hwnd.0))) }
@@ -782,17 +812,33 @@ pub async fn screen_image_export(
         if ctx.kind != "image" || window.label() != session::label(&id,"screen-ink") || bytes.len() > 64 * 1024 * 1024 {
             return Err("Imagen no disponible".into());
         }
-        let image = tauri::image::Image::from_bytes(&bytes).map_err(|e| e.to_string())?;
-        if image.width() > 8192 || image.height() > 8192 {
+        let started=Instant::now();
+        let bytes=if bytes.is_empty() {session::editor(&app,&id).image.lock().map_err(|_|"Editor ocupado")?.clone()}else{bytes};
+        let rgba=crate::screen_capture::rounded_image(&bytes,ctx.scale)?;
+        if rgba.width() > 8192 || rgba.height() > 8192 {
             return Err("Imagen demasiado grande".into());
         }
-        let bytes = crate::screen_capture::rounded_png(&bytes, ctx.scale)?;
-        let image = tauri::image::Image::from_bytes(&bytes).map_err(|e| e.to_string())?;
+        let bytes=crate::screen_capture::rgba_png(&rgba)?;
+        let prepared_ms=started.elapsed().as_millis();
+        // Escape/cancel must not let an old conversion overwrite a newer clipboard.
+        context(&app,&id)?;
         let saved_path = match action.as_str() {
             "copy" => {
-                retry_clipboard_image(|| app.clipboard().write_image(&image).map_err(|e| e.to_string()))?;
+                let copying=Instant::now();
+                #[cfg(windows)]
+                {
+                    let dib=crate::image_clipboard::bitmap(&rgba)?;
+                    retry_clipboard_image(||crate::image_clipboard::write(&bytes,&dib))?;
+                }
+                #[cfg(not(windows))]
+                {
+                    let image=tauri::image::Image::new(rgba.as_raw(),rgba.width(),rgba.height());
+                    retry_clipboard_image(||app.clipboard().write_image(&image).map_err(|e|e.to_string()))?;
+                }
+                let copied_ms=copying.elapsed().as_millis();let closing=Instant::now();
                 // Clipboard success releases the desktop before optional disk/history work.
                 screen::finish_image(app.clone(), &id)?;
+                let _=app.state::<crate::storage::Store>().event(&format!("Captura copiada: preparacion {prepared_ms} ms; portapapeles {copied_ms} ms; cierre {} ms",closing.elapsed().as_millis()));
                 let archived = (|| -> Result<(), String> {
                     let root = app.path().app_cache_dir().map_err(|e| e.to_string())?.join("screenshots");
                     fs::create_dir_all(&root).map_err(|e| e.to_string())?;
@@ -1027,6 +1073,33 @@ mod tests {
             let mut current=Default::default();GetWindowRect(frame.0,&mut current).unwrap();
             assert_eq!((original.left,original.top,original.right,original.bottom),(current.left,current.top,current.right,current.bottom));
             assert_eq!(GetForegroundWindow(),foreground);
+        }
+    }
+    #[test]
+    #[cfg(windows)]
+    fn frozen_desktop_cannot_cover_border_or_ink_on_outside_click() {
+        use windows::{core::w,Win32::{Foundation::HWND,UI::WindowsAndMessaging::{CreateWindowExW,DestroyWindow,GetWindow,GW_HWNDPREV,WS_POPUP,WS_VISIBLE,WS_EX_TOOLWINDOW,WS_EX_NOACTIVATE}}};
+        struct Owned(HWND);impl Drop for Owned{fn drop(&mut self){unsafe{let _=DestroyWindow(self.0);}}}
+        unsafe {
+            // Exercise real top-level ordering, off-screen without activation.
+            let frozen=Owned(CreateWindowExW(WS_EX_TOOLWINDOW|WS_EX_NOACTIVATE,w!("STATIC"),w!("Whispera frozen layer test"),WS_POPUP|WS_VISIBLE,-32000,-32000,100,100,None,None,None,None).unwrap());
+            let frame=Owned(CreateWindowExW(WS_EX_TOOLWINDOW|WS_EX_NOACTIVATE,w!("STATIC"),w!("Whispera frame layer test"),WS_POPUP|WS_VISIBLE,-32000,-32000,50,50,None,None,None,None).unwrap());
+            let ink=Owned(CreateWindowExW(WS_EX_TOOLWINDOW|WS_EX_NOACTIVATE,w!("STATIC"),w!("Whispera ink layer test"),WS_POPUP|WS_VISIBLE,-32000,-32000,50,50,None,None,None,None).unwrap());
+            raise_native(frozen.0).unwrap();raise_native(frame.0).unwrap();raise_native(ink.0).unwrap();
+            fn above(first:HWND,second:HWND)->bool {
+                let mut cursor=second;
+                for _ in 0..4096 {match unsafe{GetWindow(cursor,GW_HWNDPREV)}{Ok(next) if !next.0.is_null()=>{if next==first{return true;}cursor=next;},_=>break}}false
+            }
+            // Baseline: promoting an independent frozen window covers the frame.
+            raise_native(frozen.0).unwrap();assert!(!above(frame.0,frozen.0));
+            raise_native(frame.0).unwrap();raise_native(ink.0).unwrap();
+            freeze_native_order(frozen.0,true).unwrap();
+            for _ in 0..5 {
+                raise_native(frozen.0).unwrap();assert!(above(frame.0,frozen.0));assert!(above(ink.0,frozen.0));
+                raise_native(frame.0).unwrap();assert!(above(frame.0,frozen.0));
+            }
+            freeze_native_order(frozen.0,false).unwrap();
+            raise_native(frozen.0).unwrap();assert!(!above(frame.0,frozen.0));
         }
     }
     #[test]

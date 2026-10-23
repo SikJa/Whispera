@@ -44,6 +44,7 @@ struct Cached {
 
 pub struct Live {
     pub stop: Arc<AtomicBool>,
+    pub wake: Arc<tokio::sync::Notify>,
     pub done: Arc<AtomicBool>,
     pub task: tauri::async_runtime::JoinHandle<Result<(), String>>,
 }
@@ -181,6 +182,7 @@ async fn part(
     rate: u32,
     p: &Plan,
     stop: &AtomicBool,
+    wake: &tokio::sync::Notify,
 ) -> Result<String, String> {
     let cache = dir.join(format!("live-{index:04}.json"));
     if cache.exists() {
@@ -226,14 +228,23 @@ async fn part(
                 if !retry || attempt == 2 {
                     break;
                 }
-                tokio::time::sleep(Duration::from_secs(2 << attempt)).await;
+                if wait_or_stop(stop,wake,Duration::from_secs(2 << attempt)).await { break; }
             }
         }
     }
     Err(last)
 }
 
+async fn wait_or_stop(stop:&AtomicBool,wake:&tokio::sync::Notify,duration:Duration)->bool {
+    if stop.load(Ordering::SeqCst) {return true;}
+    tokio::select! { _=wake.notified()=>{}, _=tokio::time::sleep(duration)=>{} }
+    stop.load(Ordering::SeqCst)
+}
+#[cfg(test)]
 pub async fn run(dir: PathBuf, stop: Arc<AtomicBool>) -> Result<(), String> {
+    run_notified(dir,stop,Arc::new(tokio::sync::Notify::new())).await
+}
+pub async fn run_notified(dir: PathBuf, stop: Arc<AtomicBool>, wake:Arc<tokio::sync::Notify>) -> Result<(), String> {
     let p = plan(&dir)?;
     let mut index = 0;
     loop {
@@ -242,10 +253,10 @@ pub async fn run(dir: PathBuf, stop: Arc<AtomicBool>) -> Result<(), String> {
         }
         let (samples, rate) = info(&dir)?;
         if let Some(w) = window(index, samples, rate, false) {
-            part(&dir, index, w, rate, &p, &stop).await?;
+            part(&dir, index, w, rate, &p, &stop,&wake).await?;
             index += 1;
         } else {
-            tokio::time::sleep(Duration::from_millis(200)).await;
+            wait_or_stop(&stop,&wake,Duration::from_millis(200)).await;
         }
     }
 }
@@ -362,9 +373,10 @@ async fn finish_parts(dir: &Path, p: &Plan) -> Result<String, String> {
     let mut texts = vec![];
     let mut index = 0;
     let stop = AtomicBool::new(false);
+    let wake = tokio::sync::Notify::new();
     let mut previous = None;
     while let Some(w) = window(index, samples, rate, true) {
-        texts.push(part(dir, index, w, rate, &p, &stop).await?);
+        texts.push(part(dir, index, w, rate, &p, &stop,&wake).await?);
         if p.version >= 2 {
             let c: Cached = serde_json::from_slice(
                 &fs::read(dir.join(format!("live-{index:04}.json"))).map_err(|e| e.to_string())?,
@@ -383,6 +395,59 @@ async fn finish_parts(dir: &Path, p: &Plan) -> Result<String, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    #[ignore = "65-second paced synthetic PCM; real Groq, no microphone or personal recordings"]
+    fn synthetic_long_dictation_preserves_completed_chunks_and_final_tail() {
+        let fixture=PathBuf::from(std::env::var_os("WHISPERA_TIMING_FIXTURES").expect("Synthetic fixtures"));let reference:serde_json::Value=serde_json::from_slice(&fs::read(fixture.join("reference.json")).unwrap()).unwrap();assert_eq!(reference["syntheticOnly"],true);
+        let mut wave=hound::WavReader::open(fixture.join("synthetic-20s.wav")).unwrap();let rate=wave.spec().sample_rate;let base:Vec<i16>=wave.samples().map(Result::unwrap).collect();
+        let samples:Vec<i16>=base.iter().copied().cycle().take(rate as usize*65).collect();let pcm:Vec<u8>=samples.iter().flat_map(|sample|sample.to_le_bytes()).collect();
+        crate::lossless_upload::configure(Path::new(env!("CARGO_MANIFEST_DIR")).join(if cfg!(windows){"../node_modules/ffmpeg-static/ffmpeg.exe"}else{"../node_modules/ffmpeg-static/ffmpeg"}));
+        let root=std::env::temp_dir().join(format!("whispera-long-timing-{}",uuid::Uuid::new_v4()));fs::create_dir(&root).unwrap();fs::write(root.join("session.json"),serde_json::to_vec(&audio::Manifest{id:"synthetic".into(),sample_rate:rate,created_at:"synthetic".into()}).unwrap()).unwrap();fs::write(root.join("audio.pcm"),[]).unwrap();let mut settings=Settings::default();settings.language="es".into();prepare(&root,settings,vec![]).unwrap();
+        let stop=Arc::new(AtomicBool::new(false));let wake=Arc::new(tokio::sync::Notify::new());let dir=root.clone();let signal=stop.clone();let notification=wake.clone();
+        tauri::async_runtime::block_on(async {
+            let worker=tauri::async_runtime::spawn(async move {run_notified(dir,signal,notification).await});let dir=root.clone();let began=Instant::now();
+            let producer=std::thread::spawn(move ||{let mut file=fs::OpenOptions::new().append(true).open(dir.join("audio.pcm")).unwrap();for (i,block) in pcm.chunks(rate as usize/10*2).enumerate(){std::thread::sleep((began+Duration::from_millis((i as u64+1)*100)).saturating_duration_since(Instant::now()));file.write_all(block).unwrap();}file.sync_all().unwrap();Instant::now()});
+            let stopped=tauri::async_runtime::spawn_blocking(move ||producer.join().unwrap()).await.unwrap();stop.store(true,Ordering::SeqCst);wake.notify_one();let cached_before_finish=root.join("live-0000.json").exists();let _=worker.await.unwrap();let text=finish(&root).await.unwrap();let elapsed=stopped.elapsed().as_secs_f64()*1000.;
+            let lower=text.to_lowercase();assert!(lower.matches("carpeta").count()>=3,"Completed speech missing");assert!(lower.matches("prueba").count()>=4,"Final recorded speech missing");
+            let cached=Instant::now();assert_eq!(finish(&root).await.unwrap(),text);let report=serde_json::json!({"syntheticOnly":true,"seconds":65,"sampleRate":rate,"firstChunkCachedAtStop":cached_before_finish,"stopToTextMs":elapsed,"cachedRetryMs":cached.elapsed().as_secs_f64()*1000.,"fallback":root.join("full-audio-fallback.json").exists(),"text":text});fs::write(std::env::var_os("WHISPERA_LONG_RESULTS").expect("Results file"),serde_json::to_vec_pretty(&report).unwrap()).unwrap();
+        });fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
+    #[ignore = "Real Groq, explicitly supplied synthetic audio only; includes stop, preparation and transcription"]
+    fn synthetic_short_dictation_stop_to_text() {
+        let fixture=PathBuf::from(std::env::var_os("WHISPERA_TIMING_FIXTURES").expect("Synthetic fixtures"));
+        let reference:serde_json::Value=serde_json::from_slice(&fs::read(fixture.join("reference.json")).unwrap()).unwrap();assert_eq!(reference["syntheticOnly"],true);
+        let mut wave=hound::WavReader::open(fixture.join("synthetic-20s.wav")).unwrap();let spec=wave.spec();let samples:Vec<i16>=wave.samples().map(Result::unwrap).collect();assert_eq!(samples.len() as f64/spec.sample_rate as f64,20.);
+        crate::lossless_upload::configure(Path::new(env!("CARGO_MANIFEST_DIR")).join(if cfg!(windows){"../node_modules/ffmpeg-static/ffmpeg.exe"}else{"../node_modules/ffmpeg-static/ffmpeg"}));
+        let output=PathBuf::from(std::env::var_os("WHISPERA_DICTATION_RESULTS").expect("Results file"));let mut rows=Vec::new();
+        for trial in 0..6 { for optimized in if trial%2==0 {[false,true]}else{[true,false]} {
+            crate::lossless_upload::BENCHMARK_BYPASS.store(!optimized,Ordering::SeqCst);
+            let root=std::env::temp_dir().join(format!("whispera-dictation-timing-{}",uuid::Uuid::new_v4()));fs::create_dir(&root).unwrap();
+            fs::write(root.join("session.json"),serde_json::to_vec(&audio::Manifest{id:"synthetic".into(),sample_rate:spec.sample_rate,created_at:"synthetic".into()}).unwrap()).unwrap();
+            fs::write(root.join("audio.pcm"),samples.iter().flat_map(|sample|sample.to_le_bytes()).collect::<Vec<_>>()).unwrap();
+            let mut settings=Settings::default();settings.language="es".into();prepare(&root,settings,vec![]).unwrap();
+            let stop=Arc::new(AtomicBool::new(false));let wake=Arc::new(tokio::sync::Notify::new());let signal=stop.clone();let notification=wake.clone();let dir=root.clone();
+            let worker=tauri::async_runtime::spawn(async move{run_notified(dir,signal,notification).await});
+            std::thread::sleep(Duration::from_millis(20));let at=Instant::now();stop.store(true,Ordering::SeqCst);if optimized {wake.notify_one();}
+            let text=tauri::async_runtime::block_on(async {worker.await.unwrap().unwrap();finish(&root).await.unwrap()});
+            rows.push(serde_json::json!({"trial":trial,"warmup":trial==0,"optimized":optimized,"sampleRate":spec.sample_rate,"stopToTextMs":at.elapsed().as_secs_f64()*1000.,"text":text,"seconds":20.,"microphone":false,"pasteTested":false}));
+            fs::write(&output,serde_json::to_vec_pretty(&rows).unwrap()).unwrap();assert!(text.to_lowercase().contains("carpeta"));fs::remove_dir_all(root).unwrap();
+        }}
+        crate::lossless_upload::BENCHMARK_BYPASS.store(false,Ordering::SeqCst);
+    }
+    #[test]
+    fn stop_interrupts_idle_and_retry_waits_without_cancelling_audio_requests() {
+        tauri::async_runtime::block_on(async {
+            for delay in [Duration::from_millis(200),Duration::from_secs(4)] {
+                let stop=Arc::new(AtomicBool::new(false));let wake=Arc::new(tokio::sync::Notify::new());
+                let signal=stop.clone();let notification=wake.clone();
+                let task=tauri::async_runtime::spawn(async move {wait_or_stop(&signal,&notification,delay).await});
+                tokio::time::sleep(Duration::from_millis(10)).await;let at=Instant::now();stop.store(true,Ordering::SeqCst);wake.notify_one();
+                assert!(tokio::time::timeout(Duration::from_secs(1),task).await.unwrap().unwrap());assert!(at.elapsed()<Duration::from_secs(1));
+            }
+            let stop=AtomicBool::new(true);assert!(wait_or_stop(&stop,&tokio::sync::Notify::new(),Duration::from_secs(4)).await);
+        });
+    }
     #[test]
     fn ambiguous_boundaries_fall_back_without_guessing_repeated_words() {
         let mut left = Cached {
@@ -509,7 +574,8 @@ mod tests {
             w,
             1000,
             &p,
-            &AtomicBool::new(false)
+            &AtomicBool::new(false),
+            &tokio::sync::Notify::new()
         ))
         .is_err());
         fs::remove_dir_all(dir).unwrap();

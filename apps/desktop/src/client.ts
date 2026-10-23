@@ -1,7 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { finishHotkeyCapture } from './hotkey-capture';
 export const native = "__TAURI_INTERNALS__" in window;
-export type Settings = { model: string; language: string; hotkey: string; color: string; pattern: "wave" | "stairs"; placement: "right" | "left" | "top" | "bottom"; autoCopy: boolean; autoPaste: boolean; soundTheme: string; sounds: boolean; recorderScale: number; dictationArtwork?: "original" | "metallic"; metallicColor?: string; metallicOriginal?: boolean; trimSilence: boolean; watchdog: boolean; incrementalTranscription: boolean };
+export type Settings = { model: string; language: string; hotkey: string; color: string; pattern: "wave" | "stairs"; placement: "right" | "left" | "top" | "bottom"; autoCopy: boolean; autoPaste: boolean; soundTheme: string; sounds: boolean; recorderScale: number; dictationArtwork?: "original" | "metallic"; metallicColor?: string; metallicOriginal?: boolean; appTheme?: string; appBackground?: string; trimSilence: boolean; watchdog: boolean; incrementalTranscription: boolean };
 export type Rule = { id: string; source: string; target: string; enabled: boolean };
 export type Transcript = { id: string; timestamp: string; text: string };
 export type Snapshot = { settings: Settings; rules: Rule[]; history: Transcript[]; keyConfigured: boolean; logs: string[]; native: boolean };

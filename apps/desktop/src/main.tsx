@@ -1,9 +1,10 @@
 import VideoTrim from './VideoTrim';
 import ReaderPanel from './ReaderPanel';
 import AIUsagePanel from './AIUsagePanel';
+import {applyAppTheme,AppThemePicker} from './app-theme';
 import {useUpdates} from "./UpdatesPanel";
 import {listen as listenUpdate} from "@tauri-apps/api/event";
-import React, { useEffect, useState, useRef } from "react";
+import React, { useEffect, useLayoutEffect, useState, useRef } from "react";
 import {useAutoSave,AutoSaveStatus} from './useAutoSave';
 import { createRoot } from "react-dom/client";
 import { Dialog, Modal, ModalOverlay } from "react-aria-components";
@@ -78,6 +79,7 @@ function SettingsApp({sidebarExpanded}:{sidebarExpanded:boolean}) {
   },[]);
   const [historyKind,setHistoryKind] = useState<'text'|'captures'>('text');
   const [data, setData] = useState<api.Snapshot>();
+  useLayoutEffect(()=>{if(data)applyAppTheme(data.settings.appTheme,data.settings.appBackground);},[data?.settings.appTheme,data?.settings.appBackground]);
   const [route, setRoute] = useState<Route>("transcription");
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
@@ -133,7 +135,7 @@ function SettingsApp({sidebarExpanded}:{sidebarExpanded:boolean}) {
   const history = data.history.filter(r => r.text.toLowerCase().includes(search.toLowerCase()));
   const title = routes.find(r => r.id === route)!.name;
 
-  return <div className="desktop-app" style={{ "--accent": "#f4b59c" } as React.CSSProperties}>
+  return <div className="desktop-app">
     <SettingsSidebar items={routes} value={route} expanded={sidebarExpanded} count={data.rules.length}
       onChange={id=>{setRoute(id as Route);setSearch('');setMessage('');}}
       brand={<a className="desktop-brand" href="?view=settings"><span className="brand-mark"><img src="/cristal/64x64.png" alt="" /></span><span className="brand-copy"><strong>Whispera</strong><small>Voz, capturas y video</small></span></a>}
@@ -178,6 +180,7 @@ function SettingsApp({sidebarExpanded}:{sidebarExpanded:boolean}) {
         </>}
 
         {route === "appearance" && <>
+          <AppThemePicker value={data.settings.appTheme} background={data.settings.appBackground} onChange={appTheme=>patch({appTheme,appBackground:''})} onBackgroundChange={appBackground=>patch({appBackground})}/>
           <div className="artwork-picker" role="group" aria-label="Modelo de carpeta"><button className="artwork-arrow" aria-label="Modelo anterior" onClick={()=>changeArtwork(-1)}><ChevronLeft size={22}/></button><div className="appearance-preview">{data.settings.dictationArtwork==='metallic'?<IndicatorArtwork kind="folder" original={data.settings.metallicOriginal??true} color={data.settings.metallicColor??'#ffffff'}/>:<ControlledFolder color="black" customColor={data.settings.color} size="sm" visualState="rest" />}</div><button className="artwork-arrow" aria-label="Modelo siguiente" onClick={()=>changeArtwork(1)}><ChevronRight size={22}/></button></div><div className="artwork-model-name" aria-live="polite">{artworkModels[artworkIndex].name}<small>{artworkIndex+1} / {artworkModels.length}</small></div>
           <h3>Color de carpeta</h3><div className="form-row"><label>Color de carpeta<span>{data.settings.dictationArtwork==='metallic'?'Tinte metálico · conserva sombras y reflejos':'Superficie, bordes e iconos'}</span></label><PalettePanel value={{ base: "black", hex: appearanceColor }} onChange={value => patch(data.settings.dictationArtwork==='metallic'?{metallicColor:selectionHex(value),metallicOriginal:false}:{color:selectionHex(value)})} /></div>{data.settings.dictationArtwork==='metallic'&&<button className="text-link" onClick={()=>patch({metallicColor:'#ffffff',metallicOriginal:true})}>Restaurar color original</button>}<div className="color-values"><span style={{ background: appearanceColor }} /><code>{appearanceColor.toUpperCase()}</code></div>
             <h3>Carpeta de transcripción</h3><div className="form-row"><label htmlFor="pattern">Movimiento de los papeles</label><select id="pattern" disabled={data.settings.dictationArtwork==='metallic'} value={data.settings.pattern} onChange={e => patch({ pattern: e.target.value as api.Settings["pattern"] })}><option value="wave">Ola</option><option value="stairs">Escalera</option></select></div>
@@ -208,6 +211,10 @@ function SettingsRoot(){
   return <div className="settings-window"><WindowChrome onError={setWindowError} sidebarExpanded={sidebarExpanded} onToggleSidebar={toggleSidebar}/>{windowError&&<p role="alert" className="window-control-error">{windowError}</p>}<SetupGate><SettingsApp sidebarExpanded={sidebarExpanded}/></SetupGate></div>;
 }
 const view=new URLSearchParams(location.search).get("view");
+if(!view||['settings','import'].includes(view)) {
+  try{applyAppTheme(localStorage.getItem('whispera.app.theme')??'plum',localStorage.getItem('whispera.app.background')??'');}catch{applyAppTheme('plum');}
+  if(view==='import')void api.readSettings().then(s=>applyAppTheme(s.appTheme,s.appBackground)).catch(()=>{});
+}
 if(!view||view==='settings')document.documentElement.dataset.settingsShell='true';
 if (view?.startsWith('screen-')) document.documentElement.dataset.screenSelect = 'true';
 if (view === "record") document.documentElement.dataset.floating = "true";

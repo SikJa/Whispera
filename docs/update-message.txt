@@ -1,1 +1,1 @@
-Corregimos capturas y videos bloqueados, paneles invisibles que interceptaban clics y el cierre del portapapeles. Mejoramos el arrastre, la apertura de herramientas y los atajos segun el teclado. Conservamos tu diccionario y configuracion.
+Corregimos los saltos de la paleta al personalizar colores: el selector permanece quieto mientras arrastrás. Incluye las mejoras de capturas, audio, guardado de imágenes y transcripción de la versión anterior. Tus preferencias se conservan.

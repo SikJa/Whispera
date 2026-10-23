@@ -508,6 +508,11 @@
 .act:active {
   transform: scale(0.90);
 }
+
+.act:disabled {
+  opacity: .5;
+  cursor: wait;
+}
 .act.danger:hover {
   color: #f87171;
 }

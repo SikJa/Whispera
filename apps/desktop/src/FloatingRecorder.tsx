@@ -10,6 +10,7 @@ import { native, readSettings, type Settings } from './client';
 import { contrastInk } from './palette';
 import './floating-recorder.css';
 import {shallowEqual} from './shallow-equal';
+import {visiblePoll} from './visible-poll';
 
 type State = { phase: string; seconds: number; error: string; text: string; muted: boolean; progress: string };
 const labels: Record<string, string> = { idle: 'Listo', recording: 'Grabando', paused: 'En pausa', processing: 'Transcribiendo', ready: 'Audio guardado', done: 'Transcripción lista', error: 'Revisar audio' };
@@ -25,32 +26,40 @@ export default function FloatingRecorder() {
   useEffect(() => { if(native) void invoke('recorder_size',{scale}).catch(e=>setError(String(e))); },[scale]);
   useEffect(() => {
     if(!native)return;
-    let pending=false; let disposed=false; let previous='';
-    const timer=setInterval(async()=>{
-      if(pending||disposed||document.hidden)return;
+    let pending=false; let disposed=false; let previous='';let dirty=false;let last=0;let settlingUntil=0;let timer:ReturnType<typeof setTimeout>|undefined;
+    const refresh=async()=>{
+      timer=undefined;
+      if(disposed||document.hidden)return;
+      if(pending){dirty=true;return;}dirty=false;last=performance.now();
       const rects=Array.from(document.querySelectorAll('[data-hit], [data-slot="folder-card"], .glass-control:not([disabled]), .float-actions button, .float-error, .float-cancel'))
         .map(el=>el.getBoundingClientRect()).filter(r=>r.width>0&&r.height>0).map(r=>({x:r.x,y:r.y,width:r.width,height:r.height}));
       const signature=JSON.stringify(rects.map(r=>[r.x,r.y,r.width,r.height].map(Math.round)));
-      if(signature===previous||!rects.length)return; pending=true;
-      try{await invoke('recorder_region',{rects});previous=signature;}catch(e){if(!disposed)setError(String(e));}finally{pending=false;}
-    },50);
-    return()=>{disposed=true;clearInterval(timer);};
+      if(signature===previous||!rects.length){if(performance.now()<settlingUntil)schedule();return;} pending=true;
+      try{await invoke('recorder_region',{rects});previous=signature;}catch(e){if(!disposed)setError(String(e));}finally{pending=false;if(dirty||performance.now()<settlingUntil)schedule();}
+    };
+    const schedule=()=>{if(disposed||document.hidden||timer!==undefined)return;timer=setTimeout(refresh,Math.max(0,50-(performance.now()-last)));};
+    const changed=()=>{settlingUntil=performance.now()+300;schedule();};
+    const root=document.querySelector('.floating-recorder')!;
+    const observer=new MutationObserver(changed);observer.observe(root,{subtree:true,childList:true,attributes:true,attributeFilter:['style','class','disabled','data-phase']});
+    const resize=new ResizeObserver(changed);resize.observe(root);
+    root.addEventListener('transitionend',changed);root.addEventListener('animationend',changed);
+    window.addEventListener('resize',changed);document.addEventListener('visibilitychange',changed);changed();
+    return()=>{disposed=true;clearTimeout(timer);observer.disconnect();resize.disconnect();root.removeEventListener('transitionend',changed);root.removeEventListener('animationend',changed);window.removeEventListener('resize',changed);document.removeEventListener('visibilitychange',changed);};
   },[]);
   const recording = ['recording', 'paused'].includes(state.phase);
   useEffect(() => {
-    let disposed = false; let timer: ReturnType<typeof setTimeout>; let refreshed = 0;
+    let disposed = false; let refreshed = 0;
     async function poll() {
       try {
         if (native) { const value = await invoke<State>('recording_state'); if (!disposed) setState(previous=>shallowEqual(previous,value)?previous:value); }
         if (Date.now() - refreshed > 1500) { const value = await readSettings(); if (!disposed) setSettings(previous=>shallowEqual(previous,value)?previous:value); refreshed = Date.now(); }
       } catch (e) { if (!disposed) setError(String(e)); }
-      finally { if (!disposed) timer = setTimeout(poll, document.hidden ? 1500 : 250); }
     }
-    void poll(); return () => { disposed = true; clearTimeout(timer); };
+    const stop=visiblePoll(poll,250);return () => { disposed = true;stop(); };
   }, []);
   useEffect(() => {
     if (state.phase !== 'recording' && state.phase !== 'processing') return;
-    const timer = setInterval(() => setStep(s => s + 1), state.phase === 'processing' ? 1200 : 650);
+    const timer = setInterval(() => {if(!document.hidden)setStep(s => s + 1);}, state.phase === 'processing' ? 1200 : 650);
     return () => clearInterval(timer);
   }, [state.phase]);
   useEffect(() => {
@@ -72,7 +81,7 @@ export default function FloatingRecorder() {
   const color = settings?.dictationArtwork==='metallic'?(settings.metallicColor??'#ffffff'):(settings?.color??'#9024DC');
   const visual = recording ? 'hover' : state.phase === 'processing' ? (step % 2 ? 'open' : 'rest') : 'rest';
   const time = `${Math.floor(state.seconds / 60).toString().padStart(2, '0')}:${Math.floor(state.seconds % 60).toString().padStart(2, '0')}`;
-  return <main className="floating-recorder" data-phase={state.phase} aria-label="Grabadora flotante" style={{ transform: `scale(${scale})`, transformOrigin: 'top left', '--folder-color': color, '--folder-ink': contrastInk(color) } as CSSProperties}>
+  return <main className="floating-recorder" data-phase={state.phase} aria-label="Grabadora flotante" style={{ transform: `scale(${scale})`, transformOrigin: 'top left', '--folder-color': color, '--folder-ink': contrastInk(color), '--metallic-ink':(settings?.metallicOriginal??true)?'#f4f4f6':contrastInk(color) } as CSSProperties}>
     <MotionConfig reducedMotion="user"><div className="float-rig" data-artwork={settings?.dictationArtwork??'original'} onMouseDown={drag}>
       {settings?.dictationArtwork==='metallic'?<IndicatorArtwork kind="folder" original={settings.metallicOriginal??true} color={color} active={state.phase==='recording'||state.phase==='processing'}/>:<ControlledFolder color="black" customColor={color} visualState={visual} recordingStep={recording ? step : undefined} pattern={settings?.pattern ?? 'wave'} size="md" />}
       <FolderControls color="black" customColor={color} open={open} placement={settings?.placement ?? 'right'} muted={state.muted} paused={state.phase === 'paused'} onMute={() => void run('recording_action', { action: 'mute' })} onPause={() => void run('recording_action', { action: 'pause' })} onStop={() => void run('recording_action', { action: 'stop' })} />

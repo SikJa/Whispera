@@ -15,13 +15,13 @@ el foco y el arrastre funcionen en todas las aplicaciones reales.
 
 ## Install / Instalar
 
-Current preview / Beta actual: **0.3.0-beta.2**.
+Current preview / Beta actual: **0.3.0-beta.4**.
 
-- [Apple Silicon DMG](https://github.com/SikJa/Whispera/releases/download/v0.3.0-beta.2/Whispera_0.3.0-beta.2_aarch64.dmg)
-- [Intel DMG](https://github.com/SikJa/Whispera/releases/download/v0.3.0-beta.2/Whispera_0.3.0-beta.2_x86_64.dmg)
-- [Apple Silicon app ZIP](https://github.com/SikJa/Whispera/releases/download/v0.3.0-beta.2/Whispera_0.3.0-beta.2_aarch64.app.zip)
-- [Intel app ZIP](https://github.com/SikJa/Whispera/releases/download/v0.3.0-beta.2/Whispera_0.3.0-beta.2_x86_64.app.zip)
-- [Release notes and checksums / Notas y checksums](https://github.com/SikJa/Whispera/releases/tag/v0.3.0-beta.2)
+- [Apple Silicon DMG](https://github.com/SikJa/Whispera/releases/download/v0.3.0-beta.4/Whispera_0.3.0-beta.4_aarch64.dmg)
+- [Intel DMG](https://github.com/SikJa/Whispera/releases/download/v0.3.0-beta.4/Whispera_0.3.0-beta.4_x86_64.dmg)
+- [Apple Silicon app ZIP](https://github.com/SikJa/Whispera/releases/download/v0.3.0-beta.4/Whispera_0.3.0-beta.4_aarch64.app.zip)
+- [Intel app ZIP](https://github.com/SikJa/Whispera/releases/download/v0.3.0-beta.4/Whispera_0.3.0-beta.4_x86_64.app.zip)
+- [Release notes and checksums / Notas y checksums](https://github.com/SikJa/Whispera/releases/tag/v0.3.0-beta.4)
 
 The ZIP is the signed app bundle without a disk image. Extract it, move the app to
 Applications and launch it there. It does not bypass Gatekeeper and does not store
@@ -120,7 +120,7 @@ each extracted app with the bounded CI smoke mode. The reports include
 `dmgInstallVerified`, `portableVerified` and `updaterExtractionVerified`.
 These are runner checks, not Gatekeeper approval or real microphone/screen testing.
 
-For the real-Mac test, follow the [beta 2 checklist](releases/0.3.0-beta.2.md).
+For the real-Mac test, follow the [beta 4 checklist](releases/0.3.0-beta.4.md).
 
 ### Beta 1 Historical Evidence / Evidencia Historica
 

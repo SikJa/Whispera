@@ -1,1 +1,1 @@
-Beta 2 para Mac: recuperacion de capturas, cierre seguro de paneles y mejoras del portapapeles. DMG y ZIP para Apple Silicon e Intel, con pruebas de extraccion y arranque. Sin notarizacion de Apple; falta validar dispositivos en una Mac real.
+Corregimos los saltos de la paleta al personalizar colores: el selector permanece quieto mientras arrastrás. Incluye todas las mejoras de la beta 3 y conserva tus preferencias. Disponible para Apple Silicon e Intel.

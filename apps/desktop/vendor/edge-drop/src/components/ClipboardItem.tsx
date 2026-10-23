@@ -16,7 +16,7 @@
  */
 import { memo, useState, useCallback, useEffect, useRef, forwardRef, type ReactNode } from 'react'
 import { motion, useReducedMotion } from 'framer-motion'
-import { Pencil } from 'lucide-react'
+import { Download, Pencil } from 'lucide-react'
 import { VideoTile } from './VideoTile'
 import type { ClipboardItemDto } from '../../shared/types'
 import { MAX_STACK } from '../../shared/types'
@@ -67,6 +67,25 @@ const ClipboardItemBase = forwardRef<HTMLDivElement, Props>(({ item }, ref) => {
   const setInternalDragReq = useStore.getState().setInternalDragReq
   const startDrag = useDragOut()
   const [copied, setCopied] = useState(false)
+  const [saving, setSaving] = useState(false)
+  const canSaveImage = !!(window as any).__TAURI_INTERNALS__ && (item.data.kind === 'image' ||
+    (item.data.kind === 'files' && item.data.paths.length === 1 && getFileKind(item.data.paths[0]).kind === 'image'))
+  const onSaveImage = async (e: React.MouseEvent) => {
+    e.stopPropagation()
+    e.preventDefault()
+    if (useStore.getState().nativeDialogOpen) return
+    useStore.setState({ nativeDialogOpen: true })
+    setSaving(true)
+    try {
+      const destination = await (window as any).__TAURI_INTERNALS__.invoke('library_media_save', { id: item.id })
+      if (destination) useStore.getState().pushToast({ id: `save-${item.id}-${Date.now()}`, message: 'Imagen guardada', tone: 'info' })
+    } catch {
+      useStore.getState().pushToast({ id: `save-${item.id}-${Date.now()}`, message: 'No se pudo guardar la imagen. Revisá la carpeta de destino y volvé a intentar.', tone: 'error' })
+    } finally {
+      useStore.setState({ nativeDialogOpen: false })
+      setSaving(false)
+    }
+  }
   const dragging = useStore(s => s.internalDragReq?.id === item.id)
   const reduceMotion = useReducedMotion()
 
@@ -183,10 +202,12 @@ const ClipboardItemBase = forwardRef<HTMLDivElement, Props>(({ item }, ref) => {
     }
   }, [item.data.kind, isPreviewing, item.id])
 
-  const pointerStartRef = useRef<{ x: number; y: number; moved: boolean } | null>(null)
+  const nativePointerDrag = !!(window as any).__TAURI_INTERNALS__ && item.data.kind !== 'text'
+  const pointerStartRef = useRef<{ x: number; y: number; moved: boolean; started?:boolean } | null>(null)
   const wasPreviewingRef = useRef(false)
 
   const handlePointerDown = useCallback((e: React.PointerEvent) => {
+    if((e.target as Element).closest('button,a,input,textarea')){pointerStartRef.current=null;return}
     // Track if THIS card was the actively previewed (blurred) card when pointer clicked
     wasPreviewingRef.current = (useStore.getState().previewItemId === item.id) || isPreviewing
     if (e.button === 0) {
@@ -200,8 +221,14 @@ const ClipboardItemBase = forwardRef<HTMLDivElement, Props>(({ item }, ref) => {
     const dist = Math.hypot(e.clientX - pointerStartRef.current.x, e.clientY - pointerStartRef.current.y)
     if (dist > 5) {
       pointerStartRef.current.moved = true
+      // Tauri owns the OS drag. Starting a second HTML drag first can retain
+      // WebView's mouse capture and strand the isolated native drag helper.
+      if(nativePointerDrag&&!isPreviewing&&(!isBundle||!expanded)&&!pointerStartRef.current.started&&(e.buttons&1)) {
+        pointerStartRef.current.started=true
+        startDrag({id:item.id})
+      }
     }
-  }, [])
+  }, [nativePointerDrag,isPreviewing,isBundle,expanded,startDrag,item.id])
 
   const handleCardClick = useCallback((e: React.MouseEvent) => {
     if (pointerStartRef.current?.moved) {
@@ -276,7 +303,7 @@ const ClipboardItemBase = forwardRef<HTMLDivElement, Props>(({ item }, ref) => {
       <div
         className={`item-main${isPreviewing ? ' force-actions previewing' : ''}`}
         data-id={item.id}
-        draggable={!isPreviewing && (!isBundle || !expanded)}
+        draggable={!nativePointerDrag && !isPreviewing && (!isBundle || !expanded)}
         onMouseEnter={handlePrestage}
         onPointerDown={handlePointerDown}
         onPointerMove={handlePointerMove}
@@ -355,6 +382,7 @@ const ClipboardItemBase = forwardRef<HTMLDivElement, Props>(({ item }, ref) => {
           {(window as any).__TAURI_INTERNALS__ && (item.data.kind === 'image' || item.data.kind === 'image-collection' || (item.data.kind === 'files' && item.data.paths.some(path => /\.(png|jpe?g|webp)$/i.test(path)))) && <>
             <button className="act" title="Editar imagen" onClick={() => void (window as any).__TAURI_INTERNALS__.invoke('library_media_open',{id:item.id,mode:'canvas'}).catch(console.error)}><Pencil size={14}/></button>
           </>}
+          {canSaveImage && <button type="button" className="act" title="Guardar imagen como…" aria-label="Guardar imagen" aria-busy={saving} disabled={saving} onClick={onSaveImage}><Download size={14}/></button>}
           <button
             className={`act${item.pinned ? ' active' : ''}`}
             title={item.pinned ? t('item.unpin') : t('item.pin')}

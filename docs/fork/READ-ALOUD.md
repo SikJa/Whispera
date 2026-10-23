@@ -1,4 +1,4 @@
-# Local reading preview — 0.3.0-readaloud.8
+# Local reading preview — 0.3.0-readaloud.9
 
 This fork adds Windows text-to-speech independently of Groq transcription.
 
@@ -22,7 +22,7 @@ shortcut while Windows Terminal remains active. Microsoft documents this behavio
 in [Windows Terminal selection](https://learn.microsoft.com/en-us/windows/terminal/selection).
 This procedure was confirmed to work in the reported WSL session (issue #3).
 
-No new capture mechanism is needed for that case. Version 0.3.0-readaloud.8 keeps
+No new capture mechanism is needed for that case. Version 0.3.0-readaloud.9 keeps
 the original focused-control selection path and adds an explanatory Shift hint
 only when the active window is Windows Terminal and accessibility reports an
 empty/unavailable selection. Successful reads, other applications, password and

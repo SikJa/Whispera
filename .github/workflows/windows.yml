@@ -39,15 +39,7 @@ jobs:
         working-directory: apps/desktop/src-tauri
         shell: pwsh
         run: |
-          if ($env:WHISPERA_LIGHT_CHECKS -eq 'true') {
-            cargo test --locked reader
-            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-            cargo test --locked shortcuts::
-            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-            cargo test --locked ai_usage
-            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-            cargo test --locked video_audio_override
-          } else { cargo test --locked }
+          cargo test --locked
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Local reader protocol tests (silent)
         shell: pwsh
@@ -75,7 +67,7 @@ jobs:
         working-directory: apps/desktop
         shell: pwsh
         run: |
-          if ($env:WHISPERA_LIGHT_CHECKS -eq 'true') { npm run test:release -- reader hotkeys ai-usage screen capture-loading capture-audio selection-recovery capture-controls }
+          if ($env:WHISPERA_LIGHT_CHECKS -eq 'true') { npm run test:release -- reader hotkeys ai-usage screen capture-loading capture-audio selection-recovery capture-controls recorders native-library performance copy-export app-themes palette-stability }
           else { npm run test:release }
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Checksums

@@ -37,6 +37,9 @@ import GroqKeyGuide from './GroqKeyGuide';
 import { ShortcutSettings, CaptureHistory } from './CaptureSettings';
 import LibrarySettings from './LibrarySettings';
 import ApplicationSettings from './ApplicationSettings';
+import SettingsSearch from './SettingsSearch';
+import InstalledVersion from './InstalledVersion';
+import type {SettingResult} from './settings-search-index';
 import { credentialStore, isMac } from './platform';
 
 const routes = [
@@ -66,7 +69,7 @@ const descriptions: Record<Route, string> = {
   sounds: "Inicio y fin del dictado.",
   screen: "Seleccioná, marcá y pegá. Imagen o video, con tus atajos.",
   library: "Tu historial local de textos, imágenes, videos y archivos.",
-  application: "Cómo se inicia Whispera en tu computadora.",
+  application: "Tu versión de Whispera y sus opciones de inicio.",
 };
 
 function SettingsApp({sidebarExpanded}:{sidebarExpanded:boolean}) {
@@ -81,6 +84,26 @@ function SettingsApp({sidebarExpanded}:{sidebarExpanded:boolean}) {
   const [data, setData] = useState<api.Snapshot>();
   useLayoutEffect(()=>{if(data)applyAppTheme(data.settings.appTheme,data.settings.appBackground);},[data?.settings.appTheme,data?.settings.appBackground]);
   const [route, setRoute] = useState<Route>("transcription");
+  const [searchTarget,setSearchTarget]=useState<{result:SettingResult;request:number}>();
+  const settingsSection=useRef<HTMLDivElement>(null);
+  useEffect(()=>{
+    if(!searchTarget)return;
+    const section=settingsSection.current;if(!section)return;
+    let marked:HTMLElement|undefined,previousTab:string|null=null;
+    const mark=()=>{
+      const element=searchTarget.result.target?section.querySelector<HTMLElement>(searchTarget.result.target):section.parentElement?.querySelector<HTMLElement>('h1');
+      if(!element||element.closest('[hidden]'))return false;
+      // Focus the containing row, never a shortcut recorder or an action button.
+      marked=element.closest<HTMLElement>('.form-row, .key-line, label')??element;
+      previousTab=marked.getAttribute('tabindex');marked.tabIndex=-1;
+      marked.dataset.searchHighlight='true';marked.focus({preventScroll:true});marked.scrollIntoView({block:'center'});
+      return true;
+    };
+    const observer=new MutationObserver(()=>{if(mark())observer.disconnect();});
+    if(!mark())observer.observe(section,{childList:true,subtree:true,attributes:true,attributeFilter:['hidden']});
+    const timer=setTimeout(()=>{observer.disconnect();if(marked)delete marked.dataset.searchHighlight;},3500);
+    return()=>{observer.disconnect();clearTimeout(timer);if(marked){delete marked.dataset.searchHighlight;if(previousTab===null)marked.removeAttribute('tabindex');else marked.setAttribute('tabindex',previousTab);}};
+  },[searchTarget]);
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
   const [key, setKey] = useState("");
@@ -137,21 +160,22 @@ function SettingsApp({sidebarExpanded}:{sidebarExpanded:boolean}) {
 
   return <div className="desktop-app">
     <SettingsSidebar items={routes} value={route} expanded={sidebarExpanded} count={data.rules.length}
-      onChange={id=>{setRoute(id as Route);setSearch('');setMessage('');}}
+      onChange={id=>{setSearchTarget(undefined);setRoute(id as Route);setSearch('');setMessage('');}}
       brand={<a className="desktop-brand" href="?view=settings"><span className="brand-mark"><img src="/cristal/64x64.png" alt="" /></span><span className="brand-copy"><strong>Whispera</strong><small>Voz, capturas y video</small></span></a>}
       update={(updater.status.version||updater.status.upstream?.phase==='available')&&<button className="sidebar-update" aria-label={updater.status.version?'Actualización disponible':'Novedades de Whispera-K'} onClick={()=>setRoute('updates')}><Download size={16}/><span><strong>{updater.status.version?'Actualización disponible':'Novedades de Whispera-K'}</strong><small>{updater.status.version?`Whispera ${updater.status.version}`:`K ${updater.status.upstream?.version}`}</small></span><ArrowUpRight size={14}/></button>}
       footer={<div className="sidebar-bottom"><a className="recorder-link" href="?view=record" aria-label="Abrir o cerrar grabadora" aria-disabled={busy} onClick={e=>{if(api.native){e.preventDefault();if(!busy)void run(()=>invoke('toggle_recorder'),'');}}}><AudioLines size={18} /><span>Abrir grabadora</span><ArrowUpRight size={15} /></a></div>} />
     <div className="desktop-main" role="region" aria-label="Contenido de configuración" tabIndex={0}>
       <section className="desktop-content">
+        <SettingsSearch onNavigate={result=>{setRoute(result.route);setSearch('');setMessage('');setSearchTarget({result,request:Date.now()});}}/>
         <div className="page-heading"><div><h1>{title}</h1><p>{descriptions[route]}</p></div><AutoSaveStatus save={autosave}/></div>
         {message && <div className="notice" role="status">{message}<button aria-label="Cerrar aviso" onClick={() => setMessage("")}><X size={14} /></button></div>}
-        <div className="settings-section">
+        <div className="settings-section" ref={settingsSection}>
         {route==='ai-usage'&&<AIUsagePanel/>}
         {route==='reading'&&<>{readerNotice&&<p role="alert">{readerNotice} <button onClick={()=>setReaderNotice('')}>Cerrar aviso</button></p>}<ReaderPanel text={readerText} onTextChange={setReaderText}/></>}
-        {route==='updates'&&<p role="status">Versión experimental de danieluxury88. Las actualizaciones del proyecto original están desactivadas para conservar la lectura local.</p>}
-        {route==='application'&&<ApplicationSettings/>}
+        {route==='updates'&&<><InstalledVersion version={updater.status.currentVersion}/><p className="fork-update-info" role="status">Versión experimental de danieluxury88. Las actualizaciones son manuales para conservar las funciones de esta versión.</p></>}
+        {route==='application'&&<><InstalledVersion version={updater.status.currentVersion}/><ApplicationSettings/></>}
         {route === 'screen' && <ScreenRecorder />}
-        {route === 'library' && <LibrarySettings />}
+        {route === 'library' && <LibrarySettings settingsRequest={searchTarget?.result.librarySettings?searchTarget.request:undefined}/>}
         {route==='sounds'&&<SoundSettings settings={data.settings} patch={patch} onError={setMessage}/>}
         {route==='diagnostics'&&<><div className="form-row"><label htmlFor="watchdog">Recuperar interfaz sin respuesta</label><SettingsSwitch id="watchdog" label="Vigilancia de interfaz" checked={data.settings.watchdog} onChange={v=>patch({watchdog:v})}/></div><button disabled={!api.native||busy} onClick={()=>run(()=>invoke('restart_app'),'Reiniciando')}><RotateCcw size={16}/>Reiniciar Whispera</button></>}
         {route === "transcription" && <>

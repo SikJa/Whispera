@@ -5679,7 +5679,7 @@ dependencies = [
 
 [[package]]
 name = "whispera-desktop"
-version = "0.3.0-readaloud.9"
+version = "0.3.0-readaloud.10"
 dependencies = [
  "base64 0.22.1",
  "chrono",

@@ -1,4 +1,4 @@
-# Local reading preview — 0.3.0-readaloud.9
+# Local reading preview — 0.3.0-readaloud.10
 
 This fork adds Windows text-to-speech independently of Groq transcription.
 
@@ -22,7 +22,7 @@ shortcut while Windows Terminal remains active. Microsoft documents this behavio
 in [Windows Terminal selection](https://learn.microsoft.com/en-us/windows/terminal/selection).
 This procedure was confirmed to work in the reported WSL session (issue #3).
 
-No new capture mechanism is needed for that case. Version 0.3.0-readaloud.9 keeps
+No new capture mechanism is needed for that case. Version 0.3.0-readaloud.10 keeps
 the original focused-control selection path and adds an explanatory Shift hint
 only when the active window is Windows Terminal and accessibility reports an
 empty/unavailable selection. Successful reads, other applications, password and
@@ -120,3 +120,11 @@ Use the existing Node 22+/Rust MSVC/WebView2 build instructions on Windows. `bui
 `node tests/reader-protocol.mjs src-tauri/target/reader/WhisperaReader.exe` exercises the protocol silently. `node tests/reader-mp3.mjs src-tauri/target/reader/WhisperaReader.exe node_modules/ffmpeg-static/ffmpeg.exe` synthesizes a temporary WAV and verifies an actual decodable MP3 without playing it. Native Rust tests cover bounds, staging cleanup and cancellation of a stalled process/pipe; the browser fixture covers export, cancellation, save errors, controls and reading edited history with mocked IPC. Full audible voice quality requires a manual test with non-sensitive text; automated checks intentionally do not play sound.
 
 The Windows CI workflow builds an unsigned experimental installer. A successful workflow is required before treating the installer as validated. No release is automatically published from this fork. The upstream macOS release workflow is restricted to the original repository; this preview delivers a Windows installer only.
+
+## Buscar opciones y consultar la versión
+
+En Configuración, **Buscar opciones** localiza secciones y ajustes por nombre o términos habituales (voz, micrófono, atajo, saldo, versión). No distingue mayúsculas ni tildes. El resultado muestra su ubicación; al seleccionarlo abre la sección, también la pestaña de ajustes del portapapeles cuando corresponde, y resalta la opción durante unos segundos.
+
+Se puede abrir el buscador con **Ctrl+K** (⌘K en macOS), recorrer los resultados con flechas, elegir con Enter y cerrar con Escape. Este atajo solo actúa dentro de Configuración y no interfiere con los campos donde se graban atajos. La búsqueda usa únicamente un catálogo local de opciones; no consulta ni guarda contenido del portapapeles, transcripciones o datos de cuentas.
+
+**Configuración → Aplicación** muestra la versión instalada obtenida del motor nativo. También aparece en Actualizaciones. La vista del navegador se identifica como vista previa.

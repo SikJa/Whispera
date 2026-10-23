@@ -67,7 +67,7 @@ jobs:
         working-directory: apps/desktop
         shell: pwsh
         run: |
-          if ($env:WHISPERA_LIGHT_CHECKS -eq 'true') { npm run test:release -- reader hotkeys ai-usage screen capture-loading capture-audio selection-recovery capture-controls recorders native-library performance copy-export app-themes palette-stability }
+          if ($env:WHISPERA_LIGHT_CHECKS -eq 'true') { npm run test:release -- settings-search application settings-layout hotkeys library-settings app-themes }
           else { npm run test:release }
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Checksums

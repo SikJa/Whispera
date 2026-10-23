@@ -554,7 +554,7 @@ mod tests {
         wave(&first.join("speech-0000.wav"),1.25);wave(&first.join("speech-0001.wav"),0.75);wave(&second.join("speech-0000.wav"),1.);
         fs::write(first.join("speech-timing.json"),r#"{"videoSeconds":2.345}"#).unwrap();
         let store=Store::open(Path::new(":memory:")).unwrap();
-        store.put("library_settings", &serde_json::json!({"transcribeVideo":true})).unwrap();enqueue(&store,&video).unwrap();
+        store.put("library_settings", &serde_json::json!({"transcribeVideo":true,"videoTranscriptAttachment":true})).unwrap();enqueue(&store,&video).unwrap();
         assert_eq!(get(&store,&video).unwrap().part_offsets,vec![Some(0.),Some(1.25),Some(2.345)]);
         let result=process_timed_with(&store,&video,|_,_,_|Ok(timed("Frase."))).unwrap();
         assert!(result.timing_complete);assert_eq!(result.cues.len(),3);assert!((result.cues[2].start-2.545).abs()<0.000001);
@@ -616,7 +616,7 @@ mod tests {
         crate::replay::run_command(&mut command,Duration::from_secs(30)).unwrap();
         let part=root.join("part-0000");fs::create_dir(&part).unwrap();fs::copy(fixture.join("synthetic-20s.wav"),part.join("speech-0000.wav")).unwrap();video_timing::record_part_duration(&video,&part);
         let store=Store::open(Path::new(":memory:")).unwrap();
-        store.put("library_settings", &serde_json::json!({"transcribeVideo":true})).unwrap();let mut settings=Settings::default();settings.language="es".into();store.put("settings",&settings).unwrap();
+        store.put("library_settings", &serde_json::json!({"transcribeVideo":true,"videoTranscriptAttachment":true})).unwrap();let mut settings=Settings::default();settings.language="es".into();store.put("settings",&settings).unwrap();
         let mut rows=Vec::new();
         for trial in 0..3 {
             let at=std::time::Instant::now();enqueue(&store,&video).unwrap();let result=process(&store,&video).unwrap();let (files,_)=package(&store,&[video.clone()]).unwrap();

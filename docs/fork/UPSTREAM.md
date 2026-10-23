@@ -22,7 +22,7 @@ The merge keeps both histories, including our reading, MP3, quota and recording 
 - Keep our package version, identity, whatlang dependency and bundled notices.
 - Combine the app-theme imports with ReaderPanel and AIUsagePanel; preserve the reading and quota routes.
 - Register the new upstream frontend suites before applying the fork's suite filter.
-- Explicitly opt the three new ordinary transcription test fixtures, and the optional synthetic network fixture, into `transcribeVideo`. Production defaults remain off.
+- Explicitly opt the three new ordinary transcription test fixtures, and the optional synthetic network fixture, into `transcribeVideo`. Fixtures that check transcript packaging also opt into `videoTranscriptAttachment`. Production defaults remain off.
 - Keep global clipboard collection, video transcription and transcript attachments opt-in. Existing explicit preferences remain respected.
 - Keep upstream installer checks/installations disabled. The macOS publication jobs remain restricted to SikJa's repository.
 - Run ordinary native tests once for the broad upstream integration. Desktop capture, microphone, private clipboard and network fixtures remain opt-in/ignored. Frontend validation selects the changed areas and the existing fork features.

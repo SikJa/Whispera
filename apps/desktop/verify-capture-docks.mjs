@@ -26,6 +26,13 @@ try {
     if(kind==='image')assert.equal(await page.getByRole('button',{name:'Copiar',exact:true}).count(),1);
     await page.getByRole('button',{name:`Expandir ${label}`,exact:true}).click();
     await page.getByRole('button',{name:`Contraer ${label}`,exact:true}).waitFor();
+    const smaller=page.getByRole('button',{name:`Reducir ${label}`,exact:true}),bigger=page.getByRole('button',{name:`Ampliar ${label}`,exact:true});
+    for(let i=0;i<4&&!await smaller.isDisabled();i++)await smaller.click();
+    assert.equal(await smaller.isDisabled(),true);assert.equal(await page.evaluate(()=>window.captureDock.zoom),.75);
+    for(let i=0;i<9&&!await bigger.isDisabled();i++)await bigger.click();
+    assert.equal(await bigger.isDisabled(),true);assert.equal(await page.evaluate(()=>window.captureDock.zoom),1.5);
+    const surface=page.locator(view==='screen-tools'?'.capture-toolbar':kind==='image'?'.capture-image-actions':'.capture-hud-controls');
+    const box=await surface.boundingBox();assert.ok(box.x>=0&&box.y>=0&&box.x+box.width<=1100&&box.y+box.height<=780);
     const measured=await page.evaluate(()=>window.calls.filter(c=>c.command==='screen_overlay_customize'&&c.args.action==='size').map(c=>c.args));
     assert.ok(measured.length>0&&measured.every(x=>Number.isFinite(x.width)&&Number.isFinite(x.height)));
     assert.deepEqual(errors,[]);await page.close();

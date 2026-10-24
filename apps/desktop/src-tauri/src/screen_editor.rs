@@ -38,6 +38,7 @@ pub struct Editor {
     configured: AtomicBool,
     dragging: AtomicBool,
     compact: AtomicBool,
+    docks: Mutex<crate::capture_docks::Docks>,
     context: Mutex<Option<Context>>,
     region: Mutex<Option<Region>>,
     monitor: Mutex<Option<Region>>,
@@ -49,6 +50,7 @@ impl Editor {
         self.configured.store(false,Ordering::SeqCst);
         self.dragging.store(false,Ordering::SeqCst);
         self.compact.store(false,Ordering::SeqCst);
+        if let Ok(mut value)=self.docks.lock(){*value=Default::default();}
         if let Ok(mut value)=self.context.lock(){*value=None;}
         if let Ok(mut bytes)=self.image.lock(){bytes.clear();}
         if let Ok(mut region)=self.region.lock(){*region=None;}
@@ -255,17 +257,25 @@ fn external_dock(region: Region, monitor: Region, width: u32, height: u32, gap: 
     if let Some(other) = avoid {
         candidates.push((other.x + other.width as i32 + gap, cy));
         candidates.push((other.x - width as i32 - gap, cy));
+        candidates.push((cx, other.y - height as i32 - gap));
+        candidates.push((cx, other.y + other.height as i32 + gap));
         for x in [right.0, left.0] {
             candidates.push((x, other.y - height as i32 - gap));
             candidates.push((x, other.y + other.height as i32 + gap));
         }
     }
-    candidates.into_iter().map(|(x,y)| Region {
+    let candidates: Vec<Region> = candidates.into_iter().map(|(x,y)| Region {
         x: fit_start(x, monitor.x, monitor.width, width, gap),
         y: fit_start(y, monitor.y, monitor.height, height, gap),
         width, height,
         ..monitor
-    }).min_by_key(|dock| (
+    }).collect();
+    // A narrow strip below a near-full-screen capture cannot hold a vertical
+    // rail. Keep it at a side instead of minimizing overlap into the middle.
+    if vertical && !candidates.iter().any(|dock| intersection(*dock, region)==0) {
+        return candidates.into_iter().take(2).min_by_key(|dock| avoid.map_or(0, |other| intersection(*dock, other))).unwrap();
+    }
+    candidates.into_iter().min_by_key(|dock| (
         avoid.map_or(0, |other| intersection(*dock, other)),
         intersection(*dock, region),
     )).unwrap()
@@ -276,12 +286,14 @@ fn tool_bounds(region: Region, monitor: Region, scale: f64, compact: bool) -> Re
     let full_height = pixels(450., scale).min(monitor.height.saturating_sub(2 * gap as u32));
     let height = if compact { pixels(96., scale).min(full_height) } else { full_height };
     let mut dock = external_dock(region, monitor, width, height, gap, true, None);
-    let hud_width = pixels(300., scale);
+    let hud_width = pixels(420., scale);
     let hud_height = pixels(56., scale);
     let left_room = dock.x - monitor.x - gap;
     let right_room = monitor.x + monitor.width as i32 - gap - dock.x - width as i32;
     if left_room < hud_width as i32 + gap && right_room < hud_width as i32 + gap
-        && full_height + hud_height + 3 * gap as u32 > monitor.height
+        && (full_height + hud_height + 3 * gap as u32 > monitor.height
+            || (dock.y-monitor.y < hud_height as i32+2*gap
+                && monitor.y+monitor.height as i32-dock.y-(full_height as i32) < hud_height as i32+2*gap))
         && width + hud_width + 3 * gap as u32 <= monitor.width
     {
         // Reserve horizontal space when Windows scaling leaves no vertical room.
@@ -292,11 +304,17 @@ fn tool_bounds(region: Region, monitor: Region, scale: f64, compact: bool) -> Re
 }
 fn hud_anchor(region: Region, monitor: Region, scale: f64, _hud_scale: f64) -> (Region, bool) {
     let gap = pixels(10., scale) as i32;
-    let width = pixels(300., scale)
+    let mut width = pixels(420., scale)
         .min(monitor.width.saturating_sub(2 * gap as u32));
     let height = pixels(56., scale);
+    let tools=tool_bounds(region,monitor,scale,false);
+    if tools.height+height+3*gap as u32>monitor.height {
+        let free_left=(tools.x-monitor.x-2*gap).max(1) as u32;
+        let free_right=(monitor.x+monitor.width as i32-tools.x-tools.width as i32-2*gap).max(1) as u32;
+        width=width.min(free_left.max(free_right));
+    }
     let anchor = external_dock(region, monitor, width, height, gap, false,
-        Some(tool_bounds(region, monitor, scale, false)));
+        Some(tools));
     (anchor, false)
 }
 fn fit_hud_scale(region: Region, monitor: Region, scale: f64, preferred: f64) -> f64 {
@@ -330,8 +348,25 @@ fn place_controls(
     monitor: Region,
     compact: bool,
 ) -> Result<(), String> {
-    let dock = dock_bounds(ctx, region, monitor, window.label(), compact)?;
+    let dock = configured_dock(window.app_handle(),ctx,region,monitor,window.label(),compact)?;
     screen::place_window(window, dock)
+}
+fn configured_dock(app:&tauri::AppHandle,ctx:&Context,region:Region,monitor:Region,label:&str,compact:bool)->Result<Region,String> {
+    let editor=session::editor(app,&ctx.id);
+    let docks=editor.docks.lock().map_err(|_|"Controles ocupados")?;
+    let tools=label.ends_with("-tools");
+    let dock=docks.get(tools);
+    let mut automatic=dock_bounds(ctx,region,monitor,label,if tools {dock.compact||compact}else{false})?;
+    let constrained=!tools&&automatic.width<pixels(420.,ctx.scale);
+    let mut result=crate::capture_docks::placed(automatic,monitor,dock,ctx.scale);
+    if !tools&&dock.anchor.is_none(){
+        if constrained{result.width=result.width.min(automatic.width);}
+        let tool_auto=tool_bounds(region,monitor,ctx.scale,docks.tools.compact);
+        let tool_rect=crate::capture_docks::placed(tool_auto,monitor,&docks.tools,ctx.scale);
+        automatic=external_dock(region,monitor,result.width,result.height,pixels(10.,ctx.scale) as i32,false,Some(tool_rect));
+        result=automatic;
+    }
+    Ok(result)
 }
 pub(crate) fn drag_controls(app:&tauri::AppHandle,source:&tauri::WebviewWindow,active:bool)->Result<(),String> {
     let ctx=context_for(app,source.label()).ok_or("Captura no disponible")?;
@@ -356,7 +391,7 @@ pub(crate) fn preview_controls(app:&tauri::AppHandle,source:&tauri::WebviewWindo
     let mut positions=Vec::new();
     for base in ["screen-tools","screen-hud"] {
         if let Some(window)=app.get_webview_window(&session::label(source.label(),base)) {
-            let dock=dock_bounds(&ctx,region,monitor,window.label(),editor.compact.load(Ordering::SeqCst))?;
+            let dock=configured_dock(app,&ctx,region,monitor,window.label(),editor.compact.load(Ordering::SeqCst))?;
             positions.push((window,dock));
         }
     }
@@ -555,6 +590,10 @@ pub(crate) fn open_with_image(
             .frame_color,
     };
     let editor = session::editor(app,source.label());
+    let mut docks=app.state::<crate::storage::Store>().get::<crate::capture_docks::Docks>("capture_dock_preferences").unwrap_or_default();
+    docks.sanitize();
+    editor.compact.store(docks.tools.compact,Ordering::SeqCst);
+    *editor.docks.lock().map_err(|_|"Controles ocupados")?=docks;
     *editor.opening.lock().map_err(|_|"Editor ocupado")?=Some((opening,Default::default()));
     *editor.region.lock().map_err(|_| "Editor ocupado")? = Some(region);
     *editor.monitor.lock().map_err(|_| "Editor ocupado")? = Some(monitor);
@@ -668,6 +707,7 @@ pub fn screen_overlay_layout(
     if window.label()==session::label(&id,"screen-tools") {
         if editor.dragging.load(Ordering::SeqCst){return Ok(());}
         editor.compact.store(compact,Ordering::SeqCst);
+        editor.docks.lock().map_err(|_|"Controles ocupados")?.tools.compact=compact;
     }
     let region = editor
         .region
@@ -684,6 +724,57 @@ pub fn screen_overlay_layout(
 
 // Expand only while a panel is visible; the rail stays at the same screen position.
 #[tauri::command]
+pub async fn screen_overlay_customize(app:tauri::AppHandle,window:tauri::WebviewWindow,id:String,action:String,
+    x:Option<f64>,y:Option<f64>,width:Option<f64>,height:Option<f64>,zoom:Option<f64>,compact:Option<bool>) -> Result<serde_json::Value,String> {
+    tauri::async_runtime::spawn_blocking(move|| {
+        let tools=window.label()==session::label(&id,"screen-tools");
+        if !tools && window.label()!=session::label(&id,"screen-hud") {return Err("Vista incorrecta".into());}
+        let ctx=context(&app,&id)?; let editor=session::editor(&app,&id);
+        let region=editor.region.lock().map_err(|_|"Editor ocupado")?.ok_or("Captura no disponible")?;
+        let monitor=editor.monitor.lock().map_err(|_|"Editor ocupado")?.ok_or("Monitor no disponible")?;
+        let previous=configured_dock(&app,&ctx,region,monitor,window.label(),false)?;
+        let mut all=editor.docks.lock().map_err(|_|"Controles ocupados")?;
+        let dock=all.get_mut(tools);
+        match action.as_str() {
+            "get" => {},
+            "begin" => {dock.drag_origin=Some((previous.x,previous.y));},
+            "move"|"nudge" => {
+                let (dx,dy)=(x.ok_or("Movimiento incorrecto")?,y.ok_or("Movimiento incorrecto")?);
+                if !dx.is_finite()||!dy.is_finite()||dx.abs()>100_000.||dy.abs()>100_000. {return Err("Movimiento incorrecto".into());}
+                let (ox,oy)=if action=="move" {dock.drag_origin.ok_or("Arrastre finalizado")?}else{(previous.x,previous.y)};
+                let next=crate::capture_docks::fit(Region{x:ox+(dx*ctx.scale).round() as i32,y:oy+(dy*ctx.scale).round() as i32,..previous},monitor);
+                crate::capture_docks::pin(dock,next,monitor);
+            },
+            "size" => {
+                let (w,h)=(width.ok_or("Tamaño incorrecto")?,height.ok_or("Tamaño incorrecto")?);
+                if !w.is_finite()||!h.is_finite()||!(32. ..=1200.).contains(&w)||!(24. ..=1000.).contains(&h) {return Err("Tamaño incorrecto".into());}
+                dock.size=Some((w,h));
+            },
+            "configure" => {
+                if let Some(value)=zoom {if !value.is_finite()||!(0.75..=1.5).contains(&value){return Err("Escala incorrecta".into());} dock.zoom=value;}
+                if let Some(value)=compact {dock.compact=value;dock.size=None;}
+            },
+            "end" => {dock.drag_origin=None;},
+            "cancel" => {if let Some((x,y))=dock.drag_origin.take(){crate::capture_docks::pin(dock,Region{x,y,..previous},monitor);}},
+            "reset" => {dock.anchor=None;dock.drag_origin=None;},
+            _=>return Err("Control desconocido".into()),
+        }
+        let saved=dock.clone(); drop(all);
+        if tools {editor.compact.store(saved.compact,Ordering::SeqCst);}
+        let bounds=configured_dock(&app,&ctx,region,monitor,window.label(),false)?;
+        if action!="get" && action!="begin" {screen::place_window(&window,bounds)?;}
+        if ["configure","end","cancel","reset","nudge"].contains(&action.as_str()) {
+            let store=app.state::<crate::storage::Store>();
+            // Update this dock only: an image editor can coexist with a video.
+            let mut prefs=store.get::<crate::capture_docks::Docks>("capture_dock_preferences").unwrap_or_default();
+            *prefs.get_mut(tools)=saved.clone();store.put("capture_dock_preferences",&prefs)?;
+        }
+        Ok(serde_json::json!({"zoom":saved.zoom,"compact":saved.compact}))
+    }).await.map_err(|e|e.to_string())?
+}
+
+// Expand only while a panel is visible; the rail stays at the same screen position.
+#[tauri::command]
 pub fn screen_tools_panel(app: tauri::AppHandle, window: tauri::WebviewWindow, id: String,
     open: bool, compact: bool, anchor: f64, panel_height: f64) -> Result<serde_json::Value, String> {
     if window.label() != session::label(&id,"screen-tools") { return Err("Vista incorrecta".into()); }
@@ -693,7 +784,7 @@ pub fn screen_tools_panel(app: tauri::AppHandle, window: tauri::WebviewWindow, i
     editor.compact.store(compact,Ordering::SeqCst);
     let region=editor.region.lock().map_err(|_|"Editor ocupado")?.ok_or("Captura no disponible")?;
     let monitor=editor.monitor.lock().map_err(|_|"Editor ocupado")?.ok_or("Monitor no disponible")?;
-    let rail=tool_bounds(region,monitor,ctx.scale,compact);
+    let rail=configured_dock(&app,&ctx,region,monitor,window.label(),compact)?;
     if !open {
         place_controls(&window,&ctx,region,monitor,compact)?;
         return Ok(serde_json::json!({"railX":4,"railY":4,"menuX":0,"menuY":0}));
@@ -996,6 +1087,17 @@ pub async fn screen_editor_sample(
 }
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn almost_full_screen_tools_stay_at_a_side_with_taskbar_excluded() {
+        for scale in [1.,1.25,1.5,2.] {
+            for bottom in [20,40,80] {
+                let monitor=Region{x:-1920,y:-200,width:1920,height:1080,..Default::default()};
+                let region=Region{height:1080-bottom,..monitor};
+                let tools=tool_bounds(region,monitor,scale,false);
+                assert!(tools.x<=monitor.x+pixels(12.,scale) as i32 || tools.x+tools.width as i32>=monitor.x+monitor.width as i32-pixels(12.,scale) as i32,"{tools:?}");
+            }
+        }
+    }
     #[test]
     fn video_bar_does_not_cover_drawing_tools_for_narrow_regions() {
         for scale in [1., 1.25, 1.5, 2.] {

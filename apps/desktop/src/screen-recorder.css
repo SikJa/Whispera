@@ -104,6 +104,9 @@ html[data-screen-select="true"], html[data-screen-select="true"] body, html[data
 .capture-hud[data-paused="true"] .capture-hud-time i { background:#ffca3a; }
 .capture-hud-error { position:absolute; top:54px; right:8px; left:8px; padding:8px; background:#302126; border:1px solid #9b5656; border-radius:8px; color:#ffd0d0; font-size:12px; }
 .editable-capture-frame { pointer-events:none; outline:none; }
+/* Focus belongs to the existing frame, never a second full-screen contour. */
+.capture-frame-move:focus-visible {outline:none;box-shadow:inset 0 0 0 1px var(--capture-frame-color,#fff);}
+.capture-frame-handle:focus-visible {outline:2px solid var(--capture-frame-color,#fff);outline-offset:0;}
 .capture-frame-move,.capture-frame-handle { position:absolute; pointer-events:auto; touch-action:none; padding:0; margin:0; border:0; background:transparent; }
 .capture-frame-move { inset:-5px; border:10px solid transparent; border-radius:inherit; cursor:move; clip-path:polygon(0 0,100% 0,100% 100%,0 100%,0 0,10px 10px,10px calc(100% - 10px),calc(100% - 10px) calc(100% - 10px),calc(100% - 10px) 10px,10px 10px); }
 .capture-frame-handle { width:16px; height:16px; transform:translate(-50%,-50%); }

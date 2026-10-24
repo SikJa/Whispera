@@ -16,6 +16,11 @@ export function installNativeMock({kind='video',width=640,height=480,scale=1,set
     transformCallback:callback=>{const id=next++;callbacks.set(id,callback);return id;},
     invoke:async(command,args={})=>{
       window.calls.push({command,args});
+      if(command==='screen_overlay_customize'){
+        window.captureDock??={zoom:1,compact:false};
+        if(args.action==='configure')for(const key of ['zoom','compact'])if(args[key]!==undefined)window.captureDock[key]=args[key];
+        return {...window.captureDock};
+      }
       if(command==='plugin:event|listen'){const id=next++;listeners.set(id,args);return id;}
       if(command==='plugin:event|unlisten')return;
       if(command==='replay_preferences')return{enabled:false,seconds:60,audio:'none',folder:'',hotkey:''};

@@ -48,7 +48,7 @@ try {
   assert.equal(await page.getByRole('combobox').count(),0,'stroke sizes use visual buttons');
   await page.screenshot({path:'../../.local/editor-toolbar.png'});
   await page.goto((process.env.WHISPERA_TEST_URL || 'http://127.0.0.1:5190') + '/overlay.html?view=screen-hud');
-  await page.setViewportSize({width:297,height:56});await page.getByLabel('Acciones de captura').waitFor();
+  await page.setViewportSize({width:420,height:56});await page.getByLabel('Acciones de captura',{exact:true}).waitFor();
   await page.getByRole('button',{name:'Copiar',exact:true}).click();
   assert.ok(await page.evaluate(()=>window.calls.some(c=>c.command==='screen_editor_action'&&c.args.action.action==='copy')));
   const video=await browser.newPage({viewport:{width:640,height:480}});await video.addInitScript(installNativeMock,{kind:'video'});

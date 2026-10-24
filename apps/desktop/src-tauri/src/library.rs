@@ -261,6 +261,10 @@ fn collect(app: &tauri::AppHandle) -> Result<(), String> {
             let is_url = text.starts_with("https://") || text.starts_with("http://");
             add(&store, json!({"kind":"text","text":text,"isUrl":is_url}))?;
         }
+    } else {
+        // Cut/Copy owners can still hold OpenClipboard during the notification.
+        // Do not acknowledge the sequence until its content was readable.
+        return Err("El portapapeles todavia esta ocupado".into());
     }
     *state.sequence.lock().map_err(|_| "Biblioteca ocupada")? = sequence;
     Ok(())
@@ -337,13 +341,19 @@ pub fn start(app: &tauri::AppHandle) {
             }
         }
     }
+    #[cfg(windows)]
+    let clipboard_events=app.get_webview_window("main").map(|w|crate::clipboard_events::subscribe(&w));
     let app = app.clone();
     std::thread::spawn(move || {
-        let mut ticks = 0u64;
+        let mut maintenance=std::time::Instant::now()-Duration::from_secs(3600);
         loop {
+            #[cfg(windows)]
+            if let Some(events)=&clipboard_events {let _=events.recv_timeout(Duration::from_millis(750));}
+            else {std::thread::sleep(Duration::from_millis(750));}
+            #[cfg(not(windows))]
             std::thread::sleep(Duration::from_millis(750));
-            ticks += 1;
-            if ticks % 4800 == 1 {
+            if maintenance.elapsed()>=Duration::from_secs(3600) {
+                maintenance=std::time::Instant::now();
                 if let Ok(_guard) = GATE.lock() {
                     let store = app.state::<Store>();
                     if let Ok(items) = rows(&store).and_then(|items| save(&store, items)) {
@@ -384,7 +394,10 @@ pub fn start(app: &tauri::AppHandle) {
             if config["captureGlobal"].as_bool().unwrap_or(false)
                 && !config["incognito"].as_bool().unwrap_or(false)
             {
-                let _ = collect(&app);
+                for attempt in 0..4 {
+                    if collect(&app).is_ok(){break;}
+                    std::thread::sleep(Duration::from_millis(15*(attempt+1)));
+                }
             }
         }
     });

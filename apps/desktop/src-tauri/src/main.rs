@@ -14,6 +14,7 @@ mod audio;
 mod capture_history;
 mod capture_session;
 mod library;
+mod clipboard_events;
 mod native_drag;
 mod library_media;
 mod video_transcript;
@@ -42,6 +43,7 @@ mod profile;
 mod windows_capture_keys;
 mod screen;
 mod screen_editor;
+mod capture_docks;
 mod shortcuts;
 mod sounds;
 mod storage;
@@ -676,6 +678,7 @@ fn main() {
             screen::screen_pause,
             screen::screen_cancel,
             screen_editor::screen_overlay_layout,
+            screen_editor::screen_overlay_customize,
             screen_editor::screen_tools_panel,
             onboarding::complete_setup,
             onboarding::set_startup,

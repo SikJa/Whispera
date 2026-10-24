@@ -278,6 +278,14 @@ pub(crate) fn protect(window: &tauri::WebviewWindow) -> Result<(), String> {
         },
     };
     let hwnd = HWND(window.hwnd().map_err(|e| e.to_string())?.0);
+    // Windows 11 can paint the active accent at a monitor edge even on a
+    // borderless overlay. The capture already draws its own single frame.
+    unsafe {
+        let no_border=0xfffffffe_u32; // DWMWA_COLOR_NONE; older Windows ignores it.
+        let _=windows::Win32::Graphics::Dwm::DwmSetWindowAttribute(hwnd,
+            windows::Win32::Graphics::Dwm::DWMWA_BORDER_COLOR,
+            &no_border as *const _ as *const _,std::mem::size_of_val(&no_border) as u32);
+    }
     let mut affinity = 0;
     unsafe {
         SetWindowDisplayAffinity(hwnd, WDA_EXCLUDEFROMCAPTURE)

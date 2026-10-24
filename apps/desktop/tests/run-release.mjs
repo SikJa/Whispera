@@ -15,6 +15,7 @@ suites.push('performance');
 suites.push('copy-export');
 suites.push('app-themes');
 suites.push('palette-stability');
+suites.push('capture-docks');
 const failures=[];
 try {
   for (const name of suites) {

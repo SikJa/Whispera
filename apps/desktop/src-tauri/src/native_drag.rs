@@ -133,7 +133,18 @@ fn helper() -> Result<(), String> {
     let instance = unsafe { GetModuleHandleW(None) }.map_err(|e| e.to_string())?;
     let class = WNDCLASSW { lpfnWndProc: Some(wndproc), hInstance: HINSTANCE(instance.0), lpszClassName: w!("WhisperaFileDrag"), ..Default::default() };
     unsafe { RegisterClassW(&class); }
-    let window = Window(unsafe { CreateWindowExW(WS_EX_TOOLWINDOW, w!("WhisperaFileDrag"), w!("Whispera · Arrastre"), WS_POPUP, 0, 0, 1, 1, None, None, Some(HINSTANCE(instance.0)), None) }.map_err(|e| e.to_string())?);
+    let source=HWND(request.source as usize as *mut _);
+    // DoDragDrop consumes the calling thread's input queue. A fresh hidden
+    // helper has never received the source's button-down and otherwise may
+    // never receive its release. Share that input queue only for this gesture.
+    use windows::Win32::{System::Threading::{GetCurrentThreadId,AttachThreadInput},UI::WindowsAndMessaging::GetWindowThreadProcessId};
+    struct InputQueue(u32,u32);
+    impl Drop for InputQueue {fn drop(&mut self){unsafe{let _=AttachThreadInput(self.0,self.1,false);}}}
+    let thread=unsafe{GetCurrentThreadId()};
+    let source_thread=unsafe{GetWindowThreadProcessId(source,None)};
+    let window = Window(unsafe { CreateWindowExW(WS_EX_TOOLWINDOW, w!("WhisperaFileDrag"), w!("Whispera · Arrastre"), WS_POPUP, 0, 0, 1, 1, Some(source), None, Some(HINSTANCE(instance.0)), None) }.map_err(|e| e.to_string())?);
+    if source_thread==0||!unsafe{AttachThreadInput(thread,source_thread,true)}.as_bool(){return Err("No se pudo conectar el arrastre a la ventana de origen".into());}
+    let _input=InputQueue(thread,source_thread);
     if !button_down() { return Ok(()); }
     drag::start_drag(&window, drag::DragItem::Files(request.files), drag::Image::Raw(request.preview), |_, _| {}, Default::default()).map_err(|e| e.to_string())
 }

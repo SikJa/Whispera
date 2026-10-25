@@ -4,7 +4,7 @@ import {installNativeMock} from './tests/native-mock.mjs';
 const browser=await launchSilentBrowser();
 const base=process.env.WHISPERA_TEST_URL||'http://127.0.0.1:5190';
 try {
-  const hud=await browser.newPage({viewport:{width:260,height:56}});
+  const hud=await browser.newPage({viewport:{width:420,height:80}});
   await hud.addInitScript(installNativeMock,{kind:'image'});
   await hud.addInitScript(()=>{
     const original=window.__TAURI_INTERNALS__.invoke;
@@ -18,7 +18,7 @@ try {
   await hud.goto(base+'/overlay.html?view=screen-hud');
   await hud.waitForFunction(()=>!!window.finishContext);
   await hud.evaluate(()=>window.emitNative('screen-editor-reset',{...window.editorContext,id:'current-session'}));
-  await hud.getByLabel('Acciones de captura').waitFor();
+  await hud.getByLabel('Acciones de captura',{exact:true}).waitFor();
   await hud.waitForFunction(()=>!!window.finishFeedback);
   await hud.evaluate(()=>{
     window.emitNative('screen-editor-feedback',{id:'current-session',feedback:{busy:false,error:''}});
@@ -60,7 +60,7 @@ try {
   await tools.getByRole('dialog',{name:'Color del trazo',exact:true}).waitFor();
   await tools.evaluate(()=>window.emitNative('screen-editor-drag',window.editorContext.id));
   await tools.getByRole('dialog',{name:'Color del trazo',exact:true}).waitFor({state:'detached'});
-  assert.deepEqual(await tools.getByLabel('Herramientas de captura').evaluate(e=>({x:e.style.left,y:e.style.top})),{x:'4px',y:'4px'},'drag clears expanded-menu offsets');
+  assert.deepEqual(await tools.getByLabel('Herramientas de captura',{exact:true}).evaluate(e=>{const origin=e.closest('.capture-dock-origin');return{x:origin.style.left,y:origin.style.top};}),{x:'4px',y:'4px'},'drag clears expanded-menu offsets');
   await tools.getByRole('button',{name:'Contraer herramientas'}).click();
   await tools.evaluate(()=>window.emitNative('screen-editor-drag',window.editorContext.id));
   assert.equal(await tools.getByLabel('Herramientas de captura').getAttribute('data-compact'),'true','drag preserves the compact toolbar');

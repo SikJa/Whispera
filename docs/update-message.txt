@@ -1,1 +1,1 @@
-Corregimos los saltos de la paleta al personalizar colores: el selector permanece quieto mientras arrastrás. Incluye las mejoras de capturas, audio, guardado de imágenes y transcripción de la versión anterior. Tus preferencias se conservan.
+Ahora podés mover, contraer y cambiar el tamaño de las barras de captura. Mejoramos la detección de Cortar (Ctrl+X), el arrastre de imágenes y la protección contra cierres de texto inventados al terminar un dictado. Tus preferencias se conservan.

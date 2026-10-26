@@ -351,20 +351,27 @@ fn place_controls(
     let dock = configured_dock(window.app_handle(),ctx,region,monitor,window.label(),compact)?;
     screen::place_window(window, dock)
 }
+fn measured_tool_bounds(region:Region,monitor:Region,scale:f64,dock:&crate::capture_docks::Dock,compact:bool)->Region {
+    let mut automatic=tool_bounds(region,monitor,scale,dock.compact||compact);
+    if dock.horizontal && dock.size.is_none(){std::mem::swap(&mut automatic.width,&mut automatic.height);}
+    let mut result=crate::capture_docks::placed(automatic,monitor,dock,scale);
+    if dock.anchor.is_none(){
+        result=external_dock(region,monitor,result.width,result.height,pixels(10.,scale) as i32,!dock.horizontal,None);
+        if dock.horizontal && intersection(region,monitor)==monitor.width as u64*monitor.height as u64 {result.y=monitor.y+pixels(10.,scale) as i32;}
+    }
+    result
+}
 fn configured_dock(app:&tauri::AppHandle,ctx:&Context,region:Region,monitor:Region,label:&str,compact:bool)->Result<Region,String> {
     let editor=session::editor(app,&ctx.id);
     let docks=editor.docks.lock().map_err(|_|"Controles ocupados")?;
-    let tools=label.ends_with("-tools");
-    let dock=docks.get(tools);
-    let mut automatic=dock_bounds(ctx,region,monitor,label,if tools {dock.compact||compact}else{false})?;
-    let constrained=!tools&&automatic.width<pixels(420.,ctx.scale);
+    if label.ends_with("-tools"){return Ok(measured_tool_bounds(region,monitor,ctx.scale,&docks.tools,compact));}
+    let automatic=dock_bounds(ctx,region,monitor,label,false)?;
+    let dock=&docks.hud;
     let mut result=crate::capture_docks::placed(automatic,monitor,dock,ctx.scale);
-    if !tools&&dock.anchor.is_none(){
-        if constrained{result.width=result.width.min(automatic.width);}
-        let tool_auto=tool_bounds(region,monitor,ctx.scale,docks.tools.compact);
-        let tool_rect=crate::capture_docks::placed(tool_auto,monitor,&docks.tools,ctx.scale);
-        automatic=external_dock(region,monitor,result.width,result.height,pixels(10.,ctx.scale) as i32,false,Some(tool_rect));
-        result=automatic;
+    if dock.anchor.is_none(){
+        if automatic.width<pixels(420.,ctx.scale)&&dock.size.is_none(){result.width=result.width.min(automatic.width);}
+        let tools=measured_tool_bounds(region,monitor,ctx.scale,&docks.tools,false);
+        result=external_dock(region,monitor,result.width,result.height,pixels(10.,ctx.scale) as i32,false,Some(tools));
     }
     Ok(result)
 }
@@ -725,7 +732,7 @@ pub fn screen_overlay_layout(
 // Expand only while a panel is visible; the rail stays at the same screen position.
 #[tauri::command]
 pub async fn screen_overlay_customize(app:tauri::AppHandle,window:tauri::WebviewWindow,id:String,action:String,
-    x:Option<f64>,y:Option<f64>,width:Option<f64>,height:Option<f64>,zoom:Option<f64>,compact:Option<bool>) -> Result<serde_json::Value,String> {
+    x:Option<f64>,y:Option<f64>,width:Option<f64>,height:Option<f64>,zoom:Option<f64>,compact:Option<bool>,horizontal:Option<bool>) -> Result<serde_json::Value,String> {
     tauri::async_runtime::spawn_blocking(move|| {
         let tools=window.label()==session::label(&id,"screen-tools");
         if !tools && window.label()!=session::label(&id,"screen-hud") {return Err("Vista incorrecta".into());}
@@ -753,6 +760,7 @@ pub async fn screen_overlay_customize(app:tauri::AppHandle,window:tauri::Webview
             "configure" => {
                 if let Some(value)=zoom {if !value.is_finite()||!(0.75..=1.5).contains(&value){return Err("Escala incorrecta".into());} dock.zoom=value;}
                 if let Some(value)=compact {dock.compact=value;dock.size=None;}
+                if let Some(value)=horizontal {dock.horizontal=value;dock.size=None;}
             },
             "end" => {dock.drag_origin=None;},
             "cancel" => {if let Some((x,y))=dock.drag_origin.take(){crate::capture_docks::pin(dock,Region{x,y,..previous},monitor);}},
@@ -762,14 +770,14 @@ pub async fn screen_overlay_customize(app:tauri::AppHandle,window:tauri::Webview
         let saved=dock.clone(); drop(all);
         if tools {editor.compact.store(saved.compact,Ordering::SeqCst);}
         let bounds=configured_dock(&app,&ctx,region,monitor,window.label(),false)?;
-        if action!="get" && action!="begin" {screen::place_window(&window,bounds)?;}
+        if action!="get" && action!="begin" && (bounds.x,bounds.y,bounds.width,bounds.height)!=(previous.x,previous.y,previous.width,previous.height) {screen::place_window(&window,bounds)?;}
         if ["configure","end","cancel","reset","nudge"].contains(&action.as_str()) {
             let store=app.state::<crate::storage::Store>();
             // Update this dock only: an image editor can coexist with a video.
             let mut prefs=store.get::<crate::capture_docks::Docks>("capture_dock_preferences").unwrap_or_default();
             *prefs.get_mut(tools)=saved.clone();store.put("capture_dock_preferences",&prefs)?;
         }
-        Ok(serde_json::json!({"zoom":saved.zoom,"compact":saved.compact}))
+        Ok(serde_json::json!({"zoom":saved.zoom,"compact":saved.compact,"horizontal":saved.horizontal}))
     }).await.map_err(|e|e.to_string())?
 }
 
@@ -796,7 +804,12 @@ pub fn screen_tools_panel(app: tauri::AppHandle, window: tauri::WebviewWindow, i
     let right=rail.x+rail.width as i32+gap;
     let menu_x=if right+width as i32+gap<=monitor.x+monitor.width as i32 { right } else { rail.x-width as i32-gap };
     let menu_x=fit_start(menu_x,monitor.x,monitor.width,width,gap);
-    let menu_y=fit_start(rail.y+(anchor.clamp(0.,442.)*ctx.scale).round() as i32-height as i32/2,monitor.y,monitor.height,height,gap);
+    let horizontal=editor.docks.lock().map_err(|_|"Controles ocupados")?.tools.horizontal;
+    let menu_x=if horizontal {fit_start(rail.x,monitor.x,monitor.width,width,gap)}else{menu_x};
+    let menu_y=if horizontal {
+        let below=rail.y+rail.height as i32+gap;
+        fit_start(if below+height as i32<=monitor.y+monitor.height as i32-gap {below}else{rail.y-height as i32-gap},monitor.y,monitor.height,height,gap)
+    } else {fit_start(rail.y+(anchor.clamp(0.,442.)*ctx.scale).round() as i32-height as i32/2,monitor.y,monitor.height,height,gap)};
     let x=rail.x.min(menu_x);let y=rail.y.min(menu_y);
     window.set_size(tauri::PhysicalSize::new((rail.x+rail.width as i32).max(menu_x+width as i32)-x,(rail.y+rail.height as i32).max(menu_y+height as i32)-y)).map_err(|e|e.to_string())?;
     window.set_position(tauri::PhysicalPosition::new(x,y)).map_err(|e|e.to_string())?;
@@ -1087,6 +1100,27 @@ pub async fn screen_editor_sample(
 }
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn measured_fullscreen_tools_center_after_collapse() {
+        for scale in [1.,1.25,1.5,2.] {
+            let monitor=Region{x:-1920,y:-200,width:1920,height:1080,..Default::default()};
+            for horizontal in [false,true] {
+                for compact in [false,true] {
+                    let length=if compact {170.}else{550.};
+                    let size=if horizontal {(length,50.)}else{(50.,length)};
+                    let dock=crate::capture_docks::Dock{horizontal,compact,size:Some(size),zoom:0.85,..Default::default()};
+                    let result=measured_tool_bounds(monitor,monitor,scale,&dock,false);
+                    assert!(result.x>=monitor.x&&result.y>=monitor.y);
+                    assert!(result.x+result.width as i32<=monitor.x+monitor.width as i32);
+                    assert!(result.y+result.height as i32<=monitor.y+monitor.height as i32);
+                    if horizontal {
+                        assert_eq!(result.y,monitor.y+pixels(10.,scale) as i32);
+                        assert!((result.x+result.width as i32/2-(monitor.x+960)).abs()<=1);
+                    }else{assert!((result.y+result.height as i32/2-(monitor.y+540)).abs()<=1);}
+                }
+            }
+        }
+    }
     #[test]
     fn almost_full_screen_tools_stay_at_a_side_with_taskbar_excluded() {
         for scale in [1.,1.25,1.5,2.] {

@@ -10,6 +10,8 @@
 .capture-line button[aria-pressed=true] { border:0; background:#ffffff16; box-shadow:none; }
 .capture-line .capture-tool-list { gap:2px; }
 .capture-line .capture-tool-header { border:0; border-top:1px solid #ffffff10; padding:4px 0 0; }
+.capture-line .capture-orientation {display:flex;gap:0;}
+.capture-line .capture-orientation button {width:16px;}
 .capture-line-style { display:flex; flex-direction:column; border-top:1px solid #ffffff10; padding-top:4px; gap:2px; }
 .capture-line-swatch { width:17px; height:17px; border:1px solid #ffffff30; border-radius:5px; }
 .capture-line-panel { position:absolute; width:284px; box-sizing:border-box; padding:12px; background:#222427fa; color:#e9eaed; border:1px solid #ffffff24; border-radius:8px; box-shadow:0 3px 8px #0004; font:12px 'Instrument Sans Variable','Segoe UI',sans-serif; }
@@ -36,7 +38,11 @@
 .capture-line-hud button.capture-stop { background:#ededf0; color:#222; }
 .capture-dock-origin {position:absolute;left:4px;top:4px;width:max-content;}
 .capture-dock-origin>.capture-toolbar.capture-line {position:relative;left:auto;top:auto;}
-.capture-dock-origin>.capture-hud-controls,.capture-dock-origin>.capture-image-actions {position:relative;inset:auto;width:max-content;height:auto;min-height:44px;max-width:calc((100vw - 8px) / var(--dock-zoom,1));flex-wrap:wrap;}
+.capture-dock-origin>.capture-hud-controls,.capture-dock-origin>.capture-image-actions {position:relative;inset:auto;width:max-content;height:auto;min-height:44px;max-width:none;flex-wrap:nowrap;}
+.capture-toolbar.capture-line[data-horizontal="true"] {flex-direction:row;width:max-content;}
+.capture-line[data-horizontal="true"] .capture-tool-list,.capture-line[data-horizontal="true"] .capture-line-style {flex-direction:row;}
+.capture-line[data-horizontal="true"] .capture-line-style,.capture-line[data-horizontal="true"] .capture-tool-header {border-top:0;border-left:1px solid #ffffff18;padding:0 0 0 4px;}
+.capture-line[data-horizontal="true"]>.capture-dock-grip {border-bottom:0;}
 .capture-dock-origin>.capture-hud-controls {padding:5px 8px;}
 .capture-dock-origin .capture-dock-grip {height:24px;width:30px;cursor:grab;touch-action:none;flex-shrink:0;color:#b8bdc6;}
 .capture-dock-origin .capture-dock-grip:active {cursor:grabbing;background:#ffffff18;}

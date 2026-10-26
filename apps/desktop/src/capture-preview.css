@@ -1,0 +1,16 @@
+.capture-preview-page {margin:0;background:#131517;color:#ecedf0;font:14px 'Segoe UI',sans-serif;}
+.capture-preview-page * {box-sizing:border-box;letter-spacing:0;}
+.capture-preview-page header {height:64px;display:flex;align-items:center;gap:12px;padding:0 24px;background:#202225;border-bottom:1px solid #ffffff18;}
+.capture-preview-page header img {width:28px;height:28px;}
+.capture-preview-page header span {font-size:12px;color:#a7adb5;}
+.capture-preview-page nav {margin-left:auto;display:flex;gap:4px;}
+.capture-preview-page nav a {color:#bfc4cc;text-decoration:none;padding:8px 14px;border-radius:6px;}
+.capture-preview-page nav a[aria-current] {background:#3d354b;color:#eadbff;}
+.capture-preview-page main {position:relative;height:calc(100dvh - 64px);min-height:560px;overflow:hidden;border:2px solid #d5c3ec;}
+.preview-workspace {position:absolute;inset:0;display:flex;flex-direction:column;justify-content:center;align-items:center;pointer-events:none;}
+.preview-workspace img {width:128px;height:128px;object-fit:contain;}
+.preview-workspace h1 {font-size:22px;font-weight:500;margin:22px 0 4px;}
+.preview-workspace p {color:#9299a3;font-size:12px;}
+.capture-preview-page iframe {position:absolute;border:0;background:transparent;width:50px;height:540px;}
+.capture-preview-page iframe[data-view="screen-hud"] {width:440px;height:64px;}
+@media(max-width:560px){.capture-preview-page header {padding:0 12px;gap:8px;}.capture-preview-page header span {max-width:95px;}}

@@ -645,6 +645,8 @@ fn main() {
             screen::screen_save_preferences,
             screen::screen_status,
             screen::screen_select,
+            screen::screen_monitors,
+            screen::screen_start_monitor,
             screen::screen_cancel_selection,
             screen::screen_start,
             screen::screen_select_image,

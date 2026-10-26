@@ -1,26 +1,30 @@
 import {useEffect,useRef,useState,type PointerEvent,type RefObject} from 'react';
 import {invoke} from '@tauri-apps/api/core';
-import {GripVertical,Minus,Plus} from 'lucide-react';
+import {GripVertical,Minus,Plus,RotateCw,LocateFixed} from 'lucide-react';
 
-type View={zoom:number;compact:boolean};
+type View={zoom:number;compact:boolean;horizontal?:boolean};
 type Gesture={x:number;y:number;pending?:{x:number;y:number};ready:Promise<unknown>;running?:Promise<void>};
 export function useCaptureDock(id:string,element:RefObject<HTMLElement|null>,onError:(error:string)=>void,beforeDrag?:()=>Promise<unknown>) {
   const [view,setView]=useState<View>({zoom:1,compact:false});
   const gesture=useRef<Gesture|undefined>(undefined);const live=useRef(true);
-  const request=(action:string,args:Record<string,unknown>={})=>invoke<View>('screen_overlay_customize',{id,action,...args});
+  const queue=useRef<Promise<unknown>>(Promise.resolve());
+  const request=(action:string,args:Record<string,unknown>={})=>{
+    const next=queue.current.catch(()=>{}).then(()=>invoke<View>('screen_overlay_customize',{id,action,...args}));
+    queue.current=next;return next;
+  };
   const change=async(values:Partial<View>)=>{try{const value=await request('configure',values);if(live.current&&value)setView(value);}catch(e){onError(String(e));}};
   useEffect(()=>{live.current=true;void request('get').then(value=>{if(live.current&&value)setView(value);}).catch(e=>onError(String(e)));return()=>{live.current=false;};},[id]);
   useEffect(()=>{
     const target=element.current;if(!target)return;
-    let timer=0,previous='';
+    let timer:ReturnType<typeof setTimeout>|undefined,previous='',stopped=false;
     const measure=()=>{
-      const width=target.offsetWidth+8,height=target.offsetHeight+8,key=`${width}:${height}:${view.zoom}`;
+      const width=target.offsetWidth+8/view.zoom,height=target.offsetHeight+8/view.zoom,key=`${width}:${height}:${view.zoom}`;
       if(key===previous)return;previous=key;
-      void request('size',{width,height}).catch(e=>onError(String(e)));
+      if(!stopped)void request('size',{width,height}).catch(e=>onError(String(e)));
     };
-    const observer=new ResizeObserver(()=>{cancelAnimationFrame(timer);timer=requestAnimationFrame(measure);});
-    observer.observe(target);measure();return()=>{observer.disconnect();cancelAnimationFrame(timer);};
-  },[id,view.zoom,view.compact,element]);
+    const observer=new ResizeObserver(()=>{clearTimeout(timer);timer=setTimeout(measure,32);});
+    observer.observe(target);measure();return()=>{stopped=true;observer.disconnect();clearTimeout(timer);};
+  },[id,view.zoom,view.compact,view.horizontal,element]);
   const flush=(g:Gesture):Promise<void>=>{
     if(g.running)return g.running;
     const run=async()=>{await g.ready;while(g.pending){const point=g.pending;g.pending=undefined;await request('move',point);}};
@@ -37,5 +41,7 @@ export function useCaptureDock(id:string,element:RefObject<HTMLElement|null>,onE
   const finish=async(cancel=false)=>{const g=gesture.current;if(!g)return;gesture.current=undefined;try{await flush(g);await request(cancel?'cancel':'end');}catch(e){onError(String(e));}};
   const grip=(label:string)=><button className="capture-dock-grip" aria-label={`Mover ${label}`} title="Arrastrá para mover · Flechas para ajustar · Doble clic para restablecer" onPointerDown={start} onPointerMove={move} onPointerUp={()=>void finish()} onPointerCancel={()=>void finish(true)} onLostPointerCapture={()=>void finish()} onDoubleClick={()=>void request('reset').catch(e=>onError(String(e)))} onKeyDown={e=>{const delta=({ArrowLeft:[-10,0],ArrowRight:[10,0],ArrowUp:[0,-10],ArrowDown:[0,10]} as Record<string,number[]>)[e.key];if(delta){e.preventDefault();void request('nudge',{x:delta[0],y:delta[1]}).catch(e=>onError(String(e)));}}}><GripVertical size={15}/></button>;
   const sizing=(label:string)=><span className="capture-dock-sizing" aria-label={`Tamaño de ${label}`}><button aria-label={`Reducir ${label}`} title={`Reducir (${Math.round(view.zoom*100)} %)`} disabled={view.zoom<=.75} onClick={()=>void change({zoom:Math.max(.75,Math.round((view.zoom-.1)*100)/100)})}><Minus size={13}/></button><button aria-label={`Ampliar ${label}`} title={`Ampliar (${Math.round(view.zoom*100)} %)`} disabled={view.zoom>=1.5} onClick={()=>void change({zoom:Math.min(1.5,Math.round((view.zoom+.1)*100)/100)})}><Plus size={13}/></button></span>;
-  return {...view,change,grip,sizing};
+  const rotate=()=> <button aria-label={view.horizontal?'Orientar herramientas verticalmente':'Orientar herramientas horizontalmente'} title={view.horizontal?'Barra vertical':'Barra horizontal'} onClick={()=>void (async()=>{await beforeDrag?.();await change({horizontal:!view.horizontal});})()}><RotateCw size={15}/></button>;
+  const reset=()=> <button aria-label="Restablecer posición de herramientas" title="Restablecer posición" onClick={()=>void (async()=>{await beforeDrag?.();await request('reset');})().catch(e=>onError(String(e)))}><LocateFixed size={15}/></button>;
+  return {...view,change,grip,sizing,rotate,reset};
 }

@@ -585,6 +585,24 @@ pub async fn screen_select(app: tauri::AppHandle) -> Result<(), String> {
         .await
         .map_err(|e| e.to_string())?
 }
+#[tauri::command]
+pub fn screen_monitors(app: tauri::AppHandle) -> Result<Vec<serde_json::Value>, String> {
+    Ok(app.available_monitors().map_err(|e|e.to_string())?.iter().enumerate().map(|(index,m)|
+        serde_json::json!({"index":index,"name":m.name(),"width":m.size().width,"height":m.size().height})
+    ).collect())
+}
+#[tauri::command]
+pub async fn screen_start_monitor(app: tauri::AppHandle, index: usize) -> Result<(), String> {
+    if *app.state::<Screen>().kind.lock().map_err(|_|"Captura ocupada")? != "video" {return Err("Abri primero la seleccion de video".into());}
+    let monitor=app.available_monitors().map_err(|e|e.to_string())?.into_iter().nth(index).ok_or("La pantalla ya no esta disponible")?;
+    let window=app.get_webview_window(&format!("screen-select-{index}")).ok_or("Abri primero la seleccion de video")?;
+    if window.inner_position().map_err(|e|e.to_string())? != *monitor.position() || window.inner_size().map_err(|e|e.to_string())? != *monitor.size() {
+        return Err("Cambio la configuracion de pantallas. Volve a abrir la seleccion.".into());
+    }
+    let size=window.inner_size().map_err(|e|e.to_string())?;
+    let scale=window.scale_factor().map_err(|e|e.to_string())?;
+    screen_start(app,window,Rect{x:0.,y:0.,width:size.width as f64/scale,height:size.height as f64/scale}).await
+}
 #[cfg(target_os = "macos")]
 pub(crate) fn set_frame_region(window: &tauri::WebviewWindow, rect: Option<Rect>) -> Result<(), String> {
     crate::screen_capture::macos::window_action(window, if rect.is_some() { 3 } else { 2 }, rect)

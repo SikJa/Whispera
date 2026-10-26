@@ -1,5 +1,5 @@
 import ReplaySettings from './ReplaySettings';
-import { FolderOpen } from 'lucide-react';
+import { FolderOpen, Monitor } from 'lucide-react';
 import {shallowEqual} from './shallow-equal';
 import { useEffect, useRef, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
@@ -70,6 +70,8 @@ export function ScreenSelection({kind='video',frameColor='#ffffff',snapshot,onPr
   const [end, setEnd] = useState<Point>();
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+  const [monitors,setMonitors]=useState<{index:number;name:string|null;width:number;height:number}[]>([]);
+  useEffect(()=>{let alive=true;if(kind==='video')void invoke<typeof monitors>('screen_monitors').then(value=>{if(alive&&Array.isArray(value))setMonitors(value);}).catch(e=>{if(alive)setError(String(e));});return()=>{alive=false;};},[kind]);
   const anchor = useRef<Point | undefined>(undefined);
   const boundedPoint=(x:number,y:number):Point=>({x:Math.max(0,Math.min(innerWidth,x)),y:Math.max(0,Math.min(innerHeight,y))});
   const interruptSelection=()=>{
@@ -107,6 +109,7 @@ export function ScreenSelection({kind='video',frameColor='#ffffff',snapshot,onPr
     await beginCapture(rect);
   }} onPointerCancel={interruptSelection} onLostPointerCapture={interruptSelection}>
     <div className="screen-selection-help" role="status">{busy ? 'Preparando…' : error || (kind==='image'?'Seleccioná el área para capturar.':'Seleccioná el área. Al soltar empieza a grabar.')} <kbd>{commandKey}+A: pantalla completa</kbd><kbd>Esc: salir</kbd></div>
+    {kind==='video'&&!origin&&<div className="screen-monitor-picker" role="group" aria-label="Pantalla para grabar">{monitors.map(m=><button key={m.index} disabled={busy} title={`${m.name??'Monitor'} · ${m.width} × ${m.height}`} onClick={()=>{if(busy)return;setBusy(true);void invoke('screen_start_monitor',{index:m.index}).catch(e=>{setError(String(e));setBusy(false);});}}><Monitor size={18}/><span>Pantalla {m.index+1}<small>{m.width} × {m.height}</small></span></button>)}</div>}
     {rect && <CaptureFrame className="screen-selection-rect" width={rect.width} height={rect.height} color={frameColor} style={{left:rect.x,top:rect.y}}/>}
   </div>;
 }

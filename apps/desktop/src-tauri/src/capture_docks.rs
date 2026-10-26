@@ -9,12 +9,13 @@ pub struct Anchor { pub x: f64, pub y: f64 }
 pub struct Dock {
     pub zoom: f64,
     pub compact: bool,
+    pub horizontal: bool,
     pub anchor: Option<Anchor>,
     #[serde(skip)] pub size: Option<(f64, f64)>,
     #[serde(skip)] pub drag_origin: Option<(i32, i32)>,
 }
 impl Default for Dock {
-    fn default() -> Self { Self { zoom: 1., compact: false, anchor: None, size: None, drag_origin: None } }
+    fn default() -> Self { Self { zoom: 1., compact: false, horizontal: false, anchor: None, size: None, drag_origin: None } }
 }
 #[derive(Clone, Default, Serialize, Deserialize)]
 #[serde(default)]

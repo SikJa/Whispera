@@ -16,6 +16,7 @@ suites.push('copy-export');
 suites.push('app-themes');
 suites.push('palette-stability');
 suites.push('capture-docks');
+suites.push('capture-fullscreen');
 suites.push('video-recovery');
 const failures=[];
 try {

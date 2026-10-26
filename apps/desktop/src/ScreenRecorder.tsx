@@ -1,4 +1,5 @@
 import ReplaySettings from './ReplaySettings';
+import { FolderOpen } from 'lucide-react';
 import {shallowEqual} from './shallow-equal';
 import { useEffect, useRef, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
@@ -131,6 +132,14 @@ export default function ScreenRecorder() {
   });
   const changePreferences=(p:Preferences)=>{setPreferences(p);autosave.queue(p);};
   const [status, setStatus] = useState<Status>({ phase: 'idle', seconds: 0, path: '', error: '', copied: false });
+  const [pending, setPending] = useState<{id:string;error:string}[]>([]);
+  useEffect(()=>{
+    if(!native)return;
+    let alive=true;
+    const refresh=()=>{if(document.visibilityState==='visible')void invoke<{id:string;error:string}[]>('screen_pending').then(value=>{if(alive&&Array.isArray(value))setPending(value);}).catch(()=>{});};
+    refresh();const timer=setInterval(refresh,5000);
+    return()=>{alive=false;clearInterval(timer);};
+  },[]);
   const [message, setMessage] = useState('');
   const [busy, setBusy] = useState(false);
   useEffect(() => {
@@ -177,6 +186,7 @@ export default function ScreenRecorder() {
 
     {status.path && !occupied && <div className="screen-result"><p>{status.copied ? `Video copiado. Pegalo con ${commandKey}+V.` : 'Video disponible. Podés volver a copiarlo.'}</p><button onClick={() => void run(() => invoke('screen_copy'), 'Video copiado para pegar.')}>Copiar video</button><button onClick={() => void run(() => invoke('screen_reveal'))}>Ver archivo temporal</button></div>}
     {(message || status.error) && <p role="status" className="notice">{message || status.error}</p>}
+    {pending.length>0&&<section aria-label="Videos pendientes de recuperación"><h3>Videos pendientes de recuperación</h3>{pending.map(item=><div className="form-row" key={item.id}><p>{item.error}</p><button disabled={busy} title="Ver originales conservados" onClick={()=>void run(()=>invoke('screen_pending_reveal',{id:item.id}))}><FolderOpen size={16}/>Ver originales</button></div>)}</section>}
     <ReplaySettings/>
     {!native && <p>La captura de pantalla requiere la aplicación de {systemName}.</p>}
   </section>;

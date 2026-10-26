@@ -12,6 +12,7 @@ mod upstream_updates;
 mod update_transport;
 mod audio;
 mod capture_history;
+mod capture_finalize;
 mod capture_session;
 mod library;
 mod clipboard_events;
@@ -669,6 +670,8 @@ fn main() {
             screen::screen_stop,
             screen::screen_copy,
             screen::screen_reveal,
+            screen::screen_pending,
+            screen::screen_pending_reveal,
             onboarding::setup_info,
             open_groq_console,
             shortcuts::save_all_shortcuts,

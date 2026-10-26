@@ -889,7 +889,22 @@ pub async fn screen_start(
         let history_app = app.clone();
         let transcribe_microphone = crate::video_transcript::recording_enabled(&app.state::<Store>());
         let thread = std::thread::spawn(move || {
+            let recovery_dir = dir.clone();
             capture(region, prefs, binary, dir, state.clone(), stop_rx, ready, transcribe_microphone);
+            let failed = state.lock().map(|s| s.phase == "error").unwrap_or(false);
+            if failed && transcribe_microphone {
+                let engine = history_app.state::<crate::engine::Engine>();
+                let recovery = crate::capture_finalize::preserve_microphone(&recovery_dir, &engine.recorder.root);
+                let note = match recovery {
+                    Ok(Some(_)) => "Microfono conservado en Audios pendientes: podes transcribirlo sin esperar al video.".into(),
+                    Ok(None) => "No hay pista de microfono; se conservaron los originales del video.".into(),
+                    Err(error) => format!("Recuperacion automatica pendiente: {error}. Originales en {}", recovery_dir.display()),
+                };
+                let cause = state.lock().map(|s| s.error.clone()).unwrap_or_default();
+                let _ = fs::write(recovery_dir.join("recovery-error.txt"), format!("{cause}\n{note}"));
+                let _ = history_app.state::<Store>().event(&note);
+                if let Ok(mut s) = state.lock() { s.error.push_str(&format!(" {note}")); }
+            }
             let path = state
                 .lock()
                 .ok()
@@ -1415,7 +1430,7 @@ fn capture(
                     File::create(dir.join("join.log")).map_err(|e| e.to_string())?,
                 ));
             let mut encoder = crate::encoder_job::Encoder::spawn(&mut join)?;
-            wait_encoder(&mut encoder.child)?;
+            wait_encoder(&mut encoder.child, elapsed)?;
             if fs::metadata(&output).map_err(|e| e.to_string())?.len() == 0 {
                 return Err("El video quedo vacio".into());
             }
@@ -1424,6 +1439,12 @@ fn capture(
             }
         }
         state.lock().map_err(|_| "Estado ocupado")?.seconds = elapsed;
+        // Keep all microphone segments until the entire video is finalized.
+        for part in &parts {
+            if !part.join("speech-error.txt").exists() {
+                let _ = fs::remove_file(part.join("microphone.pcm"));
+            }
+        }
         Ok(Some(output))
     })();
     match result {
@@ -1445,6 +1466,7 @@ fn capture(
             }
         }
         Err(e) => {
+            let _ = fs::write(dir.join("recovery-error.txt"), &e);
             let _ = ready.send(Err(e.clone()));
             if let Ok(mut status) = state.lock() {
                 status.phase = "error".into();
@@ -1454,8 +1476,21 @@ fn capture(
     }
 }
 
-fn wait_encoder(child: &mut Child) -> Result<(), String> {
-    let deadline = Instant::now() + Duration::from_secs(120);
+#[tauri::command]
+pub fn screen_pending(app: tauri::AppHandle) -> Result<Vec<crate::capture_finalize::PendingVideo>, String> {
+    crate::capture_finalize::pending(&app.path().app_local_data_dir().map_err(|e| e.to_string())?.join("screen-recordings"))
+}
+
+#[tauri::command]
+pub fn screen_pending_reveal(app: tauri::AppHandle, id: String) -> Result<(), String> {
+    uuid::Uuid::parse_str(&id).map_err(|_| "Identificador invalido")?;
+    let root = app.path().app_local_data_dir().map_err(|e| e.to_string())?.join("screen-recordings");
+    if !crate::capture_finalize::pending(&root)?.iter().any(|p| p.id == id) { return Err("Recuperacion no disponible".into()); }
+    crate::platform::reveal_path(&root.join(id))
+}
+
+fn wait_encoder(child: &mut Child, seconds: f64) -> Result<(), String> {
+    let deadline = Instant::now() + crate::capture_finalize::budget(seconds);
     loop {
         if let Some(exit) = child.try_wait().map_err(|e| e.to_string())? {
             return if exit.success() {
@@ -1491,6 +1526,11 @@ fn record(
     }
     if ["microphone", "both"].contains(&prefs.audio.as_str()) {
         tracks.push(AudioTrack::new(false, &dir)?);
+    }
+    for track in &tracks {
+        if track.path.file_name().is_some_and(|name| name == "microphone.pcm") {
+            crate::capture_finalize::remember_microphone(dir, track.rate, track.channels)?;
+        }
     }
     let video = dir.join("video.mkv");
     let log = File::create(dir.join("capture.log")).map_err(|e| e.to_string())?;
@@ -1700,24 +1740,7 @@ fn record(
         ));
     let mut mux_encoder = crate::encoder_job::Encoder::spawn(&mut mux)?;
     let mux_child = &mut mux_encoder.child;
-    let deadline = Instant::now() + Duration::from_secs(120);
-    loop {
-        if let Some(exit) = mux_child.try_wait().map_err(|e| e.to_string())? {
-            if !exit.success() {
-                return Err(format!(
-                    "No se pudo preparar el MP4. Originales en {}",
-                    dir.display()
-                ));
-            }
-            break;
-        }
-        if Instant::now() > deadline {
-            let _ = mux_child.kill();
-            let _ = mux_child.wait();
-            return Err("La preparacion del MP4 tardo demasiado; originales conservados".into());
-        }
-        std::thread::sleep(Duration::from_millis(50));
-    }
+    wait_encoder(mux_child, seconds)?;
     if transcribe_microphone { crate::video_timing::record_part_duration(&output, dir); }
     let mut preserve_microphone = false;
     if transcribe_microphone {
@@ -1734,7 +1757,7 @@ fn record(
         return Err("El video quedo vacio".into());
     }
     for file in ["video.mkv", "system.pcm", "microphone.pcm"] {
-        if file == "microphone.pcm" && preserve_microphone { continue; }
+        if file == "microphone.pcm" && (preserve_microphone || transcribe_microphone) { continue; }
         let _ = fs::remove_file(dir.join(file));
     }
     Ok((Some(output), reason, seconds))

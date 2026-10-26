@@ -1,7 +1,7 @@
 name: Windows capture repair
 on:
   push:
-    branches: [fix/capture-copy-20261015, codex/capture-startup-20261015]
+    branches: [fix/capture-copy-20261015, codex/capture-startup-20261015, codex/long-recording-recovery]
   workflow_dispatch:
 permissions:
   contents: read
@@ -23,7 +23,7 @@ jobs:
       - name: Validate source
         run: node scripts/check-source.mjs
       - name: Keep the installed Windows stable version for this local repair
-        run: node --input-type=module -e "import {setVersion} from './scripts/release-version.mjs'; setVersion('0.2.27');"
+        run: node --input-type=module -e "import {setVersion} from './scripts/release-version.mjs'; setVersion('0.2.32');"
       - run: npm ci
         working-directory: apps/desktop
       - run: npm ci --ignore-scripts
@@ -46,7 +46,7 @@ jobs:
         shell: pwsh
         run: |
           $repairExe = 'apps/desktop/src-tauri/target/release/whispera-desktop.exe'
-          [ordered]@{source=$env:GITHUB_SHA;version='0.2.27';sha256=(Get-FileHash -LiteralPath $repairExe -Algorithm SHA256).Hash} | ConvertTo-Json | Out-File -LiteralPath 'apps/desktop/src-tauri/target/release/repair-verification.json' -Encoding utf8
+          [ordered]@{source=$env:GITHUB_SHA;version='0.2.32';sha256=(Get-FileHash -LiteralPath $repairExe -Algorithm SHA256).Hash} | ConvertTo-Json | Out-File -LiteralPath 'apps/desktop/src-tauri/target/release/repair-verification.json' -Encoding utf8
       - uses: actions/upload-artifact@v4
         with:
           name: whispera-windows-capture-repair

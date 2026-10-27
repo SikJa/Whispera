@@ -1,1 +1,1 @@
-Ahora podés mover, contraer y cambiar el tamaño de las barras de captura. Mejoramos la detección de Cortar (Ctrl+X), el arrastre de imágenes y la protección contra cierres de texto inventados al terminar un dictado. Tus preferencias se conservan.
+Elegí qué pantalla grabar y alterná las herramientas entre horizontal y vertical. Corregimos su ubicación y tamaño al contraerlas. Los videos largos tienen más tiempo de procesamiento y recuperación de originales y micrófono si falla la preparación.

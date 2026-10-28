@@ -27,6 +27,20 @@ mod platform {
         pid: u32,
         field: Option<u64>,
     }
+    pub fn prefers_video_path(target: Target) -> bool {
+        use windows::{core::PWSTR, Win32::{Foundation::CloseHandle, System::Threading::{OpenProcess, QueryFullProcessImageNameW, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION}}};
+        unsafe {
+            let mut pid = 0;
+            GetWindowThreadProcessId(HWND(target.hwnd as _), Some(&mut pid));
+            if pid != target.pid { return false; }
+            let Ok(process) = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) else { return false; };
+            let mut buffer = [0u16; 32768];
+            let mut size = buffer.len() as u32;
+            let result = QueryFullProcessImageNameW(process, PROCESS_NAME_WIN32, PWSTR(buffer.as_mut_ptr()), &mut size);
+            let _ = CloseHandle(process);
+            result.is_ok() && super::path_only_video_app(&String::from_utf16_lossy(&buffer[..size as usize]))
+        }
+    }
     // WebView/Electron child controls can belong to a renderer process. Window
     // ancestry, rather than the child's PID, proves it is still our original field.
     unsafe fn field_belongs_to(hwnd: HWND, focus: HWND) -> bool {
@@ -259,3 +273,20 @@ mod platform {
 }
 #[cfg(target_os = "windows")]
 pub use platform::*;
+
+// Do not infer file support from a window title or alter pastes in other IDEs.
+fn path_only_video_app(executable: &str) -> bool {
+    executable.rsplit(['/', '\\']).next().is_some_and(|name| name.eq_ignore_ascii_case("antigravity.exe"))
+}
+#[cfg(target_os = "macos")]
+pub fn prefers_video_path(_target: Target) -> bool { false }
+
+#[cfg(test)]
+mod video_path_tests {
+    #[test]
+    fn matches_only_known_executable() {
+        assert!(super::path_only_video_app(r"C:\Apps\Antigravity\Antigravity.exe"));
+        assert!(!super::path_only_video_app(r"C:\Antigravity\Codex.exe"));
+        assert!(!super::path_only_video_app("Code.exe"));
+    }
+}

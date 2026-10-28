@@ -423,6 +423,14 @@ pub fn copy_files(app: &tauri::AppHandle, paths: &[PathBuf]) -> Result<(), Strin
     let files = share_files(app, &files)?;
     copy_shared_files(app, &files, &text)
 }
+pub fn copy_paths(app: &tauri::AppHandle, paths: &[PathBuf]) -> Result<(), String> {
+    use tauri_plugin_clipboard_manager::ClipboardExt;
+    let (files, _) = package(&app.state::<Store>(), paths)?;
+    let files = share_files(app, &files)?;
+    app.clipboard().write_text(files.join("\r\n")).map_err(|e| e.to_string())?;
+    library::suppress_clipboard(app);
+    Ok(())
+}
 fn copy_shared_files(app: &tauri::AppHandle, files: &[String], text: &str) -> Result<(), String> {
     #[cfg(windows)]
     {

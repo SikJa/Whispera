@@ -30,7 +30,7 @@ export async function renderBackground(options:Composition,source?:string):Promi
 export function loadImage(src:string):Promise<HTMLImageElement> {
   return new Promise((resolve,reject) => { const image = new Image(); image.crossOrigin = 'anonymous'; image.onload = () => resolve(image); image.onerror = () => reject(new Error('No se pudo abrir la imagen')); image.src = src; });
 }
-export async function renderComposition(layers:Layer[], options:Composition):Promise<HTMLCanvasElement> {
+export async function renderComposition(layers:Layer[], options:Composition, marks:Mark[] = []):Promise<HTMLCanvasElement> {
   const images = await Promise.all(layers.map(layer => loadImage(layer.src)));
   const canvas = document.createElement('canvas'); canvas.width = options.width; canvas.height = options.height;
   const ctx = canvas.getContext('2d')!;
@@ -41,6 +41,8 @@ export async function renderComposition(layers:Layer[], options:Composition):Pro
     const bitmap=tile.getContext('2d')!;bitmap.beginPath();bitmap.roundRect(0,0,layer.w,layer.h,radius);bitmap.clip();bitmap.drawImage(images[index],0,0,layer.w,layer.h);
     ctx.save();ctx.shadowColor=`rgba(0,0,0,${options.shadow/100})`;ctx.shadowBlur=30;ctx.shadowOffsetY=12;ctx.drawImage(tile,layer.x,layer.y,layer.w,layer.h);ctx.restore();
   });
+  for (const mark of marks) paint(ctx, mark);
   return canvas;
 }
 import { gradientBitmap } from './backgrounds';
+import { paint, type Mark } from '../../../src/screen-annotations';

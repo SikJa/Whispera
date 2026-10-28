@@ -6,6 +6,7 @@ import { backgrounds, gradientBitmap } from './backgrounds';
 import { EditorRange, EditorToggle, RatioSelect } from './EditorControls';
 import './media.css';
 import { presets } from '../../../src/palette';
+import { AnnotationCanvas, AnnotationToolbar, useAnnotations } from './Annotations';
 
 const native = (window as any).__TAURI_INTERNALS__;
 const invoke = (name:string,args:any={}) => native?.invoke(name,args) ?? Promise.resolve();
@@ -20,6 +21,7 @@ type ButtonProps = { title:string; children:React.ReactNode; onClick:()=>void; d
 function Tool({title,children,onClick,disabled,active}:ButtonProps) { return <button className={`media-tool${active?' active':''}`} title={title} aria-label={title} disabled={disabled} onClick={onClick}>{children}</button>; }
 
 function MediaApp() {
+  const annotations = useAnnotations();
   const [items,setItems] = useState<any[]>([]);
   const [error,setError] = useState('');
   const [copied,setCopied] = useState(false);
@@ -91,12 +93,13 @@ function MediaApp() {
       setLayers(previous=>previous.map(item=>item.key!==layer.key?item:resize?{...item,w:Math.max(32,Math.min(options.width,layer.w+dx)),h:Math.max(32,Math.min(options.width,layer.w+dx))*layer.height/layer.width}:{...item,x:Math.max(0,Math.min(options.width-layer.w,layer.x+dx)),y:Math.max(0,Math.min(options.height-layer.h,layer.y+dy))})); };
     const element=e.currentTarget;element.addEventListener('pointermove',move);element.addEventListener('pointerup',()=>element.removeEventListener('pointermove',move),{once:true});element.addEventListener('pointercancel',()=>element.removeEventListener('pointermove',move),{once:true});
   }
-  const exportPng = async() => {setBusy(true);await run(async() => {const canvas=await renderComposition(layers,options); const png=canvas.toDataURL('image/png'); if(native)await invoke('library_media_export',{png});else {const a=document.createElement('a');a.href=png;a.download='Whispera.png';a.click();}setCopied(true);setTimeout(()=>setCopied(false),1600);});setBusy(false);};
+  const exportPng = async() => {setBusy(true);await run(async() => {const canvas=await renderComposition(layers,options,annotations.history.present); const png=canvas.toDataURL('image/png'); if(native)await invoke('library_media_export',{png});else {const a=document.createElement('a');a.href=png;a.download='Whispera.png';a.click();}setCopied(true);setTimeout(()=>setCopied(false),1600);});setBusy(false);};
   const moveLayer = (front:boolean) => setLayers(previous=>{const layer=previous.find(l=>l.key===selected);if(!layer)return previous;const rest=previous.filter(l=>l!==layer);return front?[...rest,layer]:[layer,...rest];});
   const imageChoices=items.flatMap(item=>imagePaths(item.data).map(path=>({path,id:item.id})));
   return <main className={`media-surface canvas ${ready?'ready':''}`}>
     <>
       <header className="canvas-header" onPointerDown={e=>{if(!(e.target as Element).closest('button')&&native)void invoke('library_media_window',{action:'drag'});}}><span><Tool title={panel?'Ocultar ajustes':'Mostrar ajustes'} active={panel} onClick={()=>setPanel(!panel)}><PanelLeft size={16}/></Tool><Layers size={16}/> Editor de imagen</span><div><button className="export-btn" disabled={busy||!layers.length} onClick={()=>void exportPng()}>{copied?<Check size={14}/>:<Download size={14}/>} {busy?'Exportando...':copied?'Copiado':'Guardar y copiar'}</button><Tool title="Cerrar" onClick={close}><X size={16}/></Tool></div></header>
+      <AnnotationToolbar state={annotations}/>
       <div className={`canvas-layout${panel?'':' panel-collapsed'}`}>
         <aside className="canvas-settings">
           <h2>Degradados</h2><div className="gradient-swatches">{gradientSwatches.map(p=><button key={p.id} title={p.name} aria-label={`Fondo ${p.name}`} aria-pressed={options.background===`gradient:${p.id}`} onClick={()=>patch({background:`gradient:${p.id}`})}><img src={p.src} alt=""/>{options.background===`gradient:${p.id}`&&<Check size={13}/>}</button>)}</div>
@@ -115,6 +118,7 @@ function MediaApp() {
         </aside>
         <section className="canvas-workspace" onDragOver={e=>e.preventDefault()} onDrop={e=>{e.preventDefault();void run(async()=>{const req=JSON.parse(e.dataTransfer.getData('text/x-edge-preview')||'{}');const item=items.find(i=>i.id===req.id);if(item)await add(imagePaths(item.data));});}}>
           <div className={`composition-stage ${options.background==='transparent'?'checker':''}`} ref={stage} style={{width:stageSize.width,height:stageSize.height}} onPointerDown={()=>setSelected(undefined)}>
+            <AnnotationCanvas state={annotations} width={options.width} height={options.height}/>
             {backgroundPreview&&<img className="composition-background" src={backgroundPreview} alt="" draggable={false}/>}
             {layers.map(layer=><div key={layer.key} className={`composition-layer ${selected===layer.key?'selected':''}`} style={{left:`${layer.x/options.width*100}%`,top:`${layer.y/options.height*100}%`,width:`${layer.w/options.width*100}%`,height:`${layer.h/options.height*100}%`}} onPointerDown={e=>pointer(e,layer)}><img src={layer.src} alt="Captura" draggable={false} style={{borderRadius:`${options.radius/options.width*(stage.current?.clientWidth||700)}px`,boxShadow:`0 ${12/options.width*(stage.current?.clientWidth||700)}px ${30/options.width*(stage.current?.clientWidth||700)}px rgba(0,0,0,${options.shadow/100})`}}/>{selected===layer.key&&<button className="resize-handle" title="Redimensionar captura" aria-label="Redimensionar captura" onPointerDown={e=>pointer(e,layer,true)}/>}</div>)}
           </div>

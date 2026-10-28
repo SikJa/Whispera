@@ -16,7 +16,7 @@
  */
 import { memo, useState, useCallback, useEffect, useRef, forwardRef, type ReactNode } from 'react'
 import { motion, useReducedMotion } from 'framer-motion'
-import { Download, Pencil } from 'lucide-react'
+import { Download, Pencil, FileCode2 } from 'lucide-react'
 import { VideoTile } from './VideoTile'
 import type { ClipboardItemDto } from '../../shared/types'
 import { MAX_STACK } from '../../shared/types'
@@ -382,6 +382,11 @@ const ClipboardItemBase = forwardRef<HTMLDivElement, Props>(({ item }, ref) => {
           {(window as any).__TAURI_INTERNALS__ && (item.data.kind === 'image' || item.data.kind === 'image-collection' || (item.data.kind === 'files' && item.data.paths.some(path => /\.(png|jpe?g|webp)$/i.test(path)))) && <>
             <button className="act" title="Editar imagen" onClick={() => void (window as any).__TAURI_INTERNALS__.invoke('library_media_open',{id:item.id,mode:'canvas'}).catch(console.error)}><Pencil size={14}/></button>
           </>}
+          {(window as any).__TAURI_INTERNALS__ && item.data.kind === 'files' && item.data.paths.some(path => /\.mp4$/i.test(path)) && <button className="act" title="Copiar ruta del video" aria-label="Copiar ruta del video" onClick={() => {
+            void (window as any).__TAURI_INTERNALS__.invoke('library_action', { action:'copy-path', id:item.id, value:null }).then(() => {
+              useStore.getState().pushToast({id:crypto.randomUUID(),message:'Ruta copiada',tone:'info'});
+            }).catch((error:unknown) => useStore.getState().pushToast({id:crypto.randomUUID(),message:String(error),tone:'error'}));
+          }}><FileCode2 size={14}/></button>}
           {canSaveImage && <button type="button" className="act" title="Guardar imagen como…" aria-label="Guardar imagen" aria-busy={saving} disabled={saving} onClick={onSaveImage}><Download size={14}/></button>}
           <button
             className={`act${item.pinned ? ' active' : ''}`}

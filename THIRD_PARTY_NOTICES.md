@@ -2,6 +2,10 @@
 
 - Rare UI folder: Swami Malode, MIT. Original license: `apps/desktop/vendor/LICENSE`.
   https://github.com/swamimalode07/rare-ui . Preserved source and adapted ControlledFolder.
+- Grid Reveal: Swami Malode / [Rare UI](https://www.rareui.com/components/gridreveal),
+  MIT + Commons Clause + Attribution (2026). Used inside Whispera, not as a component library.
+  Source and full license retained in `apps/desktop/vendor/edge-drop/src/components/grid-reveal.tsx`
+  and `grid-reveal.LICENSE`. Local changes adapt styling and pause hidden animations.
 - Handy Pop and Marimba sounds: CJ Pais (2025), MIT. Full license distributed alongside sound files:
   `apps/desktop/public/sound-lab/HANDY-LICENSE.txt`. Sources and pinned revision in `SOURCES.md` there.
 - Instrument Sans: SIL Open Font License 1.1, distributed by @fontsource-variable/instrument-sans.

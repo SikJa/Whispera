@@ -35,6 +35,7 @@ fn image_hash(rgba: &[u8], width: u32, height: u32) -> String {
 
 #[derive(Default)]
 pub struct Library {
+    opening: Mutex<Option<std::time::Instant>>,
     target: Mutex<Option<paste::Target>>,
     sequence: Mutex<Option<u64>>,
     open_requested: std::sync::atomic::AtomicBool,
@@ -136,6 +137,7 @@ fn save(store: &Store, mut items: Vec<Value>) -> Result<Vec<Value>, String> {
     let cutoff = chrono::Utc::now().timestamp_millis() - hours * 3_600_000;
     let mut count = 0;
     items.retain(|i| {
+        if i["data"]["processing"].is_object() { return true; }
         if i["pinned"].as_bool().unwrap_or(false) {
             return true;
         }
@@ -173,6 +175,49 @@ fn add(store: &Store, data: Value) -> Result<(), String> {
 fn files_data(paths: &[String]) -> Value {
     let entries: Vec<Value> = paths.iter().map(|p| { let path=Path::new(p); json!({"name":path.file_name().unwrap_or_default().to_string_lossy(),"ext":path.extension().unwrap_or_default().to_string_lossy(),"size":fs::metadata(path).map(|m|m.len()).unwrap_or(0),"isImage":false}) }).collect();
     json!({"kind":"files","paths":paths,"entries":entries})
+}
+pub(crate) fn processing_video(store: &Store, directory: &Path, seconds: f64) -> Result<(), String> {
+    let _guard = GATE.lock().map_err(|_| "Biblioteca ocupada")?;
+    if settings(store)?["incognito"].as_bool().unwrap_or(false) { return Ok(()); }
+    let id = directory.file_name().and_then(|n| n.to_str()).ok_or("Sesion de video invalida")?;
+    let mut items = rows(store)?;
+    if items.iter().any(|i| i["id"] == id) { return Ok(()); }
+    items.insert(0, json!({"id":id,"capturedAt":chrono::Utc::now().timestamp_millis(),"hitCount":1,"pinned":false,
+        "data":{"kind":"files","paths":[directory.join("video-pending.mp4").to_string_lossy()],
+        "entries":[{"name":"Video de Whispera","ext":"mp4","size":0,"isImage":false}],
+        "processing":{"status":"processing","seconds":seconds,"directory":directory.to_string_lossy()}}}));
+    save(store, items)?;
+    Ok(())
+}
+pub(crate) fn finish_processing_video(store: &Store, directory: &Path, path: Option<&Path>, error: &str) -> Result<(), String> {
+    let _guard = GATE.lock().map_err(|_| "Biblioteca ocupada")?;
+    let id = directory.file_name().and_then(|n| n.to_str()).ok_or("Sesion de video invalida")?;
+    let mut items = rows(store)?;
+    // A deleted or incognito card must not be resurrected by a late worker.
+    if let Some(item) = items.iter_mut().find(|i| i["id"] == id && i["data"]["processing"].is_object()) {
+        if let Some(path) = path { item["data"] = files_data(&[path.to_string_lossy().into_owned()]); item["capturedAt"] = json!(chrono::Utc::now().timestamp_millis()); }
+        else { item["data"]["processing"]["status"] = json!("error"); item["data"]["processing"]["error"] = json!(error); }
+        if path.is_some() {
+            let data = item["data"].clone();
+            let pinned = items.iter().any(|i| i["data"] == data && i["pinned"] == true);
+            items.retain(|i| i["id"] == id || i["data"] != data);
+            if pinned { if let Some(item) = items.iter_mut().find(|i| i["id"] == id) { item["pinned"] = json!(true); } }
+        }
+        save(store, items)?;
+    }
+    Ok(())
+}
+fn recover_processing_videos(store: &Store) -> Result<(), String> {
+    let _guard = GATE.lock().map_err(|_| "Biblioteca ocupada")?;
+    let mut items = rows(store)?;
+    for item in &mut items {
+        if item["data"]["processing"]["status"] == "processing" {
+            item["data"]["processing"]["status"] = json!("error");
+            item["data"]["processing"]["error"] = json!("El procesamiento se interrumpio al cerrar Whispera. Los originales siguen en la carpeta de recuperacion.");
+        }
+    }
+    save(store, items)?;
+    Ok(())
 }
 pub fn remember_file(store: &Store, path: &Path) -> Result<(), String> {
     let _guard = GATE.lock().map_err(|_| "Biblioteca ocupada")?;
@@ -330,13 +375,14 @@ pub fn start(app: &tauri::AppHandle) {
     if settings(&store).unwrap_or(Value::Null).is_null() {
         let _ = store.put("library_settings", &json!({"captureGlobal":true,"autoDeleteHours":48,"historyLimit":250,"incognito":false,"toggleHotkey":"Alt+C"}));
     }
+    let _ = recover_processing_videos(&store);
     if settings(&store)
         .ok()
         .is_some_and(|c| c["clearUnpinnedOnRestart"] == true)
     {
         if let Ok(_guard) = GATE.lock() {
             if let Ok(mut items) = rows(&store) {
-                items.retain(|i| i["pinned"] == true);
+                items.retain(|i| i["pinned"] == true || i["data"]["processing"].is_object());
                 let _ = save(&store, items);
             }
         }
@@ -390,6 +436,7 @@ pub fn start(app: &tauri::AppHandle) {
                         }
                     }
                 }
+                let _ = app.emit("library-changed", ());
             }
             if config["captureGlobal"].as_bool().unwrap_or(false)
                 && !config["incognito"].as_bool().unwrap_or(false)
@@ -533,6 +580,16 @@ pub async fn library_action(
     let state=app.state::<Library>();let _guard=GATE.lock().map_err(|_|"Biblioteca ocupada")?;let store=app.state::<Store>();let mut items=rows(&store)?;
     if action=="settings" { return update_settings(&app,&value); }
     let index=id.as_ref().and_then(|id|items.iter().position(|i|i["id"].as_str()==Some(id)));
+    if index.is_some_and(|i| items[i]["data"]["processing"].is_object()) {
+        match action.as_str() {
+            "reveal" => {
+                let i=index.unwrap(); let path=items[i]["data"]["processing"]["directory"].as_str().ok_or("Carpeta no disponible")?;
+                crate::platform::reveal_path(Path::new(path))?; return Ok(json!(true));
+            },
+            "pin" | "delete" | "clear" | "settings" => {},
+            _ => return Err("El video todavia se esta preparando. Los originales estan conservados.".into()),
+        }
+    }
     match action.as_str(){
       "pin"=>{let i=index.ok_or("Elemento inexistente")?;items[i]["pinned"]=json!(value.as_bool().unwrap_or(false));},
       "delete"=>{if let Some(i)=index{items.remove(i);}},
@@ -640,6 +697,41 @@ pub async fn library_pick(app: tauri::AppHandle) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn video_processing_survives_retention_and_keeps_identity_when_ready() {
+        let store = Store::open(Path::new(":memory:")).unwrap();
+        let directory = Path::new("screen-recordings/test-session");
+        processing_video(&store, directory, 2400.).unwrap();
+        processing_video(&store, directory, 2400.).unwrap();
+        let mut items = rows(&store).unwrap();
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0]["data"]["processing"]["seconds"], 2400.);
+        items[0]["capturedAt"] = json!(0);
+        store.put("library_items", &items).unwrap();
+        assert_eq!(save(&store, items).unwrap().len(), 1);
+        let path = Path::new("ready.mp4");
+        add(&store, files_data(&["ready.mp4".into()])).unwrap();
+        finish_processing_video(&store, directory, Some(path), "").unwrap();
+        let items = rows(&store).unwrap();
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0]["id"], "test-session");
+        assert!(items[0]["data"]["processing"].is_null());
+        assert_eq!(items[0]["data"]["paths"][0], "ready.mp4");
+    }
+    #[test]
+    fn interrupted_processing_remains_visible_and_deleted_cards_stay_deleted() {
+        let store = Store::open(Path::new(":memory:")).unwrap();
+        let directory = Path::new("screen-recordings/interrupted");
+        processing_video(&store, directory, 1800.).unwrap();
+        recover_processing_videos(&store).unwrap();
+        assert_eq!(rows(&store).unwrap()[0]["data"]["processing"]["status"], "error");
+        store.put("library_items", &Vec::<Value>::new()).unwrap();
+        finish_processing_video(&store, directory, None, "failure").unwrap();
+        assert!(rows(&store).unwrap().is_empty());
+        store.put("library_settings", &json!({"incognito":true})).unwrap();
+        processing_video(&store, directory, 1800.).unwrap();
+        assert!(rows(&store).unwrap().is_empty());
+    }
     #[test]
     fn main_library_preferences_reject_invalid_limits_and_flags() {
         assert!(validate_preferences(&json!({"captureGlobal":true,"historyLimit":250,"autoDeleteHours":0})).is_ok());
@@ -773,6 +865,7 @@ fn toggle(app: tauri::AppHandle) -> Result<(), String> {
         if w.is_visible().map_err(|e| e.to_string())? {
             return hide(&app);
         }
+        *app.state::<Library>().opening.lock().map_err(|_|"Biblioteca ocupada")? = Some(std::time::Instant::now());
         *app.state::<Library>()
             .target
             .lock()
@@ -781,6 +874,7 @@ fn toggle(app: tauri::AppHandle) -> Result<(), String> {
         let _ = w.emit("library-open", ());
         return Ok(()); // The frontend commits its hit region before showing.
     }
+    *app.state::<Library>().opening.lock().map_err(|_|"Biblioteca ocupada")? = Some(std::time::Instant::now());
     *app.state::<Library>()
         .target
         .lock()
@@ -833,6 +927,9 @@ pub fn library_window(app: tauri::AppHandle, window: tauri::WebviewWindow, opera
             window.set_ignore_cursor_events(false).map_err(|e| e.to_string())?;
             if !app.state::<Library>().open_requested.load(std::sync::atomic::Ordering::SeqCst) {
                 return hide(&app);
+            }
+            if let Ok(mut started) = app.state::<Library>().opening.lock() {
+                if let Some(started) = started.take() { let _=app.state::<Store>().event(&format!("Portapapeles visible en {} ms desde solicitud",started.elapsed().as_millis())); }
             }
             Ok(())
         },

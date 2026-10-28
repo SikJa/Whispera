@@ -19,3 +19,4 @@ if (existsSync(generated)) {
 }
 cpSync(resolve(vendor, 'browser-dist'), destination, { recursive: true });
 cpSync(resolve(vendor, 'LICENSE'), resolve(destination, 'EDGE-DROP-LICENSE.txt'));
+cpSync(resolve(vendor, 'src/components/grid-reveal.LICENSE'), resolve(destination, 'GRID-REVEAL-LICENSE.txt'));

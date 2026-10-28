@@ -18,6 +18,7 @@ suites.push('palette-stability');
 suites.push('capture-docks');
 suites.push('capture-fullscreen');
 suites.push('video-recovery');
+suites.push('video-processing');
 const failures=[];
 try {
   for (const name of suites) {

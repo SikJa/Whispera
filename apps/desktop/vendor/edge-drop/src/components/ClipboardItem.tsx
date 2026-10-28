@@ -18,6 +18,7 @@ import { memo, useState, useCallback, useEffect, useRef, forwardRef, type ReactN
 import { motion, useReducedMotion } from 'framer-motion'
 import { Download, Pencil, FileCode2 } from 'lucide-react'
 import { VideoTile } from './VideoTile'
+import { ProcessingVideo } from './ProcessingVideo'
 import type { ClipboardItemDto } from '../../shared/types'
 import { MAX_STACK } from '../../shared/types'
 import type { DragRequest } from '../../shared/types'
@@ -266,6 +267,7 @@ const ClipboardItemBase = forwardRef<HTMLDivElement, Props>(({ item }, ref) => {
     }
   }, [isPreviewing, isBundle, expanded, onExpand, onPaste, item.id])
 
+  if (item.data.kind === 'files' && item.data.processing) return <ProcessingVideo item={item}/>;
   return (
     <motion.div
       ref={ref}

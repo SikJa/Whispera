@@ -243,3 +243,4 @@ micrófono real ni el pegado en otras aplicaciones. Más detalles en
 
 MIT — ver [LICENSE](LICENSE).
 Atribuciones de terceros en [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+La animacion de videos en procesamiento utiliza [Grid Reveal de Rare UI](https://www.rareui.com/components/gridreveal), de Swami Malode, con licencia MIT + Commons Clause + Attribution.

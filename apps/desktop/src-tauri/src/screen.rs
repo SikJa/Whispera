@@ -14,7 +14,7 @@ use std::{
     },
     time::{Duration, Instant},
 };
-use tauri::{Manager, State};
+use tauri::{Emitter, Manager, State};
 #[cfg(windows)]
 use std::os::windows::process::CommandExt;
 
@@ -67,6 +67,7 @@ pub struct Screen {
     snapshots: Mutex<std::collections::HashMap<String, crate::screen_capture::FrozenFrame>>,
 }
 struct Active {
+    directory: PathBuf,
     stop: mpsc::Sender<CaptureControl>,
     thread: std::thread::JoinHandle<()>,
 }
@@ -435,6 +436,7 @@ pub fn select_image(app: &tauri::AppHandle) -> Result<(), String> {
     select_locked(app,&screen,"image")
 }
 fn select_locked(app: &tauri::AppHandle, screen: &Screen, kind: &str) -> Result<(), String> {
+    let selection_requested = Instant::now();
     let _updating=crate::updates::work(app)?;
     if screen.busy() {
         let phase = screen.state.lock().map_err(|_| "Estado ocupado")?.phase.clone();
@@ -462,7 +464,7 @@ fn select_locked(app: &tauri::AppHandle, screen: &Screen, kind: &str) -> Result<
         }
     }
     hide_selectors(app, screen);
-    *screen.selection_started.lock().map_err(|_| "Captura ocupada")? = Some(Instant::now());
+    *screen.selection_started.lock().map_err(|_| "Captura ocupada")? = Some(selection_requested);
     *screen.snapshots.lock().map_err(|_| "Captura ocupada")? = snapshots;
     crate::shortcuts::register(app, "Escape")?;
     screen.selection_ready.store(false, Ordering::SeqCst);
@@ -906,6 +908,8 @@ pub async fn screen_start(
         let state = screen.state.clone();
         let history_app = app.clone();
         let transcribe_microphone = crate::video_transcript::recording_enabled(&app.state::<Store>());
+        let active_directory = dir.clone();
+        let startup_generation = screen.frozen_generation.load(Ordering::SeqCst);
         let thread = std::thread::spawn(move || {
             let recovery_dir = dir.clone();
             capture(region, prefs, binary, dir, state.clone(), stop_rx, ready, transcribe_microphone);
@@ -928,6 +932,12 @@ pub async fn screen_start(
                 .ok()
                 .map(|s| s.path.clone())
                 .unwrap_or_default();
+            let processing_error = state.lock().map(|s| s.error.clone()).unwrap_or_default();
+            if let Err(error) = crate::library::finish_processing_video(&history_app.state::<Store>(), &recovery_dir,
+                if path.is_empty() { None } else { Some(Path::new(&path)) }, &processing_error) {
+                let _ = history_app.state::<Store>().event(&format!("Estado del video en portapapeles: {error}"));
+            }
+            let _ = history_app.emit("library-changed", ());
             if !path.is_empty() {
                 if transcribe_microphone {
                     if let Err(error) = crate::video_transcript::enqueue(&history_app.state::<Store>(), Path::new(&path)) {
@@ -945,36 +955,48 @@ pub async fn screen_start(
             if let Ok(status) = state.lock() {
                 if status.phase == "error" {
                     let _ = history_app.state::<Store>().event(&status.error);
-                    hide_selectors(&history_app, &history_app.state::<Screen>());
+                    let screen = history_app.state::<Screen>();
+                    if screen.frozen_generation.load(Ordering::SeqCst) == startup_generation { hide_selectors(&history_app, &screen); }
                 }
             }
         });
-        match ready_rx.recv() {
-            Ok(Ok(())) => {
-                let _=app.state::<Store>().event(&format!("Captura video: motor listo en {} ms",editor_started.elapsed().as_millis()));
-                *screen.active.lock().map_err(|_| "Video ocupado")? = Some(Active { stop, thread });
-                if let Err(error) = crate::screen_editor::open(&app, &window, rect, region, "video")
-                {
-                    if let Some(active) = screen.active.lock().map_err(|_| "Video ocupado")?.take()
-                    {
-                        let _ = active.stop.send(CaptureControl::Cancel);
-                        let _ = active.thread.join();
-                    }
-                    hide_selectors(&app, &screen);
-                    report_error(&app, error.clone());
-                    return Err(error);
-                }
-                Ok(())
+        let startup_directory = active_directory.clone();
+        *screen.active.lock().map_err(|_| "Video ocupado")? = Some(Active { directory: active_directory, stop, thread });
+        // Configure tools while the encoder starts. The HUD stays in "starting"
+        // until the worker verifies its first output; no recording is claimed early.
+        if let Err(error) = crate::screen_editor::open(&app, &window, rect, region, "video") {
+            if let Some(active) = screen.active.lock().map_err(|_| "Video ocupado")?.take() {
+                let _ = active.stop.send(CaptureControl::Cancel);
+                let _ = active.thread.join();
             }
-            result => {
-                let _ = thread.join();
-                let error = result
-                    .unwrap_or_else(|_| Err("El motor de video se cerro".into()))
-                    .unwrap_err();
-                report_error(&app, error.clone());
-                Err(error)
-            }
+            hide_selectors(&app, &screen);
+            report_error(&app, error.clone());
+            return Err(error);
         }
+        let startup_app = app.clone();
+        tauri::async_runtime::spawn_blocking(move || {
+            match ready_rx.recv() {
+                Ok(Ok(())) => {
+                    let _ = startup_app.state::<Store>().event(&format!("Captura video: motor listo en {} ms",editor_started.elapsed().as_millis()));
+                },
+                result => {
+                    let error = result.unwrap_or_else(|_| Err("El motor de video se cerro".into())).unwrap_err();
+                    let screen = startup_app.state::<Screen>();
+                    if let Ok(_gate) = screen.gate.lock() {
+                        // Cancellation/new sessions must not be hidden by a late startup failure.
+                        let active = screen.active.lock().ok().and_then(|mut a| {
+                            if screen.frozen_generation.load(Ordering::SeqCst) == startup_generation && a.as_ref().is_some_and(|a| a.directory == startup_directory) { a.take() } else { None }
+                        });
+                        if let Some(active) = active {
+                            let _ = active.thread.join();
+                            hide_selectors(&startup_app, &screen);
+                            report_error(&startup_app, error);
+                        }
+                    };
+                },
+            }
+        });
+        Ok(())
     })
     .await
     .map_err(|e| e.to_string())?
@@ -987,6 +1009,13 @@ pub fn stop(app: &tauri::AppHandle) -> Result<(), String> {
 fn stop_locked(app: &tauri::AppHandle, screen: &Screen) -> Result<(), String> {
     let active = screen.active.lock().map_err(|_| "Video ocupado")?.take();
     if let Some(active) = active {
+        let status = screen.state.lock().map(|s| s.clone()).unwrap_or_default();
+        if ["recording", "paused", "pausing", "resuming", "reframing"].contains(&status.phase.as_str()) {
+            if let Err(error) = crate::library::processing_video(&app.state::<Store>(), &active.directory, status.seconds) {
+                let _ = app.state::<Store>().event(&format!("No se pudo mostrar video pendiente: {error}"));
+            }
+        }
+        let _ = app.emit("library-changed", ());
         let _ = active.stop.send(CaptureControl::Stop);
         // The worker finalizes the MP4 without keeping the capture UI visible.
         hide_selectors(app, screen);
@@ -1054,8 +1083,8 @@ enum ToggleAction {
 }
 fn gated_action(screen: &Screen) -> Result<(MutexGuard<'_, ()>, ToggleAction), String> {
     let gate = screen.gate.lock().map_err(|_| "Video ocupado")?;
-    // Starting capture holds the gate. A second shortcut must see the state
-    // after startup, otherwise it attempts to cancel an already-finished selection.
+    // Only configuration holds the gate; startup can be stopped while the
+    // encoder is still preparing its first frame.
     let action = match screen
         .state
         .lock()
@@ -1066,7 +1095,7 @@ fn gated_action(screen: &Screen) -> Result<(MutexGuard<'_, ()>, ToggleAction), S
         "recording" | "paused" | "pausing" | "resuming" | "reframing" => ToggleAction::Stop,
         "selecting" => ToggleAction::Cancel,
         "editing" => ToggleAction::Cancel,
-        "starting" => ToggleAction::Wait,
+        "starting" => ToggleAction::Stop,
         "saving" | "cancelling" => ToggleAction::Wait,
         _ => ToggleAction::Select,
     };
@@ -1612,8 +1641,14 @@ fn record(
     #[cfg(target_os = "macos")]
     let started = native_video.started;
     // Wait for FFmpeg to actually create output, rather than reporting a successful spawn.
-    let startup = (|| -> Result<(), String> {
+    let mut queued_control = None;
+    let startup = (|| -> Result<bool, String> {
         loop {
+            match stop.try_recv() {
+                Ok(CaptureControl::Cancel | CaptureControl::Stop) => return Ok(true),
+                Ok(action) => queued_control = Some(action),
+                Err(_) => {},
+            }
             #[cfg(target_os = "macos")]
             native_video.error()?;
             if child.try_wait().map_err(|e| e.to_string())?.is_some() {
@@ -1623,7 +1658,7 @@ fn record(
                 ));
             }
             if fs::metadata(&video).map(|m| m.len() > 0).unwrap_or(false) {
-                return Ok(());
+                return Ok(false);
             }
             for track in &mut tracks {
                 track.drain(started)?;
@@ -1634,10 +1669,13 @@ fn record(
             std::thread::sleep(Duration::from_millis(30));
         }
     })();
-    if let Err(e) = startup {
-        let _ = child.kill();
-        let _ = child.wait();
-        return Err(e);
+    let cancelled = match startup {
+        Ok(cancelled) => cancelled,
+        Err(e) => { let _ = child.kill(); let _ = child.wait(); return Err(e); },
+    };
+    if cancelled {
+        let _ = child.kill(); let _ = child.wait();
+        return Ok((None, CaptureControl::Cancel, 0.));
     }
     *state.lock().map_err(|_| "Estado ocupado")? = Status {
         phase: "recording".into(),
@@ -1649,7 +1687,7 @@ fn record(
     let mut reason = CaptureControl::Stop;
     let mut last_status=Instant::now();
     loop {
-        match stop.recv_timeout(Duration::from_millis(25)) {
+        match queued_control.take().map(Ok).unwrap_or_else(||stop.recv_timeout(Duration::from_millis(25))) {
             Ok(CaptureControl::Resume) => continue,
             Ok(action) => {
                 reason = action;
@@ -1915,7 +1953,7 @@ mod tests {
     #[test]
     fn shortcut_finishes_paused_video_without_starting_another_selection() {
         let screen = Screen::new();
-        for phase in ["paused", "pausing", "resuming", "reframing"] {
+        for phase in ["starting", "paused", "pausing", "resuming", "reframing"] {
             screen.state.lock().unwrap().phase = phase.into();
             assert!(screen.busy());
             let (_guard, action) = gated_action(&screen).unwrap();

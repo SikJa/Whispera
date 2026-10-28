@@ -1,1 +1,1 @@
-Elegí qué pantalla grabar y alterná las herramientas entre horizontal y vertical. Corregimos su ubicación y tamaño al contraerlas. Los videos largos tienen más tiempo de procesamiento y recuperación de originales y micrófono si falla la preparación.
+Los videos aparecen al detener la grabación, con una animación mientras se prepara el MP4 y acceso a los originales si falla. Las herramientas ya no esperan al arranque del motor de video. Sumamos anotaciones en el editor de imágenes, pegado por ruta para Antigravity y actualización inmediata del portapapeles.

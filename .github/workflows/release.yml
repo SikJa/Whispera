@@ -73,3 +73,19 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: node scripts/publish-release.mjs
+      - name: Verificar ejecutable de esta version
+        if: steps.version.outputs.skip != 'true'
+        shell: pwsh
+        run: |
+          $exe = 'apps/desktop/src-tauri/target/release/whispera-desktop.exe'
+          $version = (Get-Content apps/desktop/src-tauri/tauri.conf.json -Raw | ConvertFrom-Json).version
+          [ordered]@{source=$env:GITHUB_SHA;version=$version;sha256=(Get-FileHash -LiteralPath $exe -Algorithm SHA256).Hash} | ConvertTo-Json | Out-File -LiteralPath 'apps/desktop/src-tauri/target/release/runtime-verification.json' -Encoding utf8
+      - uses: actions/upload-artifact@v4
+        if: steps.version.outputs.skip != 'true'
+        with:
+          name: whispera-windows-runtime
+          path: |
+            apps/desktop/src-tauri/target/release/whispera-desktop.exe
+            apps/desktop/src-tauri/target/release/runtime-verification.json
+          if-no-files-found: error
+          retention-days: 7

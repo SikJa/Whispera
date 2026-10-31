@@ -1,1 +1,1 @@
-Videos visibles al detener, con animación mientras se prepara el MP4 y acceso a los originales si falla. Herramientas sin esperar al motor de video, anotaciones en el editor de imágenes, pegado por ruta para Antigravity y refresco inmediato del portapapeles.
+Capturas más fluidas y copia con Ctrl+C optimizada. Menor consumo en reposo, mejoras en biblioteca y transcripción incremental, y ajustes para evitar «gracias» provocado por ruido constante durante el silencio.

@@ -1,4 +1,5 @@
 import VideoTrim from './VideoTrim';
+import {startHeartbeat} from './ui-heartbeat';
 import {applyAppTheme,AppThemePicker} from './app-theme';
 import UpdatesPanel, {useUpdates} from "./UpdatesPanel";
 import {listen as listenUpdate} from "@tauri-apps/api/event";
@@ -203,7 +204,7 @@ if(!view||['settings','import'].includes(view)) {
 if(!view||view==='settings')document.documentElement.dataset.settingsShell='true';
 if (view?.startsWith('screen-')) document.documentElement.dataset.screenSelect = 'true';
 if (view === "record") document.documentElement.dataset.floating = "true";
-if(api.native&&view!=='screen-freeze'){ const heartbeat=()=>void invoke('ui_heartbeat').catch(()=>{}); heartbeat();setInterval(heartbeat,2000); }
+if(api.native&&view!=='screen-freeze'){ const stopHeartbeat=startHeartbeat(); import.meta.hot?.dispose(stopHeartbeat); }
 createRoot(document.getElementById("root")!).render(view === 'video-trim' ? <VideoTrim/> : view === 'screen-freeze' ? <ScreenFrozen/> : view === 'screen-select' ? <ScreenOverlay /> : view === 'screen-ink' ? <ScreenInk/> : view === 'screen-hud' ? <ScreenHud/> : view === 'screen-tools' ? <ScreenTools/> : view === 'screen-indicator' ? <ScreenIndicator /> : view === "import" ? <FileImport/> : view === "sounds" ? <SoundLab /> : view === "recorder" ? <RecorderPreview /> : view === "record" ? <FloatingRecorder /> : view === "details" ? <Recorder /> : <SettingsRoot/>);
 
 import './plum-theme.css';

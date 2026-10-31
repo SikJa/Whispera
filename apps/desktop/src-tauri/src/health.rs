@@ -26,8 +26,22 @@ fn stale_heartbeat(beat: Option<&mut Instant>, reset: bool) -> bool {
     if reset { *beat = Instant::now(); }
     beat.elapsed() > Duration::from_secs(30)
 }
+fn monitored_window(visible: bool, minimized: bool) -> bool {
+    // Windows keeps WS_VISIBLE set while minimized; its WebView may suspend
+    // document heartbeats. Treat restore like show, with a fresh grace period.
+    visible && !minimized
+}
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn minimized_windows_get_a_fresh_watchdog_grace_on_restore() {
+        assert!(!super::monitored_window(false, false));
+        assert!(!super::monitored_window(true, true));
+        assert!(super::monitored_window(true, false));
+        let mut old = std::time::Instant::now() - std::time::Duration::from_secs(60);
+        assert!(!super::stale_heartbeat(Some(&mut old), true));
+        assert!(!super::stale_heartbeat(Some(&mut old), false));
+    }
     #[test]
     fn never_reload_during_audio_work() {
         for phase in ["recording", "paused", "processing"] {
@@ -87,7 +101,7 @@ pub fn start(app: &tauri::AppHandle) {
             visible.retain(|label| windows.contains_key(label));
             if let Ok(mut beats) = health.beats.lock() { beats.retain(|label, _| windows.contains_key(label)); }
             for (label, window) in windows {
-                if !window.is_visible().unwrap_or(false) {
+                if !monitored_window(window.is_visible().unwrap_or(false), window.is_minimized().unwrap_or(false)) {
                     visible.remove(&label);
                     continue;
                 }

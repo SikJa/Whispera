@@ -353,6 +353,14 @@ fn record_capture_error(dir: &Path, error: &str) {
         let _ = write_new(&dir.join("capture-error.json"), &bytes);
     }
 }
+fn receive_command(rx: &mpsc::Receiver<Command>, capturing: bool) -> Result<Command, mpsc::RecvTimeoutError> {
+    if capturing {
+        rx.recv_timeout(Duration::from_millis(10))
+    } else {
+        rx.recv().map_err(|_| mpsc::RecvTimeoutError::Disconnected)
+    }
+}
+
 fn worker(rx: mpsc::Receiver<Command>, view: Arc<Mutex<RecordingState>>, root: PathBuf) {
     let mut capture: Option<Capture> = None;
     loop {
@@ -379,7 +387,7 @@ fn worker(rx: mpsc::Receiver<Command>, view: Arc<Mutex<RecordingState>>, root: P
                 s.error = format!("{error} El audio guardado esta en Recuperar.");
             }
         }
-        match rx.recv_timeout(Duration::from_millis(10)) {
+        match receive_command(&rx, capture.is_some()) {
             Ok(Command::Start(reply)) => {
                 if capture.is_some() {
                     let _ = reply.send(Err("Ya estas grabando".into()));
@@ -574,6 +582,29 @@ pub fn materialize(dir: &Path, part_bytes: usize) -> Result<Vec<PathBuf>, String
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn performance_idle_receive_waits_for_command_without_polling() {
+        let (tx, rx) = mpsc::channel();
+        let sender = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(100));
+            let (reply, _) = mpsc::channel();
+            tx.send(Command::Stop(reply)).unwrap();
+        });
+        let mut wakeups = 0;
+        loop {
+            match receive_command(&rx, false) {
+                Ok(Command::Stop(_)) => break,
+                Err(mpsc::RecvTimeoutError::Timeout) => wakeups += 1,
+                _ => panic!("Unexpected idle command result"),
+            }
+        }
+        sender.join().unwrap();
+        assert_eq!(wakeups, 0, "Idle audio worker should wake only for commands");
+        let (tx, rx) = mpsc::channel();
+        assert!(matches!(receive_command(&rx, true), Err(mpsc::RecvTimeoutError::Timeout)));
+        drop(tx);
+        assert!(matches!(receive_command(&rx, false), Err(mpsc::RecvTimeoutError::Disconnected)));
+    }
     #[test]
     fn trim_preserves_source_and_guard_audio() {
         let dir = std::env::temp_dir().join(format!("whispera-trim-{}", uuid::Uuid::new_v4()));

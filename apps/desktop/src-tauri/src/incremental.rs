@@ -107,20 +107,23 @@ fn window(index: u64, samples: u64, rate: u32, finalizing: bool) -> Option<Windo
     })
 }
 
-fn info(dir: &Path) -> Result<(u64, u32), String> {
+fn sample_rate(dir: &Path) -> Result<u32, String> {
     let m: audio::Manifest =
         serde_json::from_slice(&fs::read(dir.join("session.json")).map_err(|e| e.to_string())?)
             .map_err(|e| e.to_string())?;
     if m.sample_rate == 0 || m.sample_rate > 192_000 {
         return Err("Frecuencia de audio no admitida".into());
     }
-    Ok((
-        fs::metadata(dir.join("audio.pcm"))
-            .map_err(|e| e.to_string())?
-            .len()
-            / 2,
-        m.sample_rate,
-    ))
+    Ok(m.sample_rate)
+}
+
+fn sample_count(dir: &Path) -> Result<u64, String> {
+    Ok(fs::metadata(dir.join("audio.pcm")).map_err(|e| e.to_string())?.len() / 2)
+}
+
+fn info(dir: &Path) -> Result<(u64, u32), String> {
+    let rate = sample_rate(dir)?;
+    Ok((sample_count(dir)?, rate))
 }
 
 fn wav(dir: &Path, index: u64, w: &Window, rate: u32) -> Result<PathBuf, String> {
@@ -202,11 +205,12 @@ async fn part(
         .map_err(|e| e.to_string())??;
     let began = Instant::now();
     let mut last = String::new();
+    let mut upload = groq::Upload::new(&path);
     for attempt in 0..3 {
         if stop.load(Ordering::SeqCst) {
             return Err("Envio anticipado detenido".into());
         }
-        match groq::request(&path, &p.settings, &p.rules, true).await {
+        match upload.request(&p.settings, &p.rules, true).await {
             Ok(json) => {
                 let text = owned_text(&json, &w, rate).map_err(|e| format!("Alineacion: {e}"))?;
                 atomic_json(
@@ -246,12 +250,15 @@ pub async fn run(dir: PathBuf, stop: Arc<AtomicBool>) -> Result<(), String> {
 }
 pub async fn run_notified(dir: PathBuf, stop: Arc<AtomicBool>, wake:Arc<tokio::sync::Notify>) -> Result<(), String> {
     let p = plan(&dir)?;
+    if stop.load(Ordering::SeqCst) { return Ok(()); }
+    // Format metadata is immutable for this worker; only the durable PCM grows.
+    let rate = sample_rate(&dir)?;
     let mut index = 0;
     loop {
         if stop.load(Ordering::SeqCst) {
             return Ok(());
         }
-        let (samples, rate) = info(&dir)?;
+        let samples = sample_count(&dir)?;
         if let Some(w) = window(index, samples, rate, false) {
             part(&dir, index, w, rate, &p, &stop,&wake).await?;
             index += 1;
@@ -395,6 +402,36 @@ async fn finish_parts(dir: &Path, p: &Plan) -> Result<String, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn performance_live_session_metadata_is_loaded_once() {
+        let dir = std::env::temp_dir().join(format!("whispera-metadata-{}", uuid::Uuid::new_v4()));
+        fs::create_dir(&dir).unwrap();
+        prepare(&dir, Settings::default(), vec![]).unwrap();
+        let manifest = br#"{"id":"synthetic","sample_rate":48000,"created_at":"synthetic"}"#;
+        fs::write(dir.join("session.json"), manifest).unwrap();
+        fs::write(dir.join("audio.pcm"), [0u8; 2]).unwrap();
+        let stop = Arc::new(AtomicBool::new(false));
+        let wake = Arc::new(tokio::sync::Notify::new());
+        let kept_running = tauri::async_runtime::block_on(async {
+            let work = run_notified(dir.clone(), stop.clone(), wake.clone());
+            tokio::pin!(work);
+            tokio::select! {
+                biased;
+                result = &mut work => panic!("Worker finished before setup: {result:?}"),
+                _ = tokio::time::sleep(Duration::from_millis(20)) => {}
+            }
+            // The session format is immutable; only audio.pcm grows while active.
+            fs::remove_file(dir.join("session.json")).unwrap();
+            wake.notify_one();
+            let pending = tokio::time::timeout(Duration::from_millis(250), &mut work).await.is_err();
+            stop.store(true, Ordering::SeqCst);
+            wake.notify_one();
+            if pending { work.await.unwrap(); }
+            pending
+        });
+        fs::remove_dir_all(dir).unwrap();
+        assert!(kept_running, "The live worker reread immutable metadata during polling");
+    }
     #[test]
     #[ignore = "Synthetic-only real Groq boundary regression; no microphone, personal recordings or clipboard"]
     fn synthetic_spoken_thanks_crossing_minute_is_preserved_once() {

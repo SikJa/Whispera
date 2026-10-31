@@ -141,6 +141,42 @@ pub async fn request_segments(path: &Path, settings: &Settings, rules: &[Rule]) 
 }
 
 async fn request_format(path: &Path, settings: &Settings, rules: &[Rule], granularity: Option<&str>) -> Result<serde_json::Value, String> {
+    let prepared = prepare_upload(path).await?;
+    request_prepared(prepared, settings, rules, granularity).await
+}
+
+#[derive(Clone)]
+struct PreparedUpload {
+    bytes: Vec<u8>,
+    extension: String,
+    background: bool,
+    silent: bool,
+}
+
+// Scoped to one immutable incremental part; never persists audio or credentials.
+pub struct Upload {
+    path: std::path::PathBuf,
+    prepared: Option<PreparedUpload>,
+}
+impl Upload {
+    pub fn new(path: &Path) -> Self {
+        Self { path: path.to_path_buf(), prepared: None }
+    }
+
+    async fn prepare(&mut self) -> Result<&PreparedUpload, String> {
+        if self.prepared.is_none() {
+            self.prepared = Some(prepare_upload(&self.path).await?);
+        }
+        Ok(self.prepared.as_ref().unwrap())
+    }
+
+    pub async fn request(&mut self, settings: &Settings, rules: &[Rule], word_times: bool) -> Result<serde_json::Value, String> {
+        let prepared = self.prepare().await?.clone();
+        request_prepared(prepared, settings, rules, word_times.then_some("word")).await
+    }
+}
+
+async fn prepare_upload(path: &Path) -> Result<PreparedUpload, String> {
     let ext = path
         .extension()
         .and_then(|s| s.to_str())
@@ -165,7 +201,7 @@ async fn request_format(path: &Path, settings: &Settings, rules: &[Rule], granul
         .await
         .map_err(|_| "No se pudo leer el audio")?;
     if ext == "wav" && digital_silence(&bytes) {
-        return Ok(serde_json::json!({"text":"","words":[],"segments":[]}));
+        return Ok(PreparedUpload { bytes: Vec::new(), extension: ext, background: false, silent: true });
     }
     // Keep every nonzero sample and its original time coordinate. Long digital
     // silence at the end can make Whisper invent a closing phrase. This only
@@ -178,10 +214,21 @@ async fn request_format(path: &Path, settings: &Settings, rules: &[Rule], granul
     let stationary_background = ext == "wav" && stationary_background(&bytes);
     let (bytes,ext)=crate::lossless_upload::prepare(bytes,ext).await;
     if bytes.is_empty() {return Err("No se pudo preparar el envío. El audio original sigue guardado.".into());}
-    let key = entry()?
+    Ok(PreparedUpload { bytes, extension: ext, background: stationary_background, silent: false })
+}
+
+async fn request_prepared(prepared: PreparedUpload, settings: &Settings, rules: &[Rule], granularity: Option<&str>) -> Result<serde_json::Value, String> {
+    send_prepared(prepared, settings, rules, granularity,
+        "https://api.groq.com/openai/v1/audio/transcriptions", || entry()?
         .get_password()
-        .map_err(|_| "Configura la clave de Groq en Transcripcion")?;
-    let file = multipart::Part::bytes(bytes).file_name(format!("audio.{ext}"));
+        .map_err(|_| "Configura la clave de Groq en Transcripcion".into())).await
+}
+
+async fn send_prepared(prepared: PreparedUpload, settings: &Settings, rules: &[Rule], granularity: Option<&str>, url: &str,
+    read_key: impl FnOnce() -> Result<String, String>) -> Result<serde_json::Value, String> {
+    if prepared.silent { return Ok(serde_json::json!({"text":"","words":[],"segments":[]})); }
+    let key = read_key()?;
+    let file = multipart::Part::bytes(prepared.bytes).file_name(format!("audio.{}", prepared.extension));
     let mut form = multipart::Form::new()
         .part("file", file)
         .text("model", settings.model.clone())
@@ -200,7 +247,7 @@ async fn request_format(path: &Path, settings: &Settings, rules: &[Rule], granul
         form = form.text("language", settings.language.clone());
     }
     let response = client()?
-        .post("https://api.groq.com/openai/v1/audio/transcriptions")
+        .post(url)
         .bearer_auth(key)
         .multipart(form)
         .send()
@@ -216,7 +263,7 @@ async fn request_format(path: &Path, settings: &Settings, rules: &[Rule], granul
         .json()
         .await
         .map_err(|_| "Groq devolvio una respuesta no valida")?;
-    suppress_background_closing(&mut json, stationary_background);
+    suppress_background_closing(&mut json, prepared.background);
     Ok(json)
 }
 
@@ -235,10 +282,19 @@ fn stationary_background(bytes: &[u8]) -> bool {
     let size=(spec.sample_rate/50) as usize; // 20ms windows, no resampling or model.
     let (mut count,mut sum,mut squares,mut windows)=(0usize,0f64,0f64,0usize);
     let (mut low,mut high)=(f64::INFINITY,0f64);
+    let mut boundary_zero = false;
     for sample in wav.samples::<i16>() {
         let Ok(sample)=sample else{return false};let sample=f64::from(sample);
         sum+=sample;squares+=sample*sample;count+=1;
         if count==size {
+            // Ignore exact digital padding only at the boundaries. An internal
+            // silent window is modulation, so it must still preserve speech.
+            if squares == 0. {
+                boundary_zero |= windows > 0;
+                (count,sum,squares)=(0,0.,0.);
+                continue;
+            }
+            if boundary_zero { return false; }
             let power=(squares/count as f64-(sum/count as f64).powi(2)).max(0.);
             low=low.min(power);high=high.max(power);windows+=1;
             (count,sum,squares)=(0,0.,0.);
@@ -246,7 +302,7 @@ fn stationary_background(bytes: &[u8]) -> bool {
     }
     // Any quiet/short/unsupported/ambiguous signal is kept. This is intentionally
     // narrower than VAD: it does not remove words or trim the user's recording.
-    if count>0 && squares/count as f64-(sum/count as f64).powi(2)>high*1.8{return false;}
+    if count>0 && ((boundary_zero && squares>0.) || squares/count as f64-(sum/count as f64).powi(2)>high*1.8){return false;}
     windows>=5 && high>0. && low>0. && high/low<1.8
 }
 
@@ -262,6 +318,100 @@ fn digital_silence(bytes:&[u8])->bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn performance_incremental_upload_is_prepared_once_and_retains_original_bytes() {
+        let path = std::env::temp_dir().join(format!("whispera-upload-reuse-{}.wav", uuid::Uuid::new_v4()));
+        let mut cursor = std::io::Cursor::new(Vec::new());
+        {
+            let mut writer = hound::WavWriter::new(&mut cursor, hound::WavSpec {
+                channels: 1, sample_rate: 16000, bits_per_sample: 16, sample_format: hound::SampleFormat::Int,
+            }).unwrap();
+            for i in 0..16000 { writer.write_sample(if (i / 1600) % 2 == 0 { 0i16 } else { 1000 }).unwrap(); }
+            writer.finalize().unwrap();
+        }
+        let original = cursor.into_inner();
+        std::fs::write(&path, &original).unwrap();
+        let retained = tauri::async_runtime::block_on(async {
+            let mut upload = Upload::new(&path);
+            let prepared = upload.prepare().await.unwrap();
+            assert_eq!(prepared.bytes, original);
+            assert!(!prepared.silent && !prepared.background);
+            std::fs::remove_file(&path).unwrap();
+            let mut outcomes = Vec::new();
+            for _ in 0..3 { outcomes.push(upload.prepare().await.map(|next| next.bytes == original)); }
+            outcomes
+        });
+        assert_eq!(retained, vec![Ok(true); 3], "Retry preparation must not reopen or change immutable audio");
+    }
+
+    #[test]
+    fn prepared_attempts_preserve_payload_options_sanitization_and_fresh_credentials() {
+        use std::io::{BufRead, BufReader, Read, Write};
+        let server = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}/fixture", server.local_addr().unwrap());
+        let worker = std::thread::spawn(move || {
+            let mut requests = Vec::new();
+            for attempt in 0..3 {
+                let (mut stream, _) = server.accept().unwrap();
+                stream.set_read_timeout(Some(std::time::Duration::from_secs(5))).unwrap();
+                let mut input = BufReader::new(stream.try_clone().unwrap());
+                let mut headers = String::new();
+                let mut length = None;
+                loop {
+                    let mut line = String::new();
+                    assert!(input.read_line(&mut line).unwrap() > 0);
+                    if line == "\r\n" { break; }
+                    if let Some(value) = line.to_lowercase().strip_prefix("content-length:") {
+                        length = Some(value.trim().parse::<usize>().unwrap());
+                    }
+                    headers.push_str(&line);
+                }
+                let mut body = vec![0; length.unwrap()];
+                input.read_exact(&mut body).unwrap();
+                requests.push((headers, body));
+                let status = if attempt < 2 { "500 Internal Server Error" } else { "200 OK" };
+                let body = r#"{"text":"Gracias.","words":[{"word":"Gracias.","start":0,"end":1}]}"#;
+                write!(stream, "HTTP/1.1 {status}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len()).unwrap();
+            }
+            requests
+        });
+        let settings = Settings { language: "es".into(), ..Default::default() };
+        let rules = vec![rule("whisper", "Whispera")];
+        let payload = b"synthetic immutable payload".to_vec();
+        let mut reads = 0;
+        tauri::async_runtime::block_on(async {
+            for attempt in 0..3 {
+                let prepared = PreparedUpload { bytes: payload.clone(), extension: "wav".into(), background: true, silent: false };
+                let result = send_prepared(prepared, &settings, &rules, Some("word"), &url, || {
+                    reads += 1;
+                    Ok(format!("synthetic-key-{reads}"))
+                }).await;
+                if attempt < 2 { assert!(result.unwrap_err().contains("HTTP 500")); }
+                else { let result = result.unwrap(); assert_eq!(result["text"], ""); assert_eq!(result["words"], serde_json::json!([])); }
+            }
+        });
+        assert_eq!(reads, 3);
+        for (index, (headers, body)) in worker.join().unwrap().iter().enumerate() {
+            assert!(headers.to_lowercase().contains(&format!("authorization: bearer synthetic-key-{}", index + 1)));
+            assert!(body.windows(payload.len()).any(|window| window == payload));
+            let body = String::from_utf8_lossy(body);
+            for value in ["audio.wav", &settings.model, "verbose_json", "timestamp_granularities[]", "word", "temperature", "language", "es", "Whispera"] {
+                assert!(body.contains(value), "Missing request field: {value}");
+            }
+        }
+    }
+    #[test]
+    fn stationary_noise_with_digital_boundary_padding_is_still_background() {
+        let mut bytes=std::io::Cursor::new(Vec::new());
+        let spec=hound::WavSpec{channels:1,sample_rate:16000,bits_per_sample:16,sample_format:hound::SampleFormat::Int};
+        let mut writer=hound::WavWriter::new(&mut bytes,spec).unwrap();
+        for _ in 0..3200 {writer.write_sample(0i16).unwrap();}
+        let mut seed=13u32;
+        for _ in 0..32000 {seed=seed.wrapping_mul(1664525).wrapping_add(1013904223);writer.write_sample(((seed>>16)%161) as i16-80).unwrap();}
+        for _ in 0..3200 {writer.write_sample(0i16).unwrap();}
+        writer.finalize().unwrap();
+        assert!(stationary_background(bytes.get_ref()));
+    }
     #[test]
     #[ignore = "Explicit synthetic-only probe for repeated speech and genuine thanks; no microphone or profile writes"]
     fn synthetic_thanks_probe() {

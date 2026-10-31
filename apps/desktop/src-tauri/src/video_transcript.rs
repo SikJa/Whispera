@@ -12,6 +12,34 @@ use std::{
 use tauri::Manager;
 
 static GATE: Mutex<()> = Mutex::new(());
+// Entries live only for in-flight jobs, not for every video ever transcribed.
+static ACTIVE_JOBS: Mutex<Vec<PathBuf>> = Mutex::new(Vec::new());
+struct TranscriptJob(PathBuf);
+fn job_identity(video: &Path) -> PathBuf {
+    fs::canonicalize(video).unwrap_or_else(|_| video.to_path_buf())
+}
+fn active_job(video: &Path) -> Result<bool, String> {
+    let identity = job_identity(video);
+    Ok(ACTIVE_JOBS.lock().map_err(|_| "Transcripciones ocupadas")?.contains(&identity))
+}
+impl TranscriptJob {
+    fn claim(video: &Path) -> Result<Self, String> {
+        let identity = job_identity(video);
+        let _guard = GATE.lock().map_err(|_| "Transcripciones ocupadas")?;
+        let mut active = ACTIVE_JOBS.lock().map_err(|_| "Transcripciones ocupadas")?;
+        if active.contains(&identity) {
+            return Err("La transcripcion de este video ya esta en curso".into());
+        }
+        active.push(identity.clone());
+        Ok(Self(identity))
+    }
+}
+impl Drop for TranscriptJob {
+    fn drop(&mut self) {
+        let mut active = ACTIVE_JOBS.lock().unwrap_or_else(|e| e.into_inner());
+        active.retain(|path| path != &self.0);
+    }
+}
 // Retain the one-second recovery poll, but start newly queued work immediately.
 struct QueueWake { pending: Mutex<bool>, ready: Condvar }
 impl QueueWake {
@@ -60,11 +88,14 @@ pub fn recording_enabled(store: &Store) -> bool {
 
 // Replay trimming transcribes the final MP4 soundtrack, never discarded intervals.
 pub fn transcribe_selection(app:&tauri::AppHandle,video:&Path)->Result<(),String>{
-    let _guard=GATE.lock().map_err(|_|"Transcripciones ocupadas")?;
     let store=app.state::<Store>();
     let root=app.path().app_cache_dir().map_err(|e|e.to_string())?.join("trim-speech").join(uuid::Uuid::new_v4().to_string());
     let binary=crate::screen::ffmpeg(app)?;
-    transcribe_track(&store,&root,&binary,video)
+    with_selection_job(video, || transcribe_track(&store,&root,&binary,video))
+}
+fn with_selection_job<T>(video: &Path, work: impl FnOnce() -> Result<T, String>) -> Result<T, String> {
+    let _job = TranscriptJob::claim(video)?;
+    work()
 }
 fn transcribe_track(store:&Store,root:&Path,binary:&Path,video:&Path)->Result<(),String>{
     let settings:Settings=store.get("settings")?;let rules:Vec<Rule>=store.get("rules")?;
@@ -155,6 +186,8 @@ pub fn prepare(binary: &Path, pcm: &Path, rate: u32, channels: u16) -> Result<()
 }
 pub fn enqueue(store: &Store, video: &Path) -> Result<(), String> {
     let _guard = GATE.lock().map_err(|_| "Transcripciones ocupadas")?;
+    // A repeated notification cannot replace a job's partial or final response.
+    if active_job(video)? { return Ok(()); }
     let mut directories: Vec<_> = fs::read_dir(video.parent().ok_or("Video sin directorio")?)
         .map_err(|e| e.to_string())?
         .flatten()
@@ -248,6 +281,7 @@ fn process_timed_with(
     video: &Path,
     mut transcribe: impl FnMut(&Path, &Settings, &[Rule]) -> Result<TimedText, String>,
 ) -> Result<Transcript, String> {
+    let _job = TranscriptJob::claim(video)?;
     let mut transcript = get(store, video)?;
     if transcript.preparation_failed {
         return Ok(transcript);
@@ -508,6 +542,7 @@ fn transcript_action(app: tauri::AppHandle, path: String, action: String) -> Res
     let path = PathBuf::from(path);
     let _guard = GATE.lock().map_err(|_| "Transcripciones ocupadas")?;
     let mut t = get(&store, &path)?;
+    if active_job(&path)? { t.status = "processing".into(); }
     match action.as_str() {
         "status" => {}
         "copy" if t.status == "ready" => {
@@ -549,6 +584,56 @@ fn transcript_action(app: tauri::AppHandle, path: String, action: String) -> Res
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn selection_work_releases_queue_gate() {
+        let root = root();
+        let video = root.join("selection.mp4");
+        fs::write(&video, b"fixture").unwrap();
+        let (started, ready) = std::sync::mpsc::channel();
+        let (release, wait) = std::sync::mpsc::channel();
+        let worker = std::thread::spawn(move || with_selection_job(&video, || {
+            started.send(()).unwrap();
+            wait.recv().unwrap();
+            Ok(())
+        }));
+        ready.recv_timeout(Duration::from_secs(2)).unwrap();
+        let (observed, observation) = std::sync::mpsc::channel();
+        let observer = std::thread::spawn(move || {
+            let _guard = GATE.lock().unwrap();
+            observed.send(()).unwrap();
+        });
+        let available = observation.recv_timeout(Duration::from_millis(500)).is_ok();
+        release.send(()).unwrap();
+        worker.join().unwrap().unwrap();
+        observer.join().unwrap();
+        fs::remove_dir_all(root).unwrap();
+        assert!(available, "status and enqueue must not wait for remote selection work");
+    }
+    #[test]
+    fn active_selection_preserves_same_job_and_allows_other_queue_work() {
+        let root = root();
+        let video = root.join("selection.mp4");
+        fs::write(&video, b"fixture").unwrap();
+        let store = Store::open(Path::new(":memory:")).unwrap();
+        let original = Transcript { status: "processing".into(), text: "partial".into(), ..Default::default() };
+        store.put(&key(&video), &original).unwrap();
+        with_selection_job(&video, || {
+            assert!(with_selection_job(&root.join("./selection.mp4"), || Ok(())).is_err());
+            enqueue(&store, &video)?;
+            assert_eq!(get(&store, &video)?.text, "partial");
+            let other = root.join("other");
+            fs::create_dir_all(other.join("part-0000")).unwrap();
+            fs::write(other.join("other.mp4"), b"fixture").unwrap();
+            wave(&other.join("part-0000/speech-0000.wav"), 0.1);
+            enqueue(&store, &other.join("other.mp4"))?;
+            assert_eq!(get(&store, &other.join("other.mp4"))?.status, "pending");
+            Err::<(), _>("synthetic failure".to_owned())
+        }).unwrap_err();
+        assert!(!active_job(&video).unwrap());
+        assert_eq!(with_selection_job(&video, || Ok(7)).unwrap(), 7);
+        assert!(!active_job(&video).unwrap());
+        fs::remove_dir_all(root).unwrap();
+    }
     fn wave(path:&Path,seconds:f64) {
         let mut out=hound::WavWriter::create(path,hound::WavSpec{channels:1,sample_rate:16000,bits_per_sample:16,sample_format:hound::SampleFormat::Int}).unwrap();
         for _ in 0..(seconds*16000.) as usize {out.write_sample(0i16).unwrap();}out.finalize().unwrap();

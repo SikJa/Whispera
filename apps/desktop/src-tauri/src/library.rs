@@ -123,9 +123,15 @@ fn validate_preferences(patch: &Value) -> Result<(), String> {
     }
     Ok(())
 }
-fn save(store: &Store, mut items: Vec<Value>) -> Result<Vec<Value>, String> {
-    let previous = rows(store)?;
-    let config = settings(store)?;
+fn save(store: &Store, items: Vec<Value>) -> Result<Vec<Value>, String> {
+    retain_and_save(store, rows(store)?, items, &settings(store)?)
+}
+fn retain_and_save(store: &Store, previous: Vec<Value>, mut items: Vec<Value>, config: &Value) -> Result<Vec<Value>, String> {
+    retain_items(&mut items, config);
+    if previous != items { store.put("library_items", &items)?; }
+    Ok(items)
+}
+fn retain_items(items: &mut Vec<Value>, config: &Value) {
     let limit = config["historyLimit"]
         .as_u64()
         .unwrap_or(250)
@@ -147,10 +153,6 @@ fn save(store: &Store, mut items: Vec<Value>) -> Result<Vec<Value>, String> {
         count += 1;
         count <= limit
     });
-    if previous != items {
-        store.put("library_items", &items)?;
-    }
-    Ok(items)
 }
 fn add(store: &Store, data: Value) -> Result<(), String> {
     let mut items = rows(store)?;
@@ -449,6 +451,26 @@ pub fn start(app: &tauri::AppHandle) {
         }
     });
 }
+fn state_snapshot(store: &Store, revision: Option<&str>, startup: bool) -> Result<Value, String> {
+        let mut items = rows(store)?;
+        let config = settings(store)?;
+        let previous_len = items.len();
+        retain_items(&mut items, &config);
+        // Retention only removes entries; unchanged length means identical content.
+        if items.len() != previous_len { store.put("library_items", &items)?; }
+        use std::hash::{Hash, Hasher};
+        let mut hash = std::collections::hash_map::DefaultHasher::new();
+        serde_json::to_string(&(&items, &config, startup))
+            .map_err(|e| e.to_string())?
+            .hash(&mut hash);
+        let current = format!("{:x}", hash.finish());
+        if revision == Some(&current) {
+            return Ok(json!({"unchanged":true}));
+        }
+        let mut result = json!({"items":items,"settings":config,"version":env!("CARGO_PKG_VERSION"),"isStoreBuild":false});
+        result["revision"] = json!(current);
+        Ok(result)
+}
 #[tauri::command]
 pub async fn library_state(
     app: tauri::AppHandle,
@@ -457,18 +479,9 @@ pub async fn library_state(
     tauri::async_runtime::spawn_blocking(move || {
         let _guard = GATE.lock().map_err(|_| "Biblioteca ocupada")?;
         let store = app.state::<Store>();
-        let items = save(&store, rows(&store)?)?;
-        use std::hash::{Hash, Hasher};
         let startup=crate::startup::cached_enabled()?;
-        let mut hash = std::collections::hash_map::DefaultHasher::new();
-        serde_json::to_string(&(items, settings(&store)?, startup))
-            .map_err(|e| e.to_string())?
-            .hash(&mut hash);
-        let current = format!("{:x}", hash.finish());
-        if revision.as_deref() == Some(&current) {
-            return Ok(json!({"unchanged":true}));
-        }
-        let mut result = payload(&store)?;
+        let mut result = state_snapshot(&store, revision.as_deref(), startup)?;
+        if result["unchanged"] == true { return Ok(result); }
         for item in result["items"].as_array().into_iter().flatten() {
             for path in paths(&item["data"]) {
                 if path.is_file() {
@@ -476,7 +489,6 @@ pub async fn library_state(
                 }
             }
         }
-        result["revision"] = json!(current);
         if !result["settings"].is_object() {
             result["settings"] = json!({});
         }
@@ -697,6 +709,57 @@ pub async fn library_pick(app: tauri::AppHandle) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn snapshot_reuses_reads_preserves_retention_and_revision() {
+        let store = Store::open(Path::new(":memory:")).unwrap();
+        store.put("library_settings", &json!({"historyLimit":10,"autoDeleteHours":1})).unwrap();
+        let now = chrono::Utc::now().timestamp_millis();
+        let mut items: Vec<Value> = (0..20).map(|i| json!({"id":i,"capturedAt":now,"data":{"kind":"text","text":"reference"}})).collect();
+        items.insert(0, json!({"id":"expired","capturedAt":0}));
+        items.push(json!({"id":"pinned","capturedAt":0,"pinned":true}));
+        items.push(json!({"id":"processing","capturedAt":0,"data":{"processing":{}}}));
+        store.put("library_items", &items).unwrap();
+        let expected = payload(&store).unwrap();
+        store.put("library_items", &items).unwrap();
+        let actual = state_snapshot(&store, None, false).unwrap();
+        assert_eq!(actual["items"], expected["items"]);
+        assert_eq!(actual["settings"], expected["settings"]);
+        assert_eq!(rows(&store).unwrap(), actual["items"].as_array().unwrap().clone());
+        assert_eq!(actual["items"].as_array().unwrap().len(),12);
+        assert_eq!(state_snapshot(&store, actual["revision"].as_str(), false).unwrap(), json!({"unchanged":true}));
+        assert_ne!(state_snapshot(&store, actual["revision"].as_str(), true).unwrap(), json!({"unchanged":true}));
+    }
+
+    #[test]
+    fn snapshot_synthetic_comparison() {
+        use std::{hash::{Hash,Hasher},time::Instant};
+        for count in [0,250,1000] {
+            let store = Store::open(Path::new(":memory:")).unwrap();
+            store.put("library_settings", &json!({"historyLimit":1000,"autoDeleteHours":0})).unwrap();
+            let items: Vec<Value> = (0..count).map(|i| json!({"id":i,"capturedAt":0,"data":{"kind":"text","text":"synthetic reference ".repeat(20)}})).collect();
+            store.put("library_items", &items).unwrap();
+            let old = |revision: Option<&str>| {
+                let items=save(&store,rows(&store).unwrap()).unwrap();
+                let mut hash=std::collections::hash_map::DefaultHasher::new();
+                serde_json::to_string(&(items,settings(&store).unwrap(),false)).unwrap().hash(&mut hash);
+                let current=format!("{:x}",hash.finish());
+                if revision==Some(&current) {return json!({"unchanged":true});}
+                let mut value=payload(&store).unwrap();value["revision"]=json!(current);value
+            };
+            let expected=old(None);assert_eq!(expected,state_snapshot(&store,None,false).unwrap());
+            for revision in [None,expected["revision"].as_str()] {
+                assert_eq!(old(revision),state_snapshot(&store,revision,false).unwrap());
+                let mut before=vec![];let mut after=vec![];
+                for iteration in 0..21 {
+                    let mut measure_old=||{let at=Instant::now();std::hint::black_box(old(revision));before.push(at.elapsed());};
+                    let mut measure_new=||{let at=Instant::now();std::hint::black_box(state_snapshot(&store,revision,false).unwrap());after.push(at.elapsed());};
+                    if iteration%2==0 {measure_old();measure_new();} else {measure_new();measure_old();}
+                }
+                before.sort();after.sort();
+                println!("library snapshot items={count} unchanged={} baseline={:?} candidate={:?}; static SELECT counts changed 8->2, unchanged 4->2",revision.is_some(),before[10],after[10]);
+            }
+        }
+    }
     #[test]
     fn video_processing_survives_retention_and_keeps_identity_when_ready() {
         let store = Store::open(Path::new(":memory:")).unwrap();

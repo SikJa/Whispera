@@ -19,6 +19,7 @@ suites.push('capture-docks');
 suites.push('capture-fullscreen');
 suites.push('video-recovery');
 suites.push('video-processing');
+suites.push('idle-heartbeat','ink-performance','ink-layer','capture-entry');
 const failures=[];
 try {
   for (const name of suites) {

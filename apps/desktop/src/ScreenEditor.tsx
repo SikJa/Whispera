@@ -14,6 +14,7 @@ import {useCaptureDock} from './CaptureDock';
 import IndicatorArtwork from './IndicatorArtwork';
 import type {CaptureContext} from './EditableCaptureFrame';
 import { commandKey, isMac } from './platform';
+import {InkLayer} from './screen-ink-cache';
 
 type Context = CaptureContext;
 type Action = { action: string; value?: string };
@@ -65,6 +66,7 @@ export function ScreenInk() { const context = useContext(); return context ? <In
 function Ink({ context }: { context: Context }) {
   const canvas = useRef<HTMLCanvasElement>(null), background = useRef<HTMLImageElement | null>(null);
   const fullBackground=useRef(false);
+  const [inkLayer]=useState(()=>new InkLayer());
   const history = useRef<History>(emptyHistory());
   const previousRect=useRef(context.rect);
   const draft = useRef<Mark | null>(null), moving = useRef<{ start: Point; mark: Mark } | null>(null);
@@ -83,8 +85,17 @@ function Ink({ context }: { context: Context }) {
   const draw = () => {
     const ctx = canvas.current?.getContext('2d'); if (!ctx) return;
     ctx.setTransform(context.scale,0,0,context.scale,0,0); ctx.clearRect(0,0,context.width,context.height);
-    paintBackground(ctx);
-    for (const mark of history.current.present) if (mark.id !== moving.current?.mark.id) paint(ctx,mark);
+    const layer=inkLayer.render(history.current.present,moving.current?.mark.id,
+      context.width,context.height,context.scale,
+      `${context.width}:${context.height}:${context.scale}:${context.rect?.x}:${context.rect?.y}`,
+      background.current,paintBackground);
+    if(layer){
+      ctx.setTransform(1,0,0,1,0,0);ctx.drawImage(layer,0,0);
+      ctx.setTransform(context.scale,0,0,context.scale,0,0);
+    } else {
+      paintBackground(ctx);
+      for (const mark of history.current.present) if (mark.id !== moving.current?.mark.id) paint(ctx,mark);
+    }
     if (draft.current) paint(ctx,draft.current);
     if (selected.current && context.kind === 'image' && tool === 'pointer') {
       const mark = history.current.present.find(m => m.id === selected.current); if (!mark) return;
@@ -129,7 +140,10 @@ function Ink({ context }: { context: Context }) {
       paintBackground(ctx);
       for (const mark of history.current.present) paint(ctx,mark);
       const blob = await new Promise<Blob>((resolve,reject) => result.toBlob(b => b ? resolve(b) : reject(new Error('No se pudo preparar la imagen')), 'image/png'));
-      await invoke('screen_image_export', { id: context.id, action, bytes: Array.from(new Uint8Array(await blob.arrayBuffer())) });
+      // Keep PNG bytes binary: large captures must not become numeric JSON arrays.
+      await invoke('screen_image_export_binary', await blob.arrayBuffer(), {headers:{
+        'x-whispera-session':context.id, 'x-whispera-action':action,
+      }});
     } catch (e) { if (live.current) setError(String(e)); }
     finally { exporting.current = false; working.current = false; if (live.current) setBusy(false); }
   };
@@ -166,7 +180,7 @@ function Ink({ context }: { context: Context }) {
       else actions.current(action);
     };
     window.addEventListener('keydown',key);
-    return () => { live.current = false; unlisten?.(); cancelAnimationFrame(frame.current); window.removeEventListener('keydown',key); };
+    return () => { live.current = false; unlisten?.(); cancelAnimationFrame(frame.current); inkLayer.clear(); window.removeEventListener('keydown',key); };
   }, [context.id]);
   useLayoutEffect(()=>{
     let alive=true,url='';

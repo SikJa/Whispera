@@ -14,7 +14,14 @@ export function installNativeMock({kind='video',width=640,height=480,scale=1,set
   window.__TAURI_INTERNALS__={
     metadata:{currentWindow:{label},currentWebview:{label}},
     transformCallback:callback=>{const id=next++;callbacks.set(id,callback);return id;},
-    invoke:async(command,args={})=>{
+    invoke:async(command,args={},options={})=>{
+      if(command==='screen_image_export_binary'){
+        if(!(args instanceof ArrayBuffer))throw Error('Expected binary image body');
+        window.binaryExportCount=(window.binaryExportCount??0)+1;
+        const headers=new Headers(options.headers);
+        args={id:headers.get('x-whispera-session'),action:headers.get('x-whispera-action'),bytes:Array.from(new Uint8Array(args))};
+        command='screen_image_export';
+      }
       window.calls.push({command,args});
       if(command==='screen_overlay_customize'){
         window.captureDock??={zoom:1,compact:false};

@@ -668,6 +668,7 @@ fn main() {
             screen_editor::screen_editor_feedback_get,
             screen_editor::screen_editor_print,
             screen_editor::screen_image_export,
+            screen_editor::screen_image_export_binary,
             screen_editor::screen_video_snapshot,
             screen::screen_stop,
             screen::screen_copy,

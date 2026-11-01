@@ -257,7 +257,7 @@ function Ink({ context }: { context: Context }) {
 }
 export function ScreenTools() { const context = useContext(); return context ? <Toolbar key={context.id} context={context}/> : null; }
 export function ScreenHud() { const context = useContext(); return context ? context.kind==='video' ? <VideoHud key={context.id} context={context}/> : <ImageActions key={context.id} context={context}/> : null; }
-type VideoStatus = {phase:string;seconds:number;error:string};
+type VideoStatus = {phase:string;seconds:number;error:string;notice?:string};
 function VideoHud({context}:{context:Context}) {
   const [status,setStatus]=useState<VideoStatus>({phase:'starting',seconds:0,error:''});
   const [busy,setBusy]=useState(false);
@@ -277,6 +277,7 @@ function VideoHud({context}:{context:Context}) {
   return <div className="capture-hud capture-line-hud" data-compact="true" data-paused={paused} aria-label="Controles de video">
     <div className="capture-dock-origin"><div ref={dockElement} className="capture-hud-controls" style={{zoom:dock.zoom,'--dock-zoom':dock.zoom} as CSSProperties}>{dock.grip('controles de video')}<span className="capture-hud-time" title={label}><i/><output aria-label="Tiempo grabado">{time}</output></span>{!dock.compact&&<><IndicatorArtwork kind="camera" compact active={status.phase==='recording'}/><button disabled={busy||!['recording','paused'].includes(status.phase)} aria-label="Capturar imagen del video" title="Capturar y copiar el área grabada" onClick={()=>void run('screen_video_snapshot')}><Camera size={16}/></button><button disabled={busy||!['recording','paused'].includes(status.phase)} aria-label={paused?'Reanudar video':'Pausar video'} title={paused?'Reanudar':'Pausar'} onClick={()=>void run('screen_pause')}><span className="t-icon-swap" data-state={paused?'b':'a'}><span className="t-icon" data-icon="a"><Pause size={16}/></span><span className="t-icon" data-icon="b"><Play size={16}/></span></span></button></>}<button className="capture-stop" disabled={busy||!['recording','paused'].includes(status.phase)} aria-label="Detener video" title="Detener y guardar video" onClick={()=>void run('screen_stop')}><Square size={12} fill="currentColor"/></button>{!dock.compact&&<><button disabled={busy||['saving','cancelling'].includes(status.phase)} aria-label="Cancelar video" title="Cancelar y descartar el video" onClick={()=>void run('screen_cancel')}><X size={16}/></button></>}{dock.sizing('controles de video')}<button aria-label={dock.compact?'Expandir controles de video':'Contraer controles de video'} title={dock.compact?'Expandir controles':'Contraer controles'} onClick={()=>void dock.change({compact:!dock.compact})}>{dock.compact?<ChevronRight size={15}/>:<ChevronLeft size={15}/>}</button></div></div>
     {(error||status.error)&&<div role="alert" className="capture-hud-error">{error||status.error}</div>}
+    {!error&&!status.error&&status.notice&&<div role="status" className="capture-hud-error capture-hud-notice">{status.notice}</div>}
   </div>;
 }
 function useEditorControls(context:Context) {

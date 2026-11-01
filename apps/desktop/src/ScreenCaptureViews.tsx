@@ -8,10 +8,11 @@ import {showWhenReady} from './screen-ready';
 import CaptureFrame from './CaptureFrame';
 import EditableCaptureFrame,{type CaptureContext} from './EditableCaptureFrame';
 import {commandKey,isMac} from './platform';
+import MonitorPicker,{type MonitorInfo} from './MonitorPicker';
 import './screen-recorder.css';
 
 type Appearance = Pick<Settings,'color'|'pattern'|'recorderScale'> & {frameColor:string};
-type Status = { phase: string; seconds: number; path: string; error: string; copied: boolean };
+type Status = { phase: string; seconds: number; path: string; error: string; copied: boolean; notice?: string };
 type Point = { x: number; y: number };
 type Rect = { x:number; y:number; width:number; height:number };
 type Stage = { rect:Rect; kind:'video'|'image' };
@@ -67,7 +68,11 @@ export function ScreenSelection({kind='video',frameColor='#ffffff',snapshot,onPr
   const [end, setEnd] = useState<Point>();
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
-  const [monitors,setMonitors]=useState<{index:number;name:string|null;width:number;height:number}[]>([]);
+  const [monitors,setMonitors]=useState<MonitorInfo[]>([]);
+  // Selector windows are labelled screen-select-N: N is the monitor under this overlay.
+  const [current,setCurrent]=useState<number|null>(null);
+  useEffect(()=>{if(!("__TAURI_INTERNALS__" in window))return;void import('@tauri-apps/api/window').then(({getCurrentWindow})=>{const match=/-select-(\d+)$/.exec(getCurrentWindow().label);setCurrent(match?Number(match[1]):null);}).catch(()=>{});},[]);
+  const pickMonitor=(index:number)=>{if(busy)return;setBusy(true);void invoke('screen_start_monitor',{index}).catch(e=>{setError(String(e));setBusy(false);});};
   useEffect(()=>{let alive=true;if(kind==='video')void invoke<typeof monitors>('screen_monitors').then(value=>{if(alive&&Array.isArray(value))setMonitors(value);}).catch(e=>{if(alive)setError(String(e));});return()=>{alive=false;};},[kind]);
   const anchor = useRef<Point | undefined>(undefined);
   const boundedPoint=(x:number,y:number):Point=>({x:Math.max(0,Math.min(innerWidth,x)),y:Math.max(0,Math.min(innerHeight,y))});
@@ -94,7 +99,7 @@ export function ScreenSelection({kind='video',frameColor='#ffffff',snapshot,onPr
     try{await invoke('screen_start',{rect});}catch(e){setError(String(e));setBusy(false);}
   };
   return <div className="screen-selection" style={snapshot?{backgroundImage:`url("${snapshot}")`,backgroundSize:'100% 100%'}:undefined} data-frozen={!!snapshot} data-has-selection={!!rect} onPointerDown={e => {
-    if (busy || e.button !== 0 || (e.target as HTMLElement).closest('button')) return;
+    if (busy || e.button !== 0 || (e.target as HTMLElement).closest('button,.monitor-picker')) return;
     e.currentTarget.setPointerCapture(e.pointerId);
     anchor.current = boundedPoint(e.clientX,e.clientY); setOrigin(anchor.current); setEnd(anchor.current); setError('');
   }} onPointerMove={e => { if (anchor.current && !busy) setEnd(boundedPoint(e.clientX,e.clientY)); }} onPointerUp={async e => {
@@ -106,7 +111,7 @@ export function ScreenSelection({kind='video',frameColor='#ffffff',snapshot,onPr
     await beginCapture(rect);
   }} onPointerCancel={interruptSelection} onLostPointerCapture={interruptSelection}>
     <div className="screen-selection-help" role="status">{busy ? 'Preparando…' : error || (kind==='image'?'Seleccioná el área para capturar.':'Seleccioná el área. Al soltar empieza a grabar.')} <kbd>{commandKey}+A: pantalla completa</kbd><kbd>Esc: salir</kbd></div>
-    {kind==='video'&&!origin&&<div className="screen-monitor-picker" role="group" aria-label="Pantalla para grabar">{monitors.map(m=><button key={m.index} disabled={busy} title={`${m.name??'Monitor'} · ${m.width} × ${m.height}`} onClick={()=>{if(busy)return;setBusy(true);void invoke('screen_start_monitor',{index:m.index}).catch(e=>{setError(String(e));setBusy(false);});}}><Monitor size={18}/><span>Pantalla {m.index+1}<small>{m.width} × {m.height}</small></span></button>)}</div>}
+    {kind==='video'&&!origin&&<MonitorPicker monitors={monitors} current={current} busy={busy} onPick={pickMonitor}/>}
     {rect && <CaptureFrame className="screen-selection-rect" width={rect.width} height={rect.height} color={frameColor} style={{left:rect.x,top:rect.y}}/>}
   </div>;
 }

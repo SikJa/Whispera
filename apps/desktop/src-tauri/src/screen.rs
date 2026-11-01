@@ -53,6 +53,8 @@ pub struct Status {
     pub path: String,
     pub error: String,
     pub copied: bool,
+    /// Short-lived hint shown by the HUD (for example, the Esc confirmation).
+    pub notice: String,
 }
 pub struct Screen {
     pub secondary: bool,
@@ -257,6 +259,28 @@ pub fn escape(app: &tauri::AppHandle) -> Result<(), String> {
     if app.state::<session::ImageCapture>().screen.busy(){return cancel_selection_for(app.clone(), "image-session");}
     let screen = app.state::<Screen>();
     let _gate = screen.gate.lock().map_err(|_| "Video ocupado")?;
+    // One Esc must never end a recording by accident: the first press asks for
+    // a second one within two seconds. The HUD stop button and shortcut still work.
+    {
+        static ARMED: Mutex<Option<Instant>> = Mutex::new(None);
+        const NOTICE: &str = "Apretá Esc otra vez para terminar la grabación";
+        let mut state = screen.state.lock().map_err(|_| "Estado ocupado")?;
+        if ["recording", "paused", "pausing", "resuming", "reframing"].contains(&state.phase.as_str()) {
+            let mut armed = ARMED.lock().map_err(|_| "Video ocupado")?;
+            if !armed.is_some_and(|at| at.elapsed() < Duration::from_secs(2)) {
+                *armed = Some(Instant::now());
+                state.notice = NOTICE.into();
+                let status = screen.state.clone();
+                std::thread::spawn(move || {
+                    std::thread::sleep(Duration::from_secs(2));
+                    if let Ok(mut state) = status.lock() { if state.notice == NOTICE { state.notice.clear(); } }
+                });
+                return Ok(());
+            }
+            *armed = None;
+            state.notice.clear();
+        }
+    }
     stop_locked(app, &screen)?;
     let mut state = screen.state.lock().map_err(|_| "Estado ocupado")?;
     if ["selecting", "editing"].contains(&state.phase.as_str()) {
@@ -601,11 +625,48 @@ pub async fn screen_select(app: tauri::AppHandle) -> Result<(), String> {
         .await
         .map_err(|e| e.to_string())?
 }
+/// Windows reports monitors as "\\.\DISPLAY1"; the picker shows the EDID name ("TV", "S19B150").
+#[cfg(windows)]
+fn monitor_names() -> std::collections::HashMap<String, String> {
+    use windows::Win32::Devices::Display::*;
+    let mut names = std::collections::HashMap::new();
+    unsafe {
+        let (mut paths, mut modes) = (0u32, 0u32);
+        if GetDisplayConfigBufferSizes(QDC_ONLY_ACTIVE_PATHS, &mut paths, &mut modes).is_err() { return names; }
+        let mut path_info = vec![DISPLAYCONFIG_PATH_INFO::default(); paths as usize];
+        let mut mode_info = vec![DISPLAYCONFIG_MODE_INFO::default(); modes as usize];
+        if QueryDisplayConfig(QDC_ONLY_ACTIVE_PATHS, &mut paths, path_info.as_mut_ptr(), &mut modes, mode_info.as_mut_ptr(), None).is_err() { return names; }
+        let text = |wide: &[u16]| String::from_utf16_lossy(&wide[..wide.iter().position(|c| *c == 0).unwrap_or(wide.len())]);
+        for path in &path_info[..paths as usize] {
+            let mut source = DISPLAYCONFIG_SOURCE_DEVICE_NAME::default();
+            source.header.r#type = DISPLAYCONFIG_DEVICE_INFO_GET_SOURCE_NAME;
+            source.header.size = std::mem::size_of::<DISPLAYCONFIG_SOURCE_DEVICE_NAME>() as u32;
+            source.header.adapterId = path.sourceInfo.adapterId;
+            source.header.id = path.sourceInfo.id;
+            let mut target = DISPLAYCONFIG_TARGET_DEVICE_NAME::default();
+            target.header.r#type = DISPLAYCONFIG_DEVICE_INFO_GET_TARGET_NAME;
+            target.header.size = std::mem::size_of::<DISPLAYCONFIG_TARGET_DEVICE_NAME>() as u32;
+            target.header.adapterId = path.targetInfo.adapterId;
+            target.header.id = path.targetInfo.id;
+            if DisplayConfigGetDeviceInfo(&mut source.header) != 0 || DisplayConfigGetDeviceInfo(&mut target.header) != 0 { continue; }
+            let friendly = text(&target.monitorFriendlyDeviceName);
+            if !friendly.trim().is_empty() { names.insert(text(&source.viewGdiDeviceName), friendly); }
+        }
+    }
+    names
+}
 #[tauri::command]
 pub fn screen_monitors(app: tauri::AppHandle) -> Result<Vec<serde_json::Value>, String> {
-    Ok(app.available_monitors().map_err(|e|e.to_string())?.iter().enumerate().map(|(index,m)|
-        serde_json::json!({"index":index,"name":m.name(),"width":m.size().width,"height":m.size().height})
-    ).collect())
+    #[cfg(windows)]
+    let names = monitor_names();
+    let primary = app.primary_monitor().ok().flatten().map(|m| *m.position());
+    Ok(app.available_monitors().map_err(|e|e.to_string())?.iter().enumerate().map(|(index,m)| {
+        #[cfg(windows)]
+        let name = m.name().map(|n| names.get(n).cloned().unwrap_or_else(|| n.clone()));
+        #[cfg(not(windows))]
+        let name = m.name().cloned();
+        serde_json::json!({"index":index,"name":name,"x":m.position().x,"y":m.position().y,"width":m.size().width,"height":m.size().height,"primary":primary==Some(*m.position())})
+    }).collect())
 }
 #[tauri::command]
 pub async fn screen_start_monitor(app: tauri::AppHandle, index: usize) -> Result<(), String> {

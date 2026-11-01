@@ -35,11 +35,6 @@ html[data-screen-select="true"], html[data-screen-select="true"] body, html[data
 /* The fixed capture controls share the recorder's rounded glass buttons. */
 .capture-toolbar,.capture-hud-controls,.capture-image-actions { color:#eeede9; border:1px solid #ffffff30; background:linear-gradient(145deg,#252525f5,#121212f5); border-radius:18px; box-shadow:inset 0 1px #ffffff1c,0 3px 10px #0003; box-sizing:border-box; font-family:'Instrument Sans Variable','Segoe UI',sans-serif; }
 .capture-toolbar { display:flex; flex-direction:column; align-items:center; gap:5px; width:calc(100% - 8px); max-height:calc(100% - 8px); margin:4px; padding:6px; user-select:none; overflow-y:auto; scrollbar-width:thin; scrollbar-color:#777 transparent; }
-.screen-monitor-picker {position:absolute;top:72px;left:50%;transform:translateX(-50%);display:flex;flex-wrap:wrap;justify-content:center;gap:8px;max-width:calc(100% - 32px);}
-.screen-monitor-picker button {display:flex;align-items:center;gap:10px;padding:10px 14px;background:#202225f5;color:#eeede9;border:1px solid #ffffff30;border-radius:8px;cursor:pointer;font:inherit;}
-.screen-monitor-picker button:hover {background:#35373b;}
-.screen-monitor-picker button:focus-visible {outline:2px solid #c6a8f2;outline-offset:2px;}
-.screen-monitor-picker small {display:block;font-size:11px;color:#b8bdc6;}
 .capture-toolbar button,.capture-hud-controls button,.capture-image-actions button { display:grid; place-items:center; flex-shrink:0; width:36px; height:34px; padding:0; border:1px solid transparent; border-radius:11px; color:inherit; background:transparent; cursor:pointer; transition:background-color 120ms ease,border-color 120ms ease; }
 .capture-toolbar button:hover,.capture-hud-controls button:hover,.capture-image-actions button:hover { background:#ffffff18; border-color:#ffffff25; }
 .capture-toolbar button[aria-pressed="true"] { color:#fff; background:#ffffff24; border-color:#ffffff50; box-shadow:inset 0 1px #ffffff18; }
@@ -122,3 +117,26 @@ html[data-screen-select="true"], html[data-screen-select="true"] body, html[data
 .capture-frame-handle-s {left:50%;top:100%;cursor:ns-resize;}.capture-frame-handle-sw {left:0;top:100%;cursor:nesw-resize;}
 .capture-frame-handle-w {left:0;top:50%;cursor:ew-resize;}.capture-frame-handle-nw {left:0;top:0;cursor:nwse-resize;}
 .capture-frame-error { position:absolute; padding:5px 9px; border-radius:6px; background:#18181b; color:#fff; font-size:12px; }
+.capture-hud-notice { background:#26222e; border-color:#7d6aa6; color:#e9e1ff; }
+/* Monitor picker: the screens drawn in their real arrangement. */
+.monitor-picker {position:absolute;top:84px;left:50%;transform:translateX(-50%);z-index:2;display:flex;flex-direction:column;align-items:center;gap:16px;padding:20px 22px 16px;max-width:calc(100% - 32px);color:#eeede9;border:1px solid #ffffff26;border-radius:22px;background:linear-gradient(160deg,#26242af7,#131215f7);box-shadow:inset 0 1px #ffffff1a,0 24px 60px #0009;font-family:"Instrument Sans Variable","Segoe UI",sans-serif;animation:monitor-in .26s cubic-bezier(.22,1,.36,1);}
+@keyframes monitor-in {from{opacity:0;transform:translate(-50%,-8px) scale(.98);}}
+.monitor-picker-head {display:flex;align-items:center;gap:12px;align-self:stretch;}
+.monitor-picker-icon {display:grid;place-items:center;width:38px;height:38px;flex-shrink:0;border-radius:12px;color:#d9c8ff;background:#a17bf024;}
+.monitor-picker-head strong {display:block;font-size:16px;font-weight:650;letter-spacing:-.01em;}
+.monitor-picker-head small {display:block;margin-top:2px;font-size:12px;color:#b5b0bd;}
+.monitor-map {position:relative;flex-shrink:0;}
+.monitor-tile {position:absolute;display:flex;flex-direction:column;justify-content:flex-end;align-items:flex-start;gap:1px;padding:10px 12px;overflow:hidden;color:inherit;font:inherit;text-align:left;cursor:pointer;border:1.5px solid #ffffff24;border-radius:12px;background:linear-gradient(160deg,#ffffff12,#ffffff05);transition:border-color .15s,background .15s,transform .15s;}
+.monitor-tile:hover,.monitor-tile:focus-visible {outline:none;border-color:#b896ff;background:linear-gradient(160deg,#a17bf03a,#a17bf014);}
+.monitor-tile:active {transform:scale(.98);}
+.monitor-tile[data-current="true"] {border-color:#ffffff55;}
+.monitor-number {position:absolute;top:8px;left:10px;display:grid;place-items:center;min-width:22px;height:22px;padding:0 6px;border-radius:7px;font-size:12px;font-weight:700;background:#0008;}
+.monitor-tile[data-roomy="false"] {justify-content:center;align-items:center;}
+.monitor-tile[data-roomy="false"] .monitor-number {position:static;}
+.monitor-name {font-size:13.5px;font-weight:650;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.monitor-tile small {font-size:11px;color:#c3bdcc;}
+.monitor-here {position:absolute;top:8px;right:9px;padding:3px 8px;border-radius:999px;font-size:10.5px;font-style:normal;font-weight:650;color:#1a1520;background:#d9c8ff;}
+.monitor-picker-keys {display:flex;align-items:center;gap:6px;margin:0;font-size:11.5px;color:#a9a3b2;}
+.monitor-picker-keys span {margin-left:10px;}
+.monitor-picker-keys kbd {padding:2px 6px;border-radius:5px;font:600 10.5px/1.3 inherit;color:#ddd6e8;background:#ffffff14;box-shadow:inset 0 -1px #0006;}
+@media (prefers-reduced-motion:reduce) {.monitor-picker{animation:none;}}

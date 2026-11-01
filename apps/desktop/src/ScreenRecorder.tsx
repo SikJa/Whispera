@@ -10,7 +10,7 @@ import { SettingsSwitch } from './ResourceControls';
 import { type CapturePreferences as Preferences, defaultCapturePreferences, VideoAudioSettings } from './CaptureSettings';
 import { commandKey, isMac, systemName } from './platform';
 
-type Status = { phase: string; seconds: number; path: string; error: string; copied: boolean };
+type Status = { phase: string; seconds: number; path: string; error: string; copied: boolean; notice?: string };
 export {ScreenOverlay,ScreenSelection,ScreenIndicator} from './ScreenCaptureViews';
 
 export default function ScreenRecorder() {

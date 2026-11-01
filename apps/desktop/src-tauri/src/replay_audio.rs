@@ -38,6 +38,8 @@ impl Audio {
             cpal::SampleFormat::F32=>device.build_input_stream(&cfg,move|data:&[f32],_|push(data,|v|v,&samples,keep),on_error,None),
             cpal::SampleFormat::I16=>device.build_input_stream(&cfg,move|data:&[i16],_|push(data,|v|v as f32/32768.,&samples,keep),on_error,None),
             cpal::SampleFormat::U16=>device.build_input_stream(&cfg,move|data:&[u16],_|push(data,|v|(v as f32-32768.)/32768.,&samples,keep),on_error,None),
+            cpal::SampleFormat::I32=>device.build_input_stream(&cfg,move|data:&[i32],_|push(data,|v|v as f32/2_147_483_648.,&samples,keep),on_error,None),
+            cpal::SampleFormat::F64=>device.build_input_stream(&cfg,move|data:&[f64],_|push(data,|v|v as f32,&samples,keep),on_error,None),
             _=>return Err("Formato de audio no admitido".into()),
         }.map_err(|e|e.to_string())?;
         stream.play().map_err(|e|e.to_string())?;

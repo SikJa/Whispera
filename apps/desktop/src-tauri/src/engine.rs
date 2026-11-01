@@ -110,7 +110,9 @@ pub fn control(app: &tauri::AppHandle, action: &str) -> Result<(), String> {
             if !["recording", "paused"].contains(&state.phase.as_str()) {
                 system_audio::restore(&engine.mute_journal)?;
             }
-            let id = engine.recorder.start()?;
+            let id = engine.recorder.start(&settings.microphone)?;
+            // The upload compressor runs at stop; load it while the user speaks.
+            if let Ok(binary) = crate::screen::ffmpeg(app) { crate::screen::warm_encoder(&binary); }
             if settings.incremental_transcription {
                 let dir = audio::session_dir(&engine.recorder.root, &id)?;
                 if let Err(e) = crate::incremental::prepare(&dir, settings.clone(), rules) {
@@ -325,12 +327,15 @@ async fn process(app: &tauri::AppHandle, id: &str) -> Result<String, String> {
                     if trim {
                         audio::trimmed_copy(&original)
                     } else {
-                        Ok(original)
+                        Ok(Some(original))
                     }
                 })
                 .await
                 .map_err(|e| e.to_string())??;
-                let text = groq::transcribe_raw(&prepared, &settings, &rules).await?;
+                let text = match prepared {
+                    Some(prepared) => groq::transcribe_raw(&prepared, &settings, &rules).await?,
+                    None => String::new(),
+                };
                 audio::write_new(&cache, text.as_bytes())?;
                 text
             };
@@ -395,7 +400,8 @@ pub async fn reveal_recording(id: String, app: tauri::AppHandle) -> Result<(), S
 }
 pub fn shutdown(app: &tauri::AppHandle) {
     let engine = app.state::<Engine>();
-    let _guard = engine.gate.lock().unwrap();
+    // Quitting or updating must still finish the recording if a worker panicked.
+    let _guard = engine.gate.lock().unwrap_or_else(|e| e.into_inner());
     if ["recording", "paused"].contains(&engine.recorder.snapshot().phase.as_str()) {
         let _ = engine.recorder.stop();
     }

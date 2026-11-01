@@ -31,5 +31,7 @@ export function libraryWindow(invoke:Invoke, rectangles:()=>Rect[]) {
       throw error;
     }finally{busy=false;}
   };
-  return {close,sync,open:()=>{wanted=true;signature='';++revision;return sync();}};
+  // Native code can hide the window (captures, Configuración) without this module
+  // seeing it; every open must request show again or the panel stays invisible.
+  return {close,sync,open:()=>{wanted=true;shown=false;signature='';++revision;return sync();}};
 }

@@ -49,6 +49,7 @@ mod shortcuts;
 mod sounds;
 mod storage;
 mod system_audio;
+mod tray;
 use storage::{Rule, Settings, Snapshot, Store};
 use tauri::{Manager, State};
 use tauri_plugin_clipboard_manager::ClipboardExt;
@@ -70,6 +71,10 @@ fn snapshot(store: State<Store>) -> Result<Snapshot, String> {
         logs: store.logs()?,
         native: true,
     })
+}
+#[tauri::command]
+async fn audio_input_devices() -> Vec<String> {
+    tauri::async_runtime::spawn_blocking(audio::input_devices).await.unwrap_or_default()
 }
 #[tauri::command]
 fn read_settings(store: State<Store>) -> Result<Settings, String> {
@@ -103,11 +108,11 @@ fn save_settings(
     settings.validate()?;
     let old: Settings = store.get("settings")?;
     let video: screen::Preferences = store.get("screen_preferences").unwrap_or_default();
-    if [
-        shortcuts::parse(&video.hotkey)?,
-        shortcuts::parse(&video.image_hotkey)?,
-    ]
-    .contains(&shortcuts::parse(&settings.hotkey)?)
+    // An unparseable video/capture key cannot collide; it must not block saving.
+    let dictation = shortcuts::parse(&settings.hotkey)?;
+    if [&video.hotkey, &video.image_hotkey]
+        .into_iter()
+        .any(|value| shortcuts::parse(value).is_ok_and(|key| key == dictation))
     {
         return Err("El atajo de dictado debe ser distinto de los de video y captura".into());
     }
@@ -161,7 +166,13 @@ async fn transcribe_file(
     let settings: Settings = store.get("settings")?;
     let rules: Vec<Rule> = store.get("rules")?;
     store.event("Transcripcion de archivo iniciada")?;
-    match groq::transcribe(std::path::Path::new(&path), &settings, &rules).await {
+    let source = std::path::PathBuf::from(&path);
+    let binary = screen::ffmpeg(&app).ok();
+    let compact = tauri::async_runtime::spawn_blocking(move || compact_audio(binary.as_deref(), &source))
+        .await
+        .map_err(|e| e.to_string())??;
+    let upload = compact.as_ref().map(|c| c.0.join("audio.ogg")).unwrap_or_else(|| path.clone().into());
+    match groq::transcribe(&upload, &settings, &rules).await {
         Ok(text) => {
             store.append(&text)?;
             store.event("Transcripcion guardada en historial")?;
@@ -175,6 +186,37 @@ async fn transcribe_file(
             Err(e)
         }
     }
+}
+struct Scratch(std::path::PathBuf);
+impl Drop for Scratch {
+    fn drop(&mut self) { let _ = std::fs::remove_dir_all(&self.0); }
+}
+// Groq accepts 25 MB and a few containers. Long recordings or video files are
+// converted to 16 kHz mono Opus (~100 minutes per 24 MB); the original is untouched.
+fn compact_audio(binary: Option<&std::path::Path>, source: &std::path::Path) -> Result<Option<Scratch>, String> {
+    let extension = source.extension().and_then(|e| e.to_str()).unwrap_or("").to_lowercase();
+    let size = std::fs::metadata(source).map_err(|_| "No se pudo abrir el audio")?.len();
+    let supported = ["wav", "mp3", "m4a", "ogg", "webm", "flac", "mp4", "mpeg", "mpga"].contains(&extension.as_str());
+    if supported && size <= 24_000_000 { return Ok(None); }
+    let binary = binary.ok_or("Falta el motor de audio para convertir este archivo")?;
+    let scratch = Scratch(std::env::temp_dir().join(format!("whispera-import-{}", uuid::Uuid::new_v4())));
+    std::fs::create_dir(&scratch.0).map_err(|e| e.to_string())?;
+    let output = scratch.0.join("audio.ogg");
+    let status = screen::command(binary)
+        .args(["-hide_banner", "-loglevel", "error", "-y", "-i"]).arg(source)
+        .args(["-vn", "-ac", "1", "-ar", "16000", "-c:a", "libopus", "-b:a", "24k", "-application", "voip"])
+        .arg(&output)
+        .stdin(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .map_err(|e| e.to_string())?;
+    if !status.success() || !output.is_file() {
+        return Err("No se pudo leer el audio de ese archivo".into());
+    }
+    if std::fs::metadata(&output).map_err(|e| e.to_string())?.len() > 24_000_000 {
+        return Err("El audio dura demasiado para un solo envío (más de ~2 horas). Dividilo en partes.".into());
+    }
+    Ok(Some(scratch))
 }
 #[tauri::command]
 fn import_legacy(path: String, store: State<Store>) -> Result<String, String> {
@@ -357,8 +399,13 @@ fn main() {
     if let Some(code) = native_drag::helper_entry() { std::process::exit(code); }
     tauri::Builder::default()
         .plugin(tauri_plugin_autostart::Builder::new().app_name("Whispera").args(["--autostart"]).build())
-        // Launching again must not turn the background dictation tool into a visible window.
-        .plugin(tauri_plugin_single_instance::init(|_, _, _| {}))
+        // A second autostart stays in the tray, but opening Whispera from Start or the
+        // desktop while it already runs must show something instead of doing nothing.
+        .plugin(tauri_plugin_single_instance::init(|app, args, _| {
+            if !args.iter().any(|arg| arg == "--autostart") {
+                if let Err(error) = open_settings(app.clone()) { let _ = app.state::<Store>().event(&error); }
+            }
+        }))
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_clipboard_manager::init())
@@ -470,9 +517,12 @@ fn main() {
             lifecycle::init(app.path().app_log_dir()?);
             // A redirected data drive may mount after Windows starts tray apps.
             // Do not create a replacement profile while its junction is unavailable.
+            // The settings database lives in the profile folder, so wait for that too.
             if std::env::args().any(|arg| arg == "--autostart") {
+                let profile = profile::database_path().ok().and_then(|p| p.parent().map(|d| d.to_path_buf()));
+                let pending = |path: &std::path::Path| std::fs::symlink_metadata(path).is_ok() && !path.is_dir();
                 let deadline = std::time::Instant::now() + std::time::Duration::from_secs(90);
-                while std::fs::symlink_metadata(&dir).is_ok() && !dir.is_dir()
+                while (pending(&dir) || profile.as_deref().is_some_and(pending))
                     && std::time::Instant::now() < deadline
                 {
                     std::thread::sleep(std::time::Duration::from_millis(500));
@@ -484,7 +534,7 @@ fn main() {
                 .event("Whispera 2 iniciada")
                 .map_err(std::io::Error::other)?;
             app.manage(store);
-            if let Ok(binary)=screen::ffmpeg(app.handle()) {lossless_upload::configure(binary);}
+            if let Ok(binary)=screen::ffmpeg(app.handle()) {screen::warm_encoder(&binary);lossless_upload::configure(binary);}
             let startup_app=app.handle().clone();
             tauri::async_runtime::spawn_blocking(move || {
                 if let Err(error)=startup::reconcile() {
@@ -530,80 +580,31 @@ fn main() {
             }
             replay::initialize(app.handle());
             windows_capture_keys::start(app.handle());
+            // Creating the dictation window takes about a second (a new WebView2);
+            // do it hidden after startup instead of on the first shortcut press.
+            let recorder_app = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+                let _ = tauri::async_runtime::spawn_blocking(move || prepare_recorder(recorder_app, false)).await;
+            });
             let capture_app = app.handle().clone();
             tauri::async_runtime::spawn_blocking(move || {
                 if let Err(error) = screen::warm_selectors(&capture_app) {
                     let _ = capture_app.state::<Store>().event(&format!("Preparacion de capturas: {error}"));
                 }
             });
-            use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
-            let show = MenuItem::with_id(app, "settings", "Configuracion", true, None::<&str>)?;
-            let record = MenuItem::with_id(app, "recorder", "Abrir grabadora", true, None::<&str>)?;
-            let import =
-                MenuItem::with_id(app, "import", "Transcribir archivo...", true, None::<&str>)?;
-            let video = MenuItem::with_id(app, "screen", "Iniciar video", true, None::<&str>)?;
-            let image =
-                MenuItem::with_id(app, "screenshot", "Capturar imagen", true, None::<&str>)?;
-            let update_menu=MenuItem::with_id(app,"updates","Buscar actualizaciones",true,None::<&str>)?;
-            app.manage(updates::UpdateMenu(update_menu.clone()));
-            let quit = MenuItem::with_id(app, "quit", "Salir / Quit Whispera", true, None::<&str>)?;
-            let library_menu = MenuItem::with_id(app, "library", "Biblioteca / Portapapeles", true, None::<&str>)?;
-            let sep = PredefinedMenuItem::separator(app)?;
-            let menu =
-                Menu::with_items(app, &[&record, &video, &image, &import, &library_menu, &show, &update_menu, &sep, &quit])?;
+            app.manage(tray::TrayMenu::default());
+            tray::prewarm(app.handle());
             tauri::tray::TrayIconBuilder::new()
                 .icon(tauri::image::Image::from_bytes(include_bytes!("../icons/cristal/32x32.png"))?)
                 .tooltip("Whispera")
-                .menu(&menu)
-                .on_menu_event(|app, event| match event.id.as_ref() {
-                    "library" => { let app=app.clone(); tauri::async_runtime::spawn(async move { let _ = library::library_toggle(app).await; }); }
-                    "settings" => {
-                        if let Err(error) = open_settings(app.clone()) { let _ = app.state::<Store>().event(&error); }
+                // Whispera draws its own menu next to the cursor on either click.
+                .on_tray_icon_event(|tray, event| {
+                    if let tauri::tray::TrayIconEvent::Click { button_state: tauri::tray::MouseButtonState::Up, position, .. } = event {
+                        if let Err(error) = tray::show(tray.app_handle(), position) {
+                            let _ = tray.app_handle().state::<Store>().event(&format!("Menú de la bandeja: {error}"));
+                        }
                     }
-                    "updates" => {
-                        let _=open_updates(app.clone());
-                    }
-                    "recorder" => {
-                        let app = app.clone();
-                        tauri::async_runtime::spawn_blocking(move || {
-                            let _ = show_recorder(app);
-                        });
-                    }
-                    "import" => {
-                        let app = app.clone();
-                        tauri::async_runtime::spawn(async move {
-                            if let Err(error) = open_import(app.clone()).await {
-                                let _ = app.state::<Store>().event(&error);
-                            }
-                        });
-                    }
-                    "quit" => {
-                        lifecycle::record("Quit requested from tray");
-                        let app = app.clone();
-                        tauri::async_runtime::spawn_blocking(move || {
-                            let _ = screen::stop(&app);
-                            engine::shutdown(&app);
-                            replay::stop(&app);
-                            app.exit(0);
-                        });
-                    }
-                    "screen" => {
-                        let app = app.clone();
-                        tauri::async_runtime::spawn_blocking(move || {
-                            if let Err(error) = screen::select(&app) {
-                                screen::report_error(&app, error);
-                            }
-                        });
-                    }
-                    "screenshot" => {
-                        let app = app.clone();
-                        tauri::async_runtime::spawn_blocking(move || {
-                            if let Err(error) = screen::select_image(&app) {
-                                screen::report_image_error(&app, error);
-                            }
-                        });
-                    }
-                    _ => {}
                 })
                 .build(app)?;
             if std::env::args().any(|arg| arg == "--settings")
@@ -623,6 +624,7 @@ fn main() {
             permissions::platform_permissions, permissions::platform_request_permission,
             replay::replay_preferences, replay::replay_status, replay::replay_create_folder, replay::replay_save_preferences, replay::replay_save,
             video_trim::video_trim_open, video_trim::video_trim_context, video_trim::video_trim_close, video_trim::video_trim_save,
+            tray::tray_menu_state, tray::tray_menu_fit, tray::tray_menu_action,
             updates::updater_status, updates::updater_check, updates::updater_install, updates::updater_open_upstream,
             library::library_state,
             library::library_collect,
@@ -693,6 +695,7 @@ fn main() {
             windows_capture_keys::windows_capture_shortcuts,
             windows_capture_keys::save_windows_capture_shortcuts,
             snapshot,
+            audio_input_devices,
             save_settings,
             read_settings,
             read_history,
@@ -726,6 +729,10 @@ fn main() {
             engine::reveal_recording
         ])
         .on_window_event(|window, event| {
+            if window.label() == "tray-menu" {
+                if let tauri::WindowEvent::Focused(false) = event { let _ = tray::hide(window.app_handle()); }
+                return;
+            }
             if window.label().starts_with("video-trim-") {
                 if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                     if window.app_handle().state::<video_trim::Editors>().busy.load(std::sync::atomic::Ordering::SeqCst) { api.prevent_close(); }

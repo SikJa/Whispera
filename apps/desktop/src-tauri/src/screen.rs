@@ -185,6 +185,20 @@ pub(crate) fn ffmpeg(app: &tauri::AppHandle) -> Result<PathBuf, String> {
     }
     Ok(path)
 }
+/// The bundled FFmpeg is ~80 MB: a cold launch (disk read plus antivirus scan)
+/// measured 2.4 s versus 80 ms warm. Load it while the user is still selecting
+/// a region or speaking, so the encoder and the upload compressor start warm.
+pub(crate) fn warm_encoder(binary: &Path) {
+    static LAST: Mutex<Option<Instant>> = Mutex::new(None);
+    {
+        let Ok(mut last) = LAST.lock() else { return; };
+        if last.is_some_and(|at| at.elapsed() < Duration::from_secs(120)) { return; }
+        *last = Some(Instant::now());
+    }
+    let mut cmd = command(binary);
+    cmd.args(["-hide_banner", "-version"]).stdin(Stdio::null()).stderr(Stdio::null());
+    std::thread::spawn(move || { let _ = cmd.status(); });
+}
 pub(crate) fn command(binary: &Path) -> Command {
     let mut cmd = Command::new(binary);
     #[cfg(windows)]
@@ -443,7 +457,7 @@ fn select_locked(app: &tauri::AppHandle, screen: &Screen, kind: &str) -> Result<
         return Err(format!("Ya hay una grabacion o seleccion de pantalla (estado: {phase})"));
     }
     crate::library::hide(app)?;
-    if kind != "image" { ffmpeg(app)?; }
+    if kind != "image" { warm_encoder(&ffmpeg(app)?); }
     let monitors = app.available_monitors().map_err(|e| e.to_string())?;
     if monitors.is_empty() {
         return Err("No hay pantallas disponibles".into());
@@ -1233,6 +1247,18 @@ impl AudioTrack {
                 move |d: &[u16], info| {
                     samples(d, |v| (v as f32 - 32768.) / 32768., clock.end(info,d.len(),cfg.sample_rate.0,cfg.channels), &tx, &callback_fault)
                 },
+                on_error,
+                None,
+            ),
+            cpal::SampleFormat::I32 => device.build_input_stream(
+                &cfg,
+                move |d: &[i32], info| samples(d, |v| v as f32 / 2_147_483_648., clock.end(info,d.len(),cfg.sample_rate.0,cfg.channels), &tx, &callback_fault),
+                on_error,
+                None,
+            ),
+            cpal::SampleFormat::F64 => device.build_input_stream(
+                &cfg,
+                move |d: &[f64], info| samples(d, |v| v as f32, clock.end(info,d.len(),cfg.sample_rate.0,cfg.channels), &tx, &callback_fault),
                 on_error,
                 None,
             ),

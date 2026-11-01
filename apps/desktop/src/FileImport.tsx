@@ -22,7 +22,7 @@ export default function FileImport(){
     void getCurrentWindow().onDragDropEvent(e=>{if(e.payload.type==='drop'&&e.payload.paths.length===1)void transcribe(e.payload.paths[0]);}).then(fn=>{if(disposed)fn();else unlisten=fn;});
     return()=>{disposed=true;unlisten?.();};
   },[]);
-  async function browse(){try{const path=await open({multiple:false,filters:[{name:'Audio',extensions:['wav','mp3','m4a','ogg','flac','webm','mp4']}]});if(typeof path==='string')void transcribe(path);}catch(e){setError(String(e));}}
+  async function browse(){try{const path=await open({multiple:false,filters:[{name:'Audio',extensions:['wav','mp3','m4a','ogg','opus','flac','webm','aac','wma','mp4','mkv','mov','avi']}]});if(typeof path==='string')void transcribe(path);}catch(e){setError(String(e));}}
   async function returnToSettings(){try{await invoke('open_settings');await getCurrentWindow().hide();}catch(e){setError(String(e));}}
   return <main className="file-import" data-editing={editing}><header><a href="?view=settings" onClick={event=>{if(native){event.preventDefault();void returnToSettings();}}}><ArrowLeft size={16}/>Whispera</a><h1>Transcribir audio</h1></header>
     <div className="import-folder"><ControlledFolder color="black" customColor={color} size="sm" visualState={phase==='processing'?(seconds%2?'hover':'open'):'rest'}/></div>

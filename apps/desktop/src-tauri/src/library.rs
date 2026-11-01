@@ -935,6 +935,19 @@ fn toggle(app: tauri::AppHandle) -> Result<(), String> {
             .map_err(|_| "Destino ocupado")? = paste::capture();
         app.state::<Library>().open_requested.store(true, std::sync::atomic::Ordering::SeqCst);
         let _ = w.emit("library-open", ());
+        // If the panel page is stuck (suspended renderer, lost event), reload it;
+        // a fresh page opens itself once hydrated while the request is pending.
+        let watch = app.clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_secs(2));
+            let Some(w) = watch.get_webview_window("library") else { return; };
+            if watch.state::<Library>().open_requested.load(std::sync::atomic::Ordering::SeqCst)
+                && !w.is_visible().unwrap_or(true)
+            {
+                let _ = watch.state::<Store>().event("Portapapeles sin respuesta: recargando el panel");
+                if let Ok(url) = w.url() { let _ = w.navigate(url); }
+            }
+        });
         return Ok(()); // The frontend commits its hit region before showing.
     }
     *app.state::<Library>().opening.lock().map_err(|_|"Biblioteca ocupada")? = Some(std::time::Instant::now());

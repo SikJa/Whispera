@@ -116,7 +116,6 @@ jobs:
         working-directory: .
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          WHISPERA_STABLE_BASE: '0.2.28'
         run: node scripts/release-version.mjs
       - name: Build signed Windows candidate installer
         if: steps.windows-version.outputs.skip != 'true'

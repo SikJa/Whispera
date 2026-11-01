@@ -1,0 +1,86 @@
+:root {
+  --app-background: #211922; --app-surface: #2b2030; --app-card: #372939;
+  --app-ink: #f8edf4; --app-muted: #c2afbf; --app-accent: #f4b59c; --app-border: #f8edf426;
+  font-family: "Instrument Sans Variable", "Segoe UI", system-ui, sans-serif;
+  color-scheme: dark;
+  -webkit-font-smoothing: antialiased;
+  user-select: none;
+}
+* { box-sizing: border-box; }
+/* Room for the shadow inside the transparent native window. */
+.tm-shell { padding: 10px; outline: none; }
+.tm-card {
+  position: relative; overflow: hidden;
+  padding: 8px; border-radius: 18px;
+  color: var(--app-ink);
+  background:
+    radial-gradient(120% 70% at 0% 0%, color-mix(in srgb, var(--app-accent) 14%, transparent), transparent 60%),
+    var(--app-surface);
+  border: 1px solid var(--app-border);
+  box-shadow: 0 1px 0 color-mix(in srgb, var(--app-ink) 8%, transparent) inset, 0 20px 44px -12px #000c, 0 4px 14px #0006;
+  transform-origin: bottom right;
+  animation: tm-in 170ms cubic-bezier(.22, 1, .36, 1);
+}
+@keyframes tm-in { from { opacity: 0; transform: translateY(6px) scale(.97); } }
+@media (prefers-reduced-motion: reduce) { .tm-card { animation: none; } }
+
+.tm-head { display: flex; align-items: center; gap: 10px; padding: 6px 6px 12px; }
+.tm-logo { width: 34px; height: 34px; border-radius: 10px; }
+.tm-title { display: flex; flex-direction: column; line-height: 1.15; min-width: 0; }
+.tm-title strong { font-size: 15px; font-weight: 650; letter-spacing: -.01em; }
+.tm-title span { font-size: 11.5px; color: var(--app-muted); }
+.tm-status {
+  margin-left: auto; display: inline-flex; align-items: center; gap: 6px;
+  padding: 4px 9px; border-radius: 999px; font-size: 11.5px; font-weight: 550;
+  background: color-mix(in srgb, var(--app-ink) 7%, transparent); color: var(--app-muted);
+}
+.tm-status i { width: 7px; height: 7px; border-radius: 50%; background: #4ade80; box-shadow: 0 0 0 3px #4ade8026; }
+.tm-status[data-tone="live"] i { background: #f87171; box-shadow: 0 0 0 3px #f8717133; animation: tm-pulse 1.2s ease-in-out infinite; }
+.tm-status[data-tone="busy"] i { background: var(--app-accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--app-accent) 25%, transparent); animation: tm-pulse 1.2s ease-in-out infinite; }
+.tm-status[data-tone="warn"] i { background: #fbbf24; box-shadow: 0 0 0 3px #fbbf2433; }
+@keyframes tm-pulse { 50% { opacity: .35; } }
+
+button { font: inherit; color: inherit; border: 0; background: none; cursor: pointer; outline: none; }
+
+.tm-tiles { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; padding: 0 0 6px; }
+.tm-tile {
+  display: flex; flex-direction: column; align-items: center; gap: 6px;
+  padding: 12px 4px 10px; border-radius: 13px;
+  background: color-mix(in srgb, var(--app-ink) 5%, transparent);
+  border: 1px solid color-mix(in srgb, var(--app-ink) 6%, transparent);
+  transition: background 120ms, border-color 120ms, transform 120ms;
+}
+.tm-tile:hover, .tm-tile:focus-visible { background: color-mix(in srgb, var(--app-accent) 16%, transparent); border-color: color-mix(in srgb, var(--app-accent) 40%, transparent); }
+.tm-tile:active { transform: scale(.97); }
+.tm-tile-icon {
+  display: grid; place-items: center; width: 38px; height: 38px; border-radius: 11px;
+  color: var(--app-accent); background: color-mix(in srgb, var(--app-accent) 15%, transparent);
+}
+.tm-tile-label { font-size: 13px; font-weight: 600; }
+.tm-tile .tm-keys { justify-content: center; flex-wrap: nowrap; }
+.tm-tile .tm-keys kbd { padding: 3px 4px 4px; min-width: 16px; font-size: 10px; }
+
+.tm-group { padding: 4px 0; border-top: 1px solid color-mix(in srgb, var(--app-ink) 8%, transparent); }
+.tm-tiles + .tm-group { border-top: 0; }
+.tm-row {
+  display: flex; align-items: center; gap: 10px; width: 100%;
+  padding: 7px 8px; border-radius: 10px; text-align: left; font-size: 13.5px;
+  transition: background 100ms;
+}
+.tm-row:hover, .tm-row:focus-visible { background: color-mix(in srgb, var(--app-ink) 8%, transparent); }
+.tm-row-icon { display: grid; place-items: center; width: 28px; height: 28px; border-radius: 8px; color: var(--app-muted); background: color-mix(in srgb, var(--app-ink) 6%, transparent); flex-shrink: 0; }
+.tm-row-label { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tm-row[data-tone="accent"] .tm-row-icon { color: var(--app-accent); background: color-mix(in srgb, var(--app-accent) 16%, transparent); }
+.tm-row[data-tone="danger"] { color: color-mix(in srgb, #f87171 80%, var(--app-ink)); }
+.tm-row[data-tone="danger"] .tm-row-icon { color: #f87171; background: #f871711f; }
+.tm-row[data-tone="danger"]:hover, .tm-row[data-tone="danger"]:focus-visible { background: #f871711c; }
+.tm-badge { padding: 2px 8px; border-radius: 999px; font-size: 11px; font-weight: 650; color: var(--app-surface); background: var(--app-accent); }
+
+.tm-keys { display: inline-flex; gap: 3px; }
+.tm-keys kbd {
+  font: 600 10.5px/1 "Instrument Sans Variable", "Segoe UI", sans-serif;
+  padding: 3px 5px 4px; min-width: 18px; text-align: center; border-radius: 5px;
+  color: var(--app-muted);
+  background: color-mix(in srgb, var(--app-ink) 7%, transparent);
+  box-shadow: inset 0 -1px 0 color-mix(in srgb, #000 35%, transparent), 0 0 0 1px color-mix(in srgb, var(--app-ink) 9%, transparent);
+}

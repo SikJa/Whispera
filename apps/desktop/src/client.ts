@@ -1,11 +1,11 @@
 import { invoke } from "@tauri-apps/api/core";
 import { finishHotkeyCapture } from './hotkey-capture';
 export const native = "__TAURI_INTERNALS__" in window;
-export type Settings = { model: string; language: string; hotkey: string; color: string; pattern: "wave" | "stairs"; placement: "right" | "left" | "top" | "bottom"; autoCopy: boolean; autoPaste: boolean; soundTheme: string; sounds: boolean; recorderScale: number; dictationArtwork?: "original" | "metallic"; metallicColor?: string; metallicOriginal?: boolean; appTheme?: string; appBackground?: string; trimSilence: boolean; watchdog: boolean; incrementalTranscription: boolean };
+export type Settings = { model: string; language: string; hotkey: string; color: string; pattern: "wave" | "stairs"; placement: "right" | "left" | "top" | "bottom"; autoCopy: boolean; autoPaste: boolean; soundTheme: string; sounds: boolean; recorderScale: number; dictationArtwork?: "original" | "metallic"; metallicColor?: string; metallicOriginal?: boolean; appTheme?: string; appBackground?: string; trimSilence: boolean; watchdog: boolean; incrementalTranscription: boolean; microphone?: string };
 export type Rule = { id: string; source: string; target: string; enabled: boolean };
 export type Transcript = { id: string; timestamp: string; text: string };
 export type Snapshot = { settings: Settings; rules: Rule[]; history: Transcript[]; keyConfigured: boolean; logs: string[]; native: boolean };
-const defaults: Snapshot = { settings: { model: "whisper-large-v3-turbo", language: "es", hotkey: "|", color: "#9024DC", pattern: "wave", placement: "right", autoCopy: true, autoPaste: true, soundTheme: 'cristal', sounds: true, recorderScale: .85, dictationArtwork: "original", metallicColor: "#ffffff", metallicOriginal: true, trimSilence: true, watchdog: true, incrementalTranscription: true }, rules: [], history: [], keyConfigured: false, logs: [], native: false };
+const defaults: Snapshot = { settings: { model: "whisper-large-v3-turbo", language: "es", hotkey: "|", color: "#9024DC", pattern: "wave", placement: "right", autoCopy: true, autoPaste: true, soundTheme: 'cristal', sounds: true, recorderScale: .85, dictationArtwork: "original", metallicColor: "#ffffff", metallicOriginal: true, trimSilence: true, watchdog: true, incrementalTranscription: true, microphone: "" }, rules: [], history: [], keyConfigured: false, logs: [], native: false };
 let preview: Snapshot = structuredClone(defaults);
 try { const stored = localStorage.getItem("whispera-v2-preview"); if (stored) preview = { ...defaults, ...JSON.parse(stored), native: false, keyConfigured: false }; } catch { /* Keep empty preview on invalid storage. */ }
 const persist = () => { try { localStorage.setItem("whispera-v2-preview", JSON.stringify(preview)); } catch { /* Optional preview persistence. */ } };
@@ -27,7 +27,7 @@ export async function saveKey(key: string) { if (!native) throw Error("La clave 
 export async function transcribeFile() {
   if (!native) throw Error("La transcripción de archivos requiere la app nativa.");
   const { open } = await import("@tauri-apps/plugin-dialog");
-  const path = await open({ multiple: false, filters: [{ name: "Audio", extensions: ["wav", "mp3", "m4a", "ogg", "webm", "flac"] }] });
+  const path = await open({ multiple: false, filters: [{ name: "Audio", extensions: ["wav", "mp3", "m4a", "ogg", "opus", "webm", "flac", "aac", "wma", "mp4", "mkv", "mov", "avi"] }] });
   if (!path) return;
   return invoke<string>("transcribe_file", { path });
 }

@@ -37,6 +37,8 @@ pub struct Editor {
     opening: Mutex<Option<(Instant, std::collections::HashSet<String>)>>,
     configured: AtomicBool,
     dragging: AtomicBool,
+    // While a tools panel (color, shapes…) is open the window is wider than the rail.
+    panel_open: AtomicBool,
     compact: AtomicBool,
     docks: Mutex<crate::capture_docks::Docks>,
     context: Mutex<Option<Context>>,
@@ -49,6 +51,7 @@ impl Editor {
     fn clear(&self) {
         self.configured.store(false,Ordering::SeqCst);
         self.dragging.store(false,Ordering::SeqCst);
+        self.panel_open.store(false,Ordering::SeqCst);
         self.compact.store(false,Ordering::SeqCst);
         if let Ok(mut value)=self.docks.lock(){*value=Default::default();}
         if let Ok(mut value)=self.context.lock(){*value=None;}
@@ -389,9 +392,12 @@ fn dependent_hud_update(ctx:&Context,region:Region,monitor:Region,before:&crate:
 pub(crate) fn drag_controls(app:&tauri::AppHandle,source:&tauri::WebviewWindow,active:bool)->Result<(),String> {
     let ctx=context_for(app,source.label()).ok_or("Captura no disponible")?;
     let editor=session::editor(app,source.label());
-    editor.dragging.store(active,Ordering::SeqCst);
+    // Ending a drag always clears the flag; starting one only marks it once the
+    // editor is valid, so a failed start cannot leave it stuck.
+    if !active {editor.dragging.store(false,Ordering::SeqCst);}
     let region=editor.region.lock().map_err(|_|"Editor ocupado")?.ok_or("Captura no disponible")?;
     let monitor=editor.monitor.lock().map_err(|_|"Editor ocupado")?.ok_or("Monitor no disponible")?;
+    if active {editor.dragging.store(true,Ordering::SeqCst);}
     if active {
         if let Some(tools)=app.get_webview_window(&session::label(source.label(),"screen-tools")) {
             session::emit_window(&tools,"screen-editor-drag",&ctx.id).map_err(|e|e.to_string())?;
@@ -784,7 +790,10 @@ pub async fn screen_overlay_customize(app:tauri::AppHandle,window:tauri::Webview
         drop(all);
         if tools {editor.compact.store(saved.compact,Ordering::SeqCst);}
         let bounds=configured_dock(&app,&ctx,region,monitor,window.label(),false)?;
-        if action!="get" && action!="begin" && (bounds.x,bounds.y,bounds.width,bounds.height)!=(previous.x,previous.y,previous.width,previous.height) {screen::place_window(&window,bounds)?;}
+        // A rail size report must not shrink the window under an open panel: the
+        // panel would be clipped and look like it never opened. Closing it re-places.
+        let panel=tools&&action=="size"&&editor.panel_open.load(Ordering::SeqCst);
+        if !panel && action!="get" && action!="begin" && (bounds.x,bounds.y,bounds.width,bounds.height)!=(previous.x,previous.y,previous.width,previous.height) {screen::place_window(&window,bounds)?;}
         if let Some(bounds)=hud_update {
             if let Some(hud)=app.get_webview_window(&session::label(&id,"screen-hud")) {screen::place_window(&hud,bounds)?;}
         }
@@ -805,11 +814,14 @@ pub fn screen_tools_panel(app: tauri::AppHandle, window: tauri::WebviewWindow, i
     if window.label() != session::label(&id,"screen-tools") { return Err("Vista incorrecta".into()); }
     let ctx=context(&app,&id)?;
     let editor=session::editor(&app,&id);
-    if editor.dragging.load(Ordering::SeqCst){return Ok(serde_json::json!({"railX":4,"railY":4,"menuX":0,"menuY":0}));}
+    // Opening is a click on the toolbar, which cannot happen during a frame drag
+    // (the pointer is captured). A stale drag flag must not hide every panel.
+    if !open && editor.dragging.load(Ordering::SeqCst){return Ok(serde_json::json!({"railX":4,"railY":4,"menuX":0,"menuY":0}));}
     editor.compact.store(compact,Ordering::SeqCst);
     let region=editor.region.lock().map_err(|_|"Editor ocupado")?.ok_or("Captura no disponible")?;
     let monitor=editor.monitor.lock().map_err(|_|"Editor ocupado")?.ok_or("Monitor no disponible")?;
     let rail=configured_dock(&app,&ctx,region,monitor,window.label(),compact)?;
+    editor.panel_open.store(open,Ordering::SeqCst);
     if !open {
         place_controls(&window,&ctx,region,monitor,compact)?;
         return Ok(serde_json::json!({"railX":4,"railY":4,"menuX":0,"menuY":0}));

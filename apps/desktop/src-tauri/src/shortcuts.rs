@@ -220,14 +220,19 @@ pub async fn save_all_shortcuts(
         if !library_preferences.is_object() {
             library_preferences = serde_json::json!({});
         }
-        let old = [
-            parse(&settings.hotkey)?,
-            parse(&preferences.hotkey)?,
-            parse(&preferences.image_hotkey)?,
-            parse(&crate::library::hotkey(&app))?,
-        ];
+        // A stored key that no longer parses (for example after a keyboard layout
+        // change) must not block replacing it; it simply has nothing to release.
+        let old: Vec<Shortcut> = [
+            settings.hotkey.as_str(),
+            preferences.hotkey.as_str(),
+            preferences.image_hotkey.as_str(),
+            &crate::library::hotkey(&app),
+        ]
+        .into_iter()
+        .filter_map(|value| parse(value).ok())
+        .collect();
         let result = (|| -> Result<(), String> {
-            for key in old {
+            for &key in &old {
                 if app.global_shortcut().is_registered(key) {
                     app.global_shortcut()
                         .unregister(key)

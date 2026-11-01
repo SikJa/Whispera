@@ -22,36 +22,54 @@ pub fn corrections(text: &str, rules: &[Rule]) -> String {
 // Recompiling the same regex for every phrase adds avoidable latency.
 pub fn corrections_many(texts: &[&str], rules: &[Rule]) -> Vec<String> {
     let mut outputs: Vec<String> = texts.iter().map(|text|(*text).to_owned()).collect();
+    // Stored rules keep what the user typed; a stray space must not stop a
+    // match at the end of a sentence or swallow the space beside the word.
     let mut active: Vec<_> = rules
         .iter()
         .filter(|r| r.enabled && !r.source.trim().is_empty())
+        .map(|r| (r.source.trim(), r.target.trim()))
         .collect();
-    active.sort_by_key(|r| std::cmp::Reverse(r.source.chars().count()));
-    for rule in active {
-        if let Ok(pattern) = regex::RegexBuilder::new(&regex::escape(&rule.source))
-            .case_insensitive(true)
-            .build()
-        {
-            static WORD: OnceLock<regex::Regex> = OnceLock::new();
-            let word = WORD.get_or_init(|| regex::Regex::new(r"^\w$").unwrap());
-            for output in &mut outputs {
+    active.sort_by_key(|(source, _)| std::cmp::Reverse(source.chars().count()));
+    let word = |c: char| c.is_alphanumeric() || c == '_';
+    for (source, target) in active {
+        // Whisper is inconsistent with accents and joins phrases with spaces,
+        // hyphens or commas: match on folded text and accept any of those.
+        let tokens: Vec<String> = fold(source)
+            .split(|c: char| c.is_whitespace() || c == '-')
+            .filter(|t| !t.is_empty())
+            .map(regex::escape)
+            .collect();
+        if tokens.is_empty() { continue; }
+        let Ok(pattern) = regex::Regex::new(&tokens.join(r"(?:\s*[,\-]\s*|\s+)")) else { continue; };
+        for output in &mut outputs {
+            // Each folded char remembers the original byte range it came from.
+            let mut folded = String::new();
+            let mut spans: Vec<(usize, usize, usize)> = vec![];
+            for (start, c) in output.char_indices() {
+                let end = start + c.len_utf8();
+                for f in fold(&c.to_string()).chars() {
+                    spans.push((folded.len(), start, end));
+                    folded.push(f);
+                }
+            }
             let mut next = String::new();
             let mut previous = 0;
-            for m in pattern.find_iter(&output) {
-                let left = output[..m.start()].chars().next_back();
-                let right = output[m.end()..].chars().next();
-                if left.is_some_and(|c| word.is_match(&c.to_string()))
-                    || right.is_some_and(|c| word.is_match(&c.to_string()))
+            for m in pattern.find_iter(&folded) {
+                let Ok(first) = spans.binary_search_by_key(&m.start(), |s| s.0) else { continue; };
+                let last = match spans.binary_search_by_key(&m.end(), |s| s.0) { Ok(i) | Err(i) => i - 1 };
+                let (from, to) = (spans[first].1, spans[last].2);
+                if from < previous
+                    || output[..from].chars().next_back().is_some_and(word)
+                    || output[to..].chars().next().is_some_and(word)
                 {
                     continue;
                 }
-                next.push_str(&output[previous..m.start()]);
-                next.push_str(&rule.target);
-                previous = m.end();
+                next.push_str(&output[previous..from]);
+                next.push_str(target);
+                previous = to;
             }
             next.push_str(&output[previous..]);
             *output = next;
-            }
         }
     }
     outputs
@@ -232,13 +250,15 @@ async fn send_prepared(prepared: PreparedUpload, settings: &Settings, rules: &[R
     let mut form = multipart::Form::new()
         .part("file", file)
         .text("model", settings.model.clone())
-        .text(
-            "response_format",
-            if granularity.is_some() { "verbose_json" } else { "json" },
-        )
+        // verbose_json always: its per-segment no_speech_prob is what lets us
+        // discard words Whisper invents over background noise.
+        .text("response_format", "verbose_json")
         .text("temperature", "0");
     if let Some(value) = granularity {
         form = form.text("timestamp_granularities[]", value.to_owned());
+        if value != "segment" {
+            form = form.text("timestamp_granularities[]", "segment");
+        }
     }
     if !rules.is_empty() {
         form = form.text("prompt", prompt(rules));
@@ -254,17 +274,95 @@ async fn send_prepared(prepared: PreparedUpload, settings: &Settings, rules: &[R
         .await
         .map_err(|_| "No se pudo conectar con Groq. El audio original sigue disponible.")?;
     if !response.status().is_success() {
-        return Err(format!(
-            "Groq respondio HTTP {}. El audio original sigue disponible para reintentar.",
-            response.status().as_u16()
-        ));
+        return Err(http_error(response.status().as_u16()));
     }
     let mut json: serde_json::Value = response
         .json()
         .await
         .map_err(|_| "Groq devolvio una respuesta no valida")?;
     suppress_background_closing(&mut json, prepared.background);
+    drop_silent_segments(&mut json);
     Ok(json)
+}
+
+pub(crate) fn fold(text: &str) -> String {
+    text.chars()
+        .flat_map(char::to_lowercase)
+        .map(|c| match c {
+            'á' | 'à' | 'â' | 'ä' | 'ã' | 'å' => 'a',
+            'é' | 'è' | 'ê' | 'ë' => 'e',
+            'í' | 'ì' | 'î' | 'ï' => 'i',
+            'ó' | 'ò' | 'ô' | 'ö' | 'õ' => 'o',
+            'ú' | 'ù' | 'û' | 'ü' => 'u',
+            'ç' => 'c',
+            other => other,
+        })
+        .collect()
+}
+pub(crate) fn letters(text: &str) -> String {
+    fold(text).chars().filter(|c| c.is_alphanumeric()).collect()
+}
+// Phrases Whisper is known to produce from subtitle training data when nobody speaks.
+fn known_hallucination(normalized: &str) -> bool {
+    normalized.contains("amaraorg")
+        || [
+            "gracias", "graciasporver", "graciasporvermivideo", "suscribete", "suscribeteamicanal",
+            "musica", "thankyou", "thanksforwatching", "thankyouforwatching", "music", "obrigado",
+            "obrigadoporassistir", "s", "eh", "mm", "mmm", "ah",
+        ]
+        .contains(&normalized)
+}
+// Whisper's own decoding rule treats a window as silence when the model thinks
+// there is no speech AND its tokens are low-confidence. Groq reports both.
+fn silent_segment(segment: &serde_json::Value) -> bool {
+    let no_speech = segment["no_speech_prob"].as_f64().unwrap_or(0.);
+    let logprob = segment["avg_logprob"].as_f64().unwrap_or(0.);
+    let text = letters(segment["text"].as_str().unwrap_or(""));
+    (no_speech > 0.6 && logprob < -1.0)
+        || (no_speech > 0.4 && known_hallucination(&text))
+        || (no_speech > 0.8 && text.chars().count() <= 2)
+}
+fn drop_silent_segments(json: &mut serde_json::Value) {
+    if let Some(segments) = json.get("segments").and_then(|s| s.as_array()).cloned() {
+        let (kept, dropped): (Vec<_>, Vec<_>) = segments.into_iter().partition(|s| !silent_segment(s));
+        if !dropped.is_empty() {
+            let text: String = kept.iter().filter_map(|s| s["text"].as_str()).collect();
+            json["text"] = serde_json::json!(text.trim());
+            let ranges: Vec<(f64, f64)> = dropped
+                .iter()
+                .filter_map(|s| Some((s["start"].as_f64()?, s["end"].as_f64()?)))
+                .collect();
+            if let Some(words) = json.get("words").and_then(|w| w.as_array()).cloned() {
+                json["words"] = serde_json::json!(words
+                    .into_iter()
+                    .filter(|w| {
+                        let mid = (w["start"].as_f64().unwrap_or(-1.) + w["end"].as_f64().unwrap_or(-1.)) / 2.;
+                        !ranges.iter().any(|(a, b)| mid >= *a && mid <= *b)
+                    })
+                    .collect::<Vec<_>>());
+            }
+            json["segments"] = serde_json::json!(kept);
+        }
+    }
+    // A lone letter ("S", "Y") is never a real dictation; it is noise read as speech.
+    if letters(json["text"].as_str().unwrap_or("")).chars().count() <= 1 {
+        json["text"] = serde_json::json!("");
+        for key in ["segments", "words"] {
+            if json.get(key).is_some() { json[key] = serde_json::json!([]); }
+        }
+    }
+}
+
+// A bare status code does not tell the user whether to fix the key or wait.
+fn http_error(status: u16) -> String {
+    let reason = match status {
+        401 | 403 => "la clave Groq es inválida o fue revocada. Revisala en Configuración".into(),
+        413 => "el audio supera el tamaño que acepta Groq".into(),
+        429 => "se alcanzó el límite de uso de Groq. Esperá unos minutos".into(),
+        500..=599 => format!("Groq no está disponible ahora (HTTP {status}). Probá de nuevo en unos minutos"),
+        _ => format!("Groq respondió HTTP {status}"),
+    };
+    format!("No se pudo transcribir: {reason}. El audio original sigue disponible para reintentar.")
 }
 
 fn suppress_background_closing(json: &mut serde_json::Value, background: bool) {
@@ -589,6 +687,45 @@ mod tests {
             corrections("foo bar, foo! C++ XC++ C++x", &rules),
             "long, short! C plus plus XC++ C++x"
         );
+    }
+    #[test]
+    fn dictionary_ignores_accents_and_phrase_separators() {
+        let rules = vec![rule("wispera", "Whispera"), rule("cloud code", "Claude Code"), rule("árbol", "Árbol")];
+        assert_eq!(
+            corrections("Abrí Wíspera y WISPERA. Uso cloud-code, Cloud, code y cloud   code. arbol", &rules),
+            "Abrí Whispera y Whispera. Uso Claude Code, Claude Code y Claude Code. Árbol"
+        );
+        assert_eq!(corrections("wisperas y awispera", &rules), "wisperas y awispera");
+    }
+    #[test]
+    fn stray_spaces_in_saved_rules_still_match_at_sentence_edges() {
+        let rules = vec![rule("grok ", " Groq")];
+        assert_eq!(corrections("Uso grok. Y grok, otra vez grok", &rules), "Uso Groq. Y Groq, otra vez Groq");
+    }
+    #[test]
+    fn noise_segments_and_lone_letters_are_dropped_but_speech_stays() {
+        let mut json = serde_json::json!({"text":" Hola, esto es real. Subtítulos realizados por la comunidad de Amara.org S","segments":[
+            {"start":0.0,"end":2.0,"text":" Hola, esto es real.","no_speech_prob":0.02,"avg_logprob":-0.2},
+            {"start":2.0,"end":5.0,"text":" Subtítulos realizados por la comunidad de Amara.org","no_speech_prob":0.5,"avg_logprob":-0.4},
+            {"start":5.0,"end":6.0,"text":" S","no_speech_prob":0.7,"avg_logprob":-1.3}],
+            "words":[{"word":"Hola","start":0.1,"end":0.4},{"word":"real","start":1.2,"end":1.6},{"word":"Subtítulos","start":2.1,"end":2.9},{"word":"S","start":5.2,"end":5.4}]});
+        drop_silent_segments(&mut json);
+        assert_eq!(json["text"], "Hola, esto es real.");
+        assert_eq!(json["words"].as_array().unwrap().len(), 2);
+        let mut lone = serde_json::json!({"text":" S."});
+        drop_silent_segments(&mut lone);
+        assert_eq!(lone["text"], "");
+        let mut quiet_but_confident = serde_json::json!({"text":" Gracias.","segments":[{"start":0.0,"end":1.0,"text":" Gracias.","no_speech_prob":0.1,"avg_logprob":-0.3}]});
+        drop_silent_segments(&mut quiet_but_confident);
+        assert_eq!(quiet_but_confident["text"], " Gracias.");
+    }
+    #[test]
+    fn http_errors_explain_what_to_do() {
+        assert!(http_error(401).contains("clave"));
+        assert!(http_error(429).contains("límite"));
+        assert!(http_error(503).contains("503"));
+        assert!(http_error(418).contains("418"));
+        for status in [401, 413, 429, 503, 418] { assert!(http_error(status).contains("reintentar")); }
     }
     #[test]
     fn rules_reject_duplicates_and_noops() {

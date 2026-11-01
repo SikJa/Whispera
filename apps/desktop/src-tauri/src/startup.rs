@@ -72,10 +72,65 @@ mod platform {
     struct WindowsRegistry;
     impl Registry for WindowsRegistry {
         fn read(&mut self) -> Result<Entry, String> {
-            provider("read", "")
+            provider("read", "").or_else(|_| native("read", ""))
         }
         fn apply(&mut self, operation: &str, command: &str) -> Result<Entry, String> {
-            provider(operation, command)
+            provider(operation, command).or_else(|_| native(operation, command))
+        }
+    }
+    // Corporate policies can block PowerShell or WMI. Then write the same two
+    // values through the process's own HKCU, which is correct for unpackaged installs.
+    fn native(operation: &str, command: &str) -> Result<Entry, String> {
+        use windows::{
+            core::HSTRING,
+            Win32::{Foundation::ERROR_FILE_NOT_FOUND, System::Registry::*},
+        };
+        const RUN: &str = r"Software\Microsoft\Windows\CurrentVersion\Run";
+        const APPROVED: &str = r"Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run";
+        let name = HSTRING::from("Whispera");
+        let fail = |what: &str| format!("Windows no permitió {what} el inicio automático");
+        unsafe {
+            let set = |path: &str, kind: REG_VALUE_TYPE, bytes: &[u8]| -> Result<(), String> {
+                let mut key = HKEY::default();
+                if RegCreateKeyW(HKEY_CURRENT_USER, &HSTRING::from(path), &mut key).is_err() {
+                    return Err(fail("abrir"));
+                }
+                let result = RegSetValueExW(key, &name, None, kind, Some(bytes));
+                let _ = RegCloseKey(key);
+                result.ok().map_err(|_| fail("guardar"))
+            };
+            let get = |path: &str, flags: REG_ROUTINE_FLAGS| -> Result<Option<Vec<u8>>, String> {
+                let mut size = 0u32;
+                let probe = RegGetValueW(HKEY_CURRENT_USER, &HSTRING::from(path), &name, flags, None, None, Some(&mut size));
+                if probe == ERROR_FILE_NOT_FOUND { return Ok(None); }
+                probe.ok().map_err(|_| fail("leer"))?;
+                let mut data = vec![0u8; size as usize];
+                RegGetValueW(HKEY_CURRENT_USER, &HSTRING::from(path), &name, flags, None, Some(data.as_mut_ptr().cast()), Some(&mut size))
+                    .ok().map_err(|_| fail("leer"))?;
+                data.truncate(size as usize);
+                Ok(Some(data))
+            };
+            let wide = |text: &str| -> Vec<u8> {
+                text.encode_utf16().chain(Some(0)).flat_map(u16::to_le_bytes).collect()
+            };
+            match operation {
+                "command" => set(RUN, REG_SZ, &wide(command))?,
+                "enable" => {
+                    set(RUN, REG_SZ, &wide(command))?;
+                    set(APPROVED, REG_BINARY, &[2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])?;
+                }
+                "disable" => {
+                    let result = RegDeleteKeyValueW(HKEY_CURRENT_USER, &HSTRING::from(RUN), &name);
+                    if result.is_err() && result != ERROR_FILE_NOT_FOUND { return Err(fail("quitar")); }
+                }
+                "read" => {}
+                _ => return Err("Operación de inicio no válida".into()),
+            }
+            let command = get(RUN, RRF_RT_REG_SZ)?.map(|bytes| {
+                let units: Vec<u16> = bytes.chunks_exact(2).map(|b| u16::from_le_bytes([b[0], b[1]])).collect();
+                String::from_utf16_lossy(&units).trim_end_matches('\0').to_owned()
+            });
+            Ok(Entry { command, approval: get(APPROVED, RRF_RT_REG_BINARY)? })
         }
     }
     fn provider(operation: &str, command: &str) -> Result<Entry, String> {
@@ -348,6 +403,11 @@ mod platform {
             let before = provider("read", "").unwrap();
             assert_eq!(before, provider("read", "").unwrap());
             println!("Windows startup provider read verified without changing registration");
+        }
+        #[test]
+        #[ignore = "Read-only Windows integration check; compares the fallback with the provider"]
+        fn native_fallback_reads_the_same_entry_as_the_provider() {
+            assert_eq!(native("read", "").unwrap(), provider("read", "").unwrap());
         }
     }
 }

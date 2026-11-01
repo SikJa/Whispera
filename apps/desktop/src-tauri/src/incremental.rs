@@ -160,8 +160,20 @@ fn owned_text(json: &serde_json::Value, w: &Window, rate: u32) -> Result<String,
         .get("words")
         .and_then(|v| v.as_array())
         .ok_or("Groq no devolvio tiempos de palabras; reintenta el audio guardado")?;
+    // Word timestamps carry no punctuation; the segment text does. When both
+    // tokenize to the same words, keep the punctuated spelling of each word.
+    let segment_text: String = json
+        .get("segments")
+        .and_then(|v| v.as_array())
+        .map(|segments| segments.iter().filter_map(|s| s["text"].as_str()).collect::<Vec<_>>().join(" "))
+        .unwrap_or_default();
+    let punctuated: Vec<&str> = segment_text.split_whitespace().collect();
+    let aligned = punctuated.len() == words.len()
+        && punctuated.iter().zip(words).all(|(token, word)| {
+            groq::letters(token) == groq::letters(word["word"].as_str().unwrap_or(""))
+        });
     let mut owned = vec![];
-    for word in words {
+    for (index, word) in words.iter().enumerate() {
         let start = word["start"].as_f64().ok_or("Tiempo de palabra invalido")?;
         let end = word["end"].as_f64().ok_or("Tiempo de palabra invalido")?;
         if !start.is_finite() || !end.is_finite() || start < 0. || end < start {
@@ -169,7 +181,8 @@ fn owned_text(json: &serde_json::Value, w: &Window, rate: u32) -> Result<String,
         }
         let midpoint = w.from as f64 + (start + end) * 0.5 * f64::from(rate);
         if midpoint >= w.start as f64 && midpoint < w.end as f64 {
-            owned.push(word["word"].as_str().ok_or("Palabra invalida")?.trim());
+            let plain = word["word"].as_str().ok_or("Palabra invalida")?.trim();
+            owned.push(if aligned { punctuated[index] } else { plain });
         }
     }
     if words.is_empty() && json["text"].as_str().is_some_and(|s| !s.trim().is_empty()) {
@@ -358,12 +371,15 @@ async fn original(dir: &Path, p: &Plan) -> Result<String, String> {
                 if trim {
                     audio::trimmed_copy(&file)
                 } else {
-                    Ok(file)
+                    Ok(Some(file))
                 }
             })
             .await
             .map_err(|e| e.to_string())??;
-            let text = groq::transcribe_raw(&prepared, &p.settings, &p.rules).await?;
+            let text = match prepared {
+                Some(prepared) => groq::transcribe_raw(&prepared, &p.settings, &p.rules).await?,
+                None => String::new(),
+            };
             atomic_json(&cache, &text)?;
             text
         };
@@ -726,7 +742,7 @@ mod tests {
                 let began = Instant::now();
                 let mut texts = vec![];
                 for path in audio::materialize(&baseline, 16_000_000).unwrap() {
-                    let path = audio::trimmed_copy(&path).unwrap();
+                    let path = audio::trimmed_copy(&path).unwrap().unwrap();
                     texts.push(groq::transcribe_raw(&path, &settings, &[]).await.unwrap());
                 }
                 let ms = began.elapsed().as_secs_f64() * 1000.;
@@ -795,7 +811,7 @@ mod tests {
             let mut texts = vec![];
             for path in audio::materialize(&baseline, 16_000_000).unwrap() {
                 texts.push(
-                    groq::transcribe_raw(&audio::trimmed_copy(&path).unwrap(), &settings, &[])
+                    groq::transcribe_raw(&audio::trimmed_copy(&path).unwrap().unwrap(), &settings, &[])
                         .await
                         .unwrap(),
                 );

@@ -1,7 +1,8 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { MousePointer2, Pencil, MoveUpRight, Minus, Square, Circle, Triangle, Highlighter, Type, Undo2, Redo2, Trash2 } from 'lucide-react';
 import { commit, constrained, emptyHistory, paint, redo, undo, type Mark, type Tool } from '../../../src/screen-annotations';
-import { presets } from '../../../src/palette';
+import { selectionHex } from '../../../src/palette';
+import { PaletteContents } from '../../../src/PalettePanel';
 
 export function useAnnotations() {
   const [history, setHistory] = useState(emptyHistory);
@@ -19,11 +20,30 @@ const tools = [
   ['highlight', 'Resaltador', Highlighter], ['text', 'Texto', Type],
 ] as const;
 
+// A native <input type=color> opens the Windows color dialog, which stays hidden
+// behind this always-on-top editor. Draw the palette inside the window instead.
+function AnnotationColor({ state: s }: { state: State }) {
+  const [open, setOpen] = useState(false);
+  const wrap = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const outside = (e: PointerEvent) => { if (!wrap.current?.contains(e.target as Node)) setOpen(false); };
+    const key = (e: KeyboardEvent) => { if (e.key === 'Escape') { e.stopPropagation(); setOpen(false); } };
+    window.addEventListener('pointerdown', outside, true); window.addEventListener('keydown', key, true);
+    return () => { window.removeEventListener('pointerdown', outside, true); window.removeEventListener('keydown', key, true); };
+  }, [open]);
+  return <div className="annotation-color" ref={wrap}>
+    <button className="media-tool" title="Color del trazo" aria-label="Color del trazo" aria-expanded={open} onClick={() => setOpen(o => !o)}><i style={{ background: s.color }}/></button>
+    {open && <div className="annotation-palette palette-dialog" role="dialog" aria-label="Color del trazo">
+      <PaletteContents title="Color del trazo" value={{ base: 'black', hex: s.color }} onChange={value => s.setColor(selectionHex(value))} close={() => setOpen(false)}/>
+    </div>}
+  </div>;
+}
+
 export function AnnotationToolbar({ state: s }: { state: State }) {
   return <div className="annotation-toolbar" role="toolbar" aria-label="Anotar imagen">
     {tools.map(([tool, label, Icon]) => <button key={tool} className="media-tool" title={label} aria-label={label} aria-pressed={s.tool === tool} onClick={() => s.setTool(tool)}><Icon size={16}/></button>)}
-    <label className="annotation-color" title="Color del trazo"><input type="color" aria-label="Color del trazo" list="annotation-colors" value={s.color} onChange={e => s.setColor(e.target.value)}/></label>
-    <datalist id="annotation-colors">{presets.map(p => <option key={p.hex} value={p.hex}/>)}</datalist>
+    <AnnotationColor state={s}/>
     <input className="annotation-width" type="range" min="1" max="12" aria-label="Grosor del trazo" title="Grosor del trazo" value={s.width} onChange={e => s.setWidth(Number(e.target.value))}/>
     <button className="media-tool" title="Deshacer trazo" aria-label="Deshacer trazo" disabled={!s.history.past.length} onClick={() => s.setHistory(undo)}><Undo2 size={16}/></button>
     <button className="media-tool" title="Rehacer trazo" aria-label="Rehacer trazo" disabled={!s.history.future.length} onClick={() => s.setHistory(redo)}><Redo2 size={16}/></button>

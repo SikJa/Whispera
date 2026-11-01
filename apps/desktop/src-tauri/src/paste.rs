@@ -70,6 +70,11 @@ mod platform {
             if let Some(field) = tracked {
                 info.hwndFocus = HWND(field.focus as _);
             }
+            // Store/UWP frames host their input in another process and report no
+            // focused control; the top-level window is then the paste target.
+            if info.hwndFocus.0.is_null() {
+                info.hwndFocus = hwnd;
+            }
             if !field_belongs_to(hwnd, info.hwndFocus) {
                 return None;
             }
@@ -96,15 +101,6 @@ mod platform {
                 return Err(
                     "El destino original ya no existe. Texto conservado en el portapapeles.".into(),
                 );
-            }
-            if target.focus != 0 && target.field.is_none() {
-                let focus = HWND(target.focus as _);
-                if !field_belongs_to(hwnd, focus) {
-                    return Err(
-                        "El campo original ya no existe. No se pego en otro campo; texto copiado."
-                            .into(),
-                    );
-                }
             }
             // The stop shortcut is handled on key-down. Do not turn Ctrl+V into
             // Alt+Ctrl+V (or release a physical key on the user's behalf).
@@ -144,7 +140,7 @@ mod platform {
             if let Some(field) = target.field {
                 let _ = crate::paste_focus::focus(field, true);
             }
-            for _ in 0..8 {
+            for attempt in 0..10 {
                 if GetForegroundWindow() == hwnd {
                     // Allow the app to process activation before submitting input.
                     std::thread::sleep(std::time::Duration::from_millis(60));
@@ -155,25 +151,33 @@ mod platform {
                     if GetForegroundWindow() != hwnd || modifiers_down() {
                         continue;
                     }
-                    if target.field.is_none() && !field_belongs_to(hwnd, focus) {
-                        return Err(
-                            "El campo original ya no existe. Texto conservado en el portapapeles."
-                                .into(),
-                        );
+                    // First try the exact original field. If it cannot be restored
+                    // (another browser tab, a re-rendered editor), paste into the
+                    // field that is focused now, but only inside the same window.
+                    let exact = attempt < 5;
+                    if GetGUIThreadInfo(thread, &mut info).is_err() {
+                        continue;
                     }
-                    if GetGUIThreadInfo(thread, &mut info).is_err()
-                        || (target.field.is_none() && info.hwndFocus != focus)
-                        || !field_belongs_to(hwnd, info.hwndFocus)
-                    {
+                    if info.hwndFocus.0.is_null() {
+                        info.hwndFocus = hwnd;
+                    }
+                    if !field_belongs_to(hwnd, info.hwndFocus) {
                         // Activation of a renderer can lag behind the top-level
                         // window. Retry readiness, never the actual Ctrl+V.
                         continue;
                     }
-                    if target
-                        .field
-                        .is_some_and(|field| !crate::paste_focus::focus(field, false))
-                    {
+                    if exact && target.field.is_none() && info.hwndFocus != focus && field_belongs_to(hwnd, focus) {
                         continue;
+                    }
+                    if let Some(field) = target.field {
+                        // The pre-loop restore can run before activation completes;
+                        // restore again now that this window is in front.
+                        if !crate::paste_focus::focus(field, false)
+                            && !crate::paste_focus::focus(field, true)
+                            && exact
+                        {
+                            continue;
+                        }
                     }
                     if GetForegroundWindow() != hwnd || modifiers_down() {
                         continue;

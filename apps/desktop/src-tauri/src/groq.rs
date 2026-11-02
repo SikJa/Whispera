@@ -133,7 +133,10 @@ async fn transcribe_inner(
     rules: &[Rule],
     apply: bool,
 ) -> Result<String, String> {
-    if settings.transcription_engine == "local" && path.extension().is_some_and(|e| e.eq_ignore_ascii_case("wav")) {
+    if settings.transcription_engine == "local" {
+        if !path.extension().is_some_and(|e| e.eq_ignore_ascii_case("wav")) {
+            return Err("El modo local necesita audio WAV. Importá el archivo desde Whispera para convertirlo sin enviarlo a Groq.".into());
+        }
         let (path, local) = (path.to_owned(), settings.clone());
         let text = tauri::async_runtime::spawn_blocking(move || crate::local_asr::transcribe(&path, &local))
             .await
@@ -256,6 +259,7 @@ async fn prepare_upload(path: &Path) -> Result<PreparedUpload, String> {
 }
 
 async fn request_prepared(prepared: PreparedUpload, settings: &Settings, rules: &[Rule], granularity: Option<&str>) -> Result<serde_json::Value, String> {
+    if settings.transcription_engine=="local" {return Err("El modo local no envía audio a Groq. Para transcribir videos en la nube, seleccioná Groq expresamente.".into());}
     send_prepared(prepared, settings, rules, granularity,
         "https://api.groq.com/openai/v1/audio/transcriptions", || entry()?
         .get_password()
@@ -861,5 +865,19 @@ mod tests {
             enabled: true,
         };
         assert_eq!(corrections("GROK grokking", &[r]), "Groq $1 grokking");
+    }
+}
+
+#[cfg(test)]
+mod local_privacy_tests {
+    use super::*;
+    #[tokio::test]
+    async fn local_mode_rejects_cloud_requests_before_credentials_or_network() {
+        let settings=Settings{transcription_engine:"local".into(),..Default::default()};
+        let prepared=PreparedUpload{bytes:vec![1,2,3],extension:"wav".into(),background:false,silent:false,speech:true};
+        let error=request_prepared(prepared,&settings,&[],None).await.unwrap_err();
+        assert!(error.contains("no envía audio a Groq"));
+        let error=transcribe_inner(Path::new("not-a-real-private-file.mp3"),&settings,&[],false).await.unwrap_err();
+        assert!(error.contains("modo local necesita audio WAV"));
     }
 }

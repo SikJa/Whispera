@@ -93,6 +93,7 @@ fn start_enabled(value:Preferences,start:impl FnOnce(Preferences)->Result<(),Str
     value.validate()?;start(value)
 }
 fn start(app:&tauri::AppHandle,value:Preferences)->Result<(),String>{
+    crate::reader::stop(app);
     if app.state::<Replay>().worker.lock().map_err(|_|"Repetición ocupada")?.is_some(){return Ok(());}
     let binary=crate::screen::ffmpeg(app)?;
     let monitor=app.primary_monitor().map_err(|e|e.to_string())?.ok_or("No hay pantalla principal")?;

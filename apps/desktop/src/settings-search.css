@@ -1,0 +1,22 @@
+.settings-search{position:relative;z-index:20;margin-bottom:28px;min-width:0}
+.desktop-app .settings-search-field{display:flex;align-items:center;gap:10px;min-height:44px;padding:0 12px;background:var(--app-card);border:1px solid var(--app-border);border-radius:10px;color:var(--app-muted)}
+.desktop-app .settings-search-field:focus-within{border-color:var(--app-accent)}
+.desktop-app .settings-search-field input{flex:1;width:100%;min-width:0;padding:12px 0;border:0;background:transparent;color:var(--app-ink);outline:none;font-size:13px}
+.desktop-app .settings-search-field button{padding:5px;background:transparent;color:var(--app-muted)}
+.settings-search-hint{font-size:10px;white-space:nowrap}
+.settings-search-results{position:absolute;inset:calc(100% + 8px) 0 auto;background:var(--app-surface);border:1px solid var(--app-border);border-radius:12px;overflow:hidden;color:var(--app-ink)}
+.settings-search-results>p{padding:12px 14px;margin:0;font-size:11px;color:var(--app-muted)}
+.settings-search-results ul{list-style:none;margin:0;padding:4px;max-height:min(440px,55dvh);overflow:auto;overscroll-behavior:contain}
+.settings-search-results li{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 12px;border-radius:8px;cursor:pointer}
+.settings-search-results li[aria-selected=true]{background:var(--app-card);outline:1px solid var(--app-accent);outline-offset:-1px}
+.settings-search-results li>span{min-width:0;display:flex;flex-direction:column;gap:4px}
+.settings-search-results strong{font-size:13px;font-weight:550;overflow-wrap:anywhere}
+.settings-search-results small{font-size:11px;color:var(--app-muted)}
+.settings-search-results svg,.settings-search-field>svg{flex-shrink:0}
+.desktop-app [data-search-highlight]{outline:2px solid var(--app-accent);outline-offset:5px;border-radius:8px;scroll-margin-block:32px}
+.installed-version{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;padding:18px 0 24px;margin-bottom:24px;border-bottom:1px solid var(--app-border)}
+.installed-version>div{display:flex;flex-direction:column;gap:7px}
+.installed-version h2{font-size:18px;margin:0}
+.installed-version p{font-size:12px;color:var(--app-muted);margin:0}
+.installed-version strong{font-size:14px;color:var(--app-accent);font-variant-numeric:tabular-nums;overflow-wrap:anywhere}
+@media(max-width:640px){.settings-search-hint{display:none}.settings-search{margin-bottom:24px}}

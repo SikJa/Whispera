@@ -1,8 +1,9 @@
-import {useEffect,useRef,useState} from 'react';
+import {useEffect,useLayoutEffect,useRef,useState} from 'react';
 import {invoke} from '@tauri-apps/api/core';
 import type {UnlistenFn} from '@tauri-apps/api/event';
 import {Monitor} from 'lucide-react';
-import type {Settings} from './client';
+import {native,type Settings} from './client';
+import {VideoAudioChoice,type CapturePreferences as Preferences} from './CaptureSettings';
 import {listenCapture as listen} from './capture-events';
 import {showWhenReady} from './screen-ready';
 import CaptureFrame from './CaptureFrame';
@@ -68,11 +69,33 @@ export function ScreenSelection({kind='video',frameColor='#ffffff',snapshot,onPr
   const [end, setEnd] = useState<Point>();
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+  const [audio,setAudio] = useState<Preferences['audio']>('none');
+  const [audioReady,setAudioReady] = useState(kind==='image'||!native);
+  const [audioError,setAudioError] = useState('');
+  const [audioAttempt,setAudioAttempt] = useState(0);
+  const selectedAudio = useRef<Preferences['audio']|undefined>(kind==='image'||!native?'none':undefined);
+  const starting = useRef(false);
+  useEffect(()=>{
+    if(kind==='image'||!native)return;
+    let alive=true;selectedAudio.current=undefined;setAudioReady(false);setAudioError('');
+    void invoke<Preferences>('screen_preferences').then(preferences=>{
+      if(!alive)return;
+      selectedAudio.current=preferences.audio;setAudio(preferences.audio);setAudioReady(true);
+    }).catch(error=>{if(alive)setAudioError(String(error));});
+    return()=>{alive=false;};
+  },[kind,audioAttempt]);
+  const helpRef=useRef<HTMLDivElement>(null);
+  const [helpBottom,setHelpBottom]=useState(84);
+  useLayoutEffect(()=>{
+    const help=helpRef.current;if(!help)return;
+    const measure=()=>setHelpBottom(Math.ceil(help.getBoundingClientRect().bottom)+16);
+    measure();const observer=new ResizeObserver(measure);observer.observe(help);return()=>observer.disconnect();
+  },[kind]);
   const [monitors,setMonitors]=useState<MonitorInfo[]>([]);
   // Selector windows are labelled screen-select-N: N is the monitor under this overlay.
   const [current,setCurrent]=useState<number|null>(null);
   useEffect(()=>{if(!("__TAURI_INTERNALS__" in window))return;void import('@tauri-apps/api/window').then(({getCurrentWindow})=>{const match=/-select-(\d+)$/.exec(getCurrentWindow().label);setCurrent(match?Number(match[1]):null);}).catch(()=>{});},[]);
-  const pickMonitor=(index:number)=>{if(busy)return;setBusy(true);void invoke('screen_start_monitor',{index}).catch(e=>{setError(String(e));setBusy(false);});};
+  const pickMonitor=(index:number)=>{if(starting.current||selectedAudio.current===undefined)return;starting.current=true;setBusy(true);void invoke('screen_start_monitor',{index,audio:selectedAudio.current}).catch(e=>{setError(String(e));starting.current=false;setBusy(false);});};
   useEffect(()=>{let alive=true;if(kind==='video')void invoke<typeof monitors>('screen_monitors').then(value=>{if(alive&&Array.isArray(value))setMonitors(value);}).catch(e=>{if(alive)setError(String(e));});return()=>{alive=false;};},[kind]);
   const anchor = useRef<Point | undefined>(undefined);
   const tilePress = useRef<number | null>(null);
@@ -95,13 +118,14 @@ export function ScreenSelection({kind='video',frameColor='#ffffff',snapshot,onPr
   }, []);
   const rect = origin && end ? { x: Math.min(origin.x, end.x), y: Math.min(origin.y, end.y), width: Math.abs(end.x - origin.x), height: Math.abs(end.y - origin.y) } : undefined;
   const beginCapture=async(rect:Rect)=>{
-    if(busy)return;setBusy(true);onPreparing?.(rect);
+    if(starting.current||(kind==='video'&&selectedAudio.current===undefined))return;
+    starting.current=true;setBusy(true);onPreparing?.(rect);
     await new Promise(requestAnimationFrame);await new Promise(requestAnimationFrame);
-    try{await invoke('screen_start',{rect});}catch(e){setError(String(e));setBusy(false);}
+    try{await invoke('screen_start',{rect,...(kind==='video'?{audio:selectedAudio.current}:{})});}catch(e){setError(String(e));starting.current=false;setBusy(false);}
   };
-  return <div className="screen-selection" style={snapshot?{backgroundImage:`url("${snapshot}")`,backgroundSize:'100% 100%'}:undefined} data-frozen={!!snapshot} data-has-selection={!!rect} onPointerDown={e => {
+  return <div className="screen-selection" style={{'--monitor-picker-top':`${helpBottom}px`,...(snapshot?{backgroundImage:`url("${snapshot}")`,backgroundSize:'100% 100%'}:{})} as React.CSSProperties} data-frozen={!!snapshot} data-has-selection={!!rect} onPointerDown={e => {
     const target=e.target as HTMLElement,tile=target.closest<HTMLElement>('.monitor-tile');
-    if (busy || e.button !== 0 || (!tile && target.closest('button'))) return;
+    if (busy || e.button !== 0 || (!tile && target.closest('button, .screen-selection-help'))) return;
     // A screen tile is clicked to record that screen, but dragging from it still selects an area.
     tilePress.current=tile?Number(tile.dataset.index):null;
     e.currentTarget.setPointerCapture(e.pointerId);
@@ -116,7 +140,16 @@ export function ScreenSelection({kind='video',frameColor='#ffffff',snapshot,onPr
     if (rect.width < 16 || rect.height < 16) { setError('Seleccioná un área más grande.'); return; }
     await beginCapture(rect);
   }} onPointerCancel={interruptSelection} onLostPointerCapture={interruptSelection}>
-    <div className="screen-selection-help" role="status">{busy ? 'Preparando…' : error || (kind==='image'?'Seleccioná el área para capturar.':'Seleccioná el área. Al soltar empieza a grabar.')} <kbd>{commandKey}+A: pantalla completa</kbd><kbd>Esc: salir</kbd></div>
+    <div ref={helpRef} className="screen-selection-help" data-video={kind==='video'}>
+      <div role="status">{busy ? 'Preparando…' : error || (kind==='image'?'Seleccioná el área para capturar.':!audioReady?'Cargando audio…':'Seleccioná el área. Al soltar empieza a grabar.')} <kbd>{commandKey}+A: pantalla completa</kbd><kbd>Esc: salir</kbd></div>
+      {kind==='video'&&<div className="screen-selection-audio">
+        <span>Audio de este video</span>
+        <VideoAudioChoice value={audio} disabled={!audioReady||busy} onChange={value=>{selectedAudio.current=value;setAudio(value);}}/>
+        <small>Solo para esta grabación. El valor predeterminado se cambia en Capturas y video.</small>
+        {audioReady&&audio==='none'&&<p role="status">Este video se grabará sin sonido.</p>}
+        {audioError&&<p role="alert">No se pudo cargar el audio: {audioError} <button type="button" onClick={()=>setAudioAttempt(value=>value+1)}>Reintentar</button></p>}
+      </div>}
+    </div>
     {kind==='video'&&!(rect&&(rect.width>5||rect.height>5))&&<MonitorPicker monitors={monitors} current={current} busy={busy} onPick={pickMonitor}/>}
     {rect && <CaptureFrame className="screen-selection-rect" width={rect.width} height={rect.height} color={frameColor} style={{left:rect.x,top:rect.y}}/>}
   </div>;

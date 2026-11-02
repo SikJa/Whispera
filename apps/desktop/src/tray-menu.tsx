@@ -3,7 +3,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNo
 import { createRoot } from "react-dom/client";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { Mic, Video, ScanLine, ClipboardList, FileAudio, Settings, RefreshCw, Power, ArrowUpCircle } from "lucide-react";
+import { Mic, Video, ScanLine, ClipboardList, FileAudio, Settings, RefreshCw, Power, ArrowUpCircle, Headphones, Pause, Play, Square, Download, X, Activity } from "lucide-react";
 import "@fontsource-variable/instrument-sans";
 import { applyAppTheme } from "./app-theme-data";
 import "./tray-menu.css";
@@ -11,7 +11,8 @@ import "./tray-menu.css";
 type Keys = string[];
 type State = {
   version: string; phase: string; videoBusy: boolean; update: string | null; theme: string; background: string;
-  shortcuts: { recorder: Keys; video: Keys; capture: Keys; library: Keys };
+  shortcuts: { recorder: Keys; video: Keys; capture: Keys; library: Keys; reading?: Keys };
+  reader?: {supported:boolean;phase:string;exporting:boolean;has_reading:boolean};
 };
 const native = "__TAURI_INTERNALS__" in window;
 const preview: State = {
@@ -34,8 +35,8 @@ function status(state: State) {
   return { tone: "ready", text: "Listo" };
 }
 
-function Row({ icon, label, hint, keys, action, run, tone }: { icon: ReactNode; label: string; hint?: ReactNode; keys?: Keys; action: string; run: (a: string) => void; tone?: string }) {
-  return <button className="tm-row" data-item data-tone={tone} onClick={() => run(action)}>
+function Row({ icon, label, hint, keys, action, run, tone, disabled }: { icon: ReactNode; label: string; hint?: ReactNode; keys?: Keys; action: string; run: (a: string) => void; tone?: string; disabled?:boolean }) {
+  return <button className="tm-row" disabled={disabled} data-item data-tone={tone} onClick={() => run(action)}>
     <span className="tm-row-icon">{icon}</span>
     <span className="tm-row-label">{label}</span>
     {hint}
@@ -58,13 +59,13 @@ function TrayMenu() {
     try { applyAppTheme(localStorage.getItem("whispera.app.theme") ?? "plum", localStorage.getItem("whispera.app.background") ?? ""); } catch { applyAppTheme("plum"); }
     void load();
     if (!native) return;
-    const off = listen("tray-menu-open", () => { setOpening(n => n + 1); void load(); });
-    return () => { void off.then(stop => stop()); };
+    const off = [listen("tray-menu-open", () => { setOpening(n => n + 1); void load(); }),listen("reader-tray-state",()=>void load())];
+    return () => { for(const pending of off)void pending.then(stop => stop()); };
   }, [load]);
   // The native window hugs the card so nothing transparent catches clicks.
   useLayoutEffect(() => {
     const element = card.current; if (!element || !native) return;
-    const fit = () => void invoke("tray_menu_fit", { height: Math.ceil(element.getBoundingClientRect().height) + 20 }).catch(() => {});
+    const fit = () => void invoke("tray_menu_fit", { height: Math.ceil(element.scrollHeight) + 20 }).catch(() => {});
     fit(); const observer = new ResizeObserver(fit); observer.observe(element);
     return () => observer.disconnect();
   }, []);
@@ -73,7 +74,7 @@ function TrayMenu() {
   useEffect(() => { shell.current?.focus({ preventScroll: true }); }, [opening]);
   const onKey = (e: React.KeyboardEvent) => {
     if (e.key === "Escape") { e.preventDefault(); run("close"); return; }
-    const items = Array.from(card.current?.querySelectorAll<HTMLButtonElement>("[data-item]") ?? []);
+    const items = Array.from(card.current?.querySelectorAll<HTMLButtonElement>("[data-item]:not(:disabled)") ?? []);
     const index = items.indexOf(document.activeElement as HTMLButtonElement);
     const step = e.key === "ArrowDown" || e.key === "ArrowRight" ? 1 : e.key === "ArrowUp" || e.key === "ArrowLeft" ? -1 : 0;
     if (!step) return;
@@ -97,7 +98,15 @@ function TrayMenu() {
         <Row icon={<ClipboardList size={16} strokeWidth={1.5} />} label="Portapapeles" keys={state.shortcuts.library} action="library" run={run} />
         <Row icon={<FileAudio size={16} strokeWidth={1.5} />} label="Transcribir archivo…" action="import" run={run} />
       </div>
+      {state.reader?.supported&&<div className="tm-group" aria-label="Controles de lectura">
+        <Row icon={<Headphones size={16} strokeWidth={1.5}/>} label="Lectura en voz alta" keys={state.shortcuts.reading} action="reading" run={run}/>
+        <Row icon={state.reader.phase==='paused'?<Play size={16}/>:<Pause size={16}/>} label={state.reader.phase==='paused'?'Continuar lectura':'Pausar lectura'} disabled={!['speaking','paused'].includes(state.reader.phase)} action="reader-pause" run={run}/>
+        <Row icon={<Square size={16}/>} label="Detener lectura" disabled={!['speaking','paused'].includes(state.reader.phase)} action="reader-stop" run={run}/>
+        <Row icon={<Download size={16}/>} label={state.reader.exporting?'Guardando MP3…':'Guardar lectura como MP3…'} disabled={!state.reader.has_reading||state.reader.exporting} action="reader-export" run={run}/>
+        {state.reader.exporting&&<Row icon={<X size={16}/>} label="Cancelar guardado MP3" action="reader-export-cancel" run={run}/>}
+      </div>}
       <div className="tm-group">
+        <Row icon={<Activity size={16} strokeWidth={1.5}/>} label="Uso de IA" action="ai-usage" run={run}/>
         <Row icon={<Settings size={16} strokeWidth={1.5} />} label="Configuración" action="settings" run={run} />
         {state.update
           ? <Row icon={<ArrowUpCircle size={16} strokeWidth={1.5} />} label="Actualizar Whispera" hint={<span className="tm-update">{state.update}</span>} action="updates" run={run} tone="accent" />

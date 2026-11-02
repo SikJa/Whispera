@@ -36,7 +36,7 @@ export function LocalEngine({ settings, patch, onError }: { settings: Settings; 
       <button role="radio" aria-checked={engine === "local"} onClick={() => patch({ transcriptionEngine: "local" })}><Cpu size={18} /><span><strong>Local</strong><small>En tu PC · sin internet, el audio no sale</small></span></button>
     </div>
     {engine === "local" && <>
-      {!ready && <p className="local-hint">Instalá un modelo para dictar en local. Mientras tanto se sigue necesitando Groq.</p>}
+      {!ready && <p className="local-hint">Instalá un modelo para dictar en local. La instalación incluye un detector de voz de 1,2 MB. El modo local no envía audio a Groq.</p>}
       {status?.loaded && <p className="local-device"><i />Listo en {status.device}</p>}
       {status?.error && <p className="local-model-error">{status.error}</p>}
       {!status?.loaded && !status?.error && ready && <p className="local-device" data-loading><LoaderCircle size={13} className="update-spinner" />Cargando el modelo…</p>}
@@ -59,7 +59,7 @@ export function LocalEngine({ settings, patch, onError }: { settings: Settings; 
           </div>;
         })}
       </div>
-      <p className="local-hint">Usa la placa de video (Vulkan) si hay una; si no, el procesador. El diccionario personal se sigue aplicando. Los videos se siguen transcribiendo con Groq.</p>
+      <p className="local-hint">En Windows necesita un controlador compatible con Vulkan. El diccionario personal se sigue aplicando. Los archivos importados se convierten y transcriben en tu equipo. Para transcribir videos con Groq, elegí Groq y activá esa opción en Portapapeles.</p>
     </>}
   </div>;
 }

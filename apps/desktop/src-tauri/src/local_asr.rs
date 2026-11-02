@@ -145,6 +145,7 @@ pub async fn install(id: String) -> Result<(), String> {
     }
     CANCEL.store(false, Ordering::SeqCst);
     let result = download(spec, true).await;
+    if result.is_ok()&&!CANCEL.load(Ordering::SeqCst) {prepare_speech_detector().await;}
     let mut state = install_state();
     match &result {
         Ok(()) => *state = Install::default(),
@@ -297,7 +298,11 @@ pub async fn prepare_speech_detector() {
     if !installed(&SPEECH_DETECTOR) && download(&SPEECH_DETECTOR, false).await.is_err() {
         return;
     }
-    let _ = tauri::async_runtime::spawn_blocking(|| speech_in(&[0.0; 1_600])).await;
+    load_installed_speech_detector().await;
+}
+/// Startup may reuse an installed detector, but never initiates a background download.
+pub async fn load_installed_speech_detector() {
+    if installed(&SPEECH_DETECTOR) {let _=tauri::async_runtime::spawn_blocking(|| speech_in(&[0.0;1_600])).await;}
 }
 
 /// Whether 16 kHz mono audio holds speech; `None` while the detector is

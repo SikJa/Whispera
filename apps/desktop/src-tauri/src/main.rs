@@ -1,5 +1,10 @@
 #![cfg_attr(target_os = "windows", windows_subsystem = "windows")]
 mod replay;
+mod reader;
+mod reader_language;
+mod reader_export;
+mod ai_usage;
+mod reader_selection;
 #[cfg(all(test, windows))]
 mod audit_tests;
 mod platform;
@@ -187,10 +192,11 @@ async fn transcribe_file(
     store.event("Transcripcion de archivo iniciada")?;
     let source = std::path::PathBuf::from(&path);
     let binary = screen::ffmpeg(&app).ok();
-    let compact = tauri::async_runtime::spawn_blocking(move || compact_audio(binary.as_deref(), &source))
+    let local=settings.transcription_engine=="local";
+    let compact = tauri::async_runtime::spawn_blocking(move || if local {local_import(binary.as_deref(), &source)} else {compact_audio(binary.as_deref(), &source)})
         .await
         .map_err(|e| e.to_string())??;
-    let upload = compact.as_ref().map(|c| c.0.join("audio.ogg")).unwrap_or_else(|| path.clone().into());
+    let upload = compact.as_ref().map(|c| c.0.join(if local {"audio.wav"} else {"audio.ogg"})).unwrap_or_else(|| path.clone().into());
     match groq::transcribe(&upload, &settings, &rules).await {
         Ok(text) => {
             store.append(&text)?;
@@ -209,6 +215,18 @@ async fn transcribe_file(
 struct Scratch(std::path::PathBuf);
 impl Drop for Scratch {
     fn drop(&mut self) { let _ = std::fs::remove_dir_all(&self.0); }
+}
+fn local_import(binary: Option<&std::path::Path>, source: &std::path::Path) -> Result<Option<Scratch>, String> {
+    if source.extension().is_some_and(|e|e.eq_ignore_ascii_case("wav")) {return Ok(None);}
+    let binary=binary.ok_or("Falta el motor para convertir el audio local")?;
+    let scratch=Scratch(std::env::temp_dir().join(format!("whispera-local-import-{}",uuid::Uuid::new_v4())));
+    std::fs::create_dir(&scratch.0).map_err(|e|e.to_string())?;
+    let output=scratch.0.join("audio.wav");
+    let status=screen::command(binary).args(["-hide_banner","-loglevel","error","-y","-i"]).arg(source)
+        .args(["-vn","-ac","1","-ar","16000","-c:a","pcm_s16le"]).arg(&output)
+        .stdin(std::process::Stdio::null()).stderr(std::process::Stdio::null()).status().map_err(|e|e.to_string())?;
+    if !status.success()||!output.is_file(){return Err("No se pudo convertir el archivo para leerlo con el motor local. No se envió a Groq.".into());}
+    Ok(Some(scratch))
 }
 // Groq accepts 25 MB and a few containers. Long recordings or video files are
 // converted to 16 kHz mono Opus (~100 minutes per 24 MB); the original is untouched.
@@ -433,6 +451,10 @@ fn main() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_clipboard_manager::init())
+        .manage(reader::Reader::default())
+        .manage(reader::TrayMenu::default())
+        .manage(reader_export::Exports::default())
+        .manage(ai_usage::Usage::default())
         .plugin(
             tauri_plugin_global_shortcut::Builder::new()
                 .with_handler(|app, shortcut, event| {
@@ -445,6 +467,13 @@ fn main() {
                     }
                     if event.state == tauri_plugin_global_shortcut::ShortcutState::Pressed {
                         let app = app.clone();
+                        if reader::matches(&app, shortcut) {
+                            let source = reader_selection::foreground();
+                            tauri::async_runtime::spawn_blocking(move || {
+                                if let Err(error) = reader::toggle_selection(&app, source) { reader::report_shortcut_error(&app,error); }
+                            });
+                            return;
+                        }
                         if shortcuts::parse(&library::hotkey(&app)).map(|key| key == *shortcut).unwrap_or(false) {
                             tauri::async_runtime::spawn(async move { let _ = library::library_toggle(app).await; });
                             return;
@@ -558,7 +587,7 @@ fn main() {
                 .event("Whispera 2 iniciada")
                 .map_err(std::io::Error::other)?;
             if let Ok(settings) = store.get::<Settings>("settings") { local_asr::preload(&settings); }
-            tauri::async_runtime::spawn(local_asr::prepare_speech_detector());
+            tauri::async_runtime::spawn(local_asr::load_installed_speech_detector());
             app.manage(store);
             if let Ok(binary)=screen::ffmpeg(app.handle()) {screen::warm_encoder(&binary);lossless_upload::configure(binary);}
             let startup_app=app.handle().clone();
@@ -584,7 +613,8 @@ fn main() {
             app.manage(replay::Replay::default());
             app.manage(video_trim::Editors::default());
             app.manage(updates::Updates::default());
-            updates::start(app.handle());
+            // Fork preview: upstream updates could replace the local reader build.
+            // updates::start is intentionally disabled until this fork signs its releases.
             health::start(app.handle());
             retention::start(app.handle());
             let settings: Settings = app
@@ -605,6 +635,7 @@ fn main() {
                 let _ = app.state::<Store>().event(&e);
             }
             replay::initialize(app.handle());
+            if let Err(error) = reader::initialize(app.handle()) { let _ = app.state::<Store>().event(&error); }
             windows_capture_keys::start(app.handle());
             // Creating the dictation window takes about a second (a new WebView2);
             // do it hidden after startup instead of on the first shortcut press.
@@ -633,6 +664,7 @@ fn main() {
                     }
                 })
                 .build(app)?;
+            reader::start_tray_monitor(app.handle());
             if std::env::args().any(|arg| arg == "--settings")
                 || !app
                     .state::<Store>()
@@ -647,6 +679,9 @@ fn main() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            ai_usage::ai_usage_snapshot, ai_usage::ai_usage_connect_claude, ai_usage::ai_usage_open_provider,
+            reader::reader_status, reader::reader_speak, reader::reader_control, reader::reader_preferences, reader::reader_configure, reader::reader_analyze,
+            reader_export::reader_export_mp3, reader_export::reader_export_cancel,
             permissions::platform_permissions, permissions::platform_request_permission,
             replay::replay_preferences, replay::replay_status, replay::replay_create_folder, replay::replay_save_preferences, replay::replay_save,
             video_trim::video_trim_open, video_trim::video_trim_context, video_trim::video_trim_close, video_trim::video_trim_save,
@@ -787,6 +822,7 @@ fn main() {
                 });
             }
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                if window.label() == "main" { reader::stop(window.app_handle()); }
                 if !lifecycle::keep_on_close(window.label()) { return; }
                 api.prevent_close();
                 let _ = window.hide();
@@ -822,4 +858,27 @@ fn main() {
             tauri::RunEvent::Exit => lifecycle::clean_exit(),
             _ => {}
         });
+}
+
+#[cfg(all(test,windows))]
+mod local_import_tests {
+    use super::*;
+    #[test]
+    fn imported_mp3_is_decoded_locally_and_original_is_preserved() {
+        let root=Scratch(std::env::temp_dir().join(format!("whispera-local-import-test-{}",uuid::Uuid::new_v4())));
+        std::fs::create_dir(&root.0).unwrap();
+        let wav=root.0.join("original.wav");
+        let mut writer=hound::WavWriter::create(&wav,hound::WavSpec{channels:1,sample_rate:16000,bits_per_sample:16,sample_format:hound::SampleFormat::Int}).unwrap();
+        for _ in 0..1600 {writer.write_sample(0i16).unwrap();}writer.finalize().unwrap();
+        let binary=std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../node_modules/ffmpeg-static/ffmpeg.exe");
+        let source=root.0.join("original.mp3");
+        assert!(screen::command(&binary).args(["-hide_banner","-loglevel","error","-y","-i"]).arg(&wav).arg(&source).status().unwrap().success());
+        let original=std::fs::read(&source).unwrap();
+        let converted=local_import(Some(&binary),&source).unwrap().unwrap();
+        let reader=hound::WavReader::open(converted.0.join("audio.wav")).unwrap();
+        assert_eq!(reader.spec().sample_rate,16000);assert_eq!(reader.spec().channels,1);assert!(reader.duration()>0);
+        assert_eq!(std::fs::read(&source).unwrap(),original);
+        assert!(local_import(None,&wav).unwrap().is_none());
+        assert!(local_import(None,&source).is_err());
+    }
 }

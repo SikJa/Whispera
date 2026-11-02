@@ -5,7 +5,7 @@ use std::{collections::HashMap,fs,path::{Path,PathBuf},process::Stdio,sync::{Mut
 use tauri::{Manager,WebviewUrl,WebviewWindowBuilder};
 #[derive(Clone,Serialize)]
 #[serde(rename_all="camelCase")]
-pub struct Context{path:String,name:String,duration:f64,has_audio:bool}
+pub struct Context{path:String,name:String,duration:f64,has_audio:bool,transcription_enabled:bool}
 struct Last{start:f64,end:f64,path:PathBuf}
 #[derive(Default)]
 pub struct Editors{contexts:Mutex<HashMap<String,Context>>,last:Mutex<HashMap<String,Last>>,pub busy:AtomicBool}
@@ -15,7 +15,7 @@ pub fn open_path(app:&tauri::AppHandle,path:&Path)->Result<(),String>{
     let binary=crate::screen::ffmpeg(app)?;
     let info=crate::replay::probe(&binary,path)?;
     let duration=crate::library_media::duration(&info).ok_or("No se pudo leer la duración del video")?;
-    let ctx=Context{path:path.to_string_lossy().into_owned(),name:path.file_name().unwrap_or_default().to_string_lossy().into_owned(),duration,has_audio:info.contains("Audio:")};
+    let ctx=Context{path:path.to_string_lossy().into_owned(),name:path.file_name().unwrap_or_default().to_string_lossy().into_owned(),duration,has_audio:info.contains("Audio:"),transcription_enabled:crate::video_transcript::recording_enabled(&app.state::<Store>())};
     let label=format!("video-trim-{}",uuid::Uuid::new_v4());
     app.asset_protocol_scope().allow_file(path).map_err(|e|e.to_string())?;
     app.state::<Editors>().contexts.lock().map_err(|_|"Editor ocupado")?.insert(label.clone(),ctx);
@@ -68,7 +68,7 @@ pub async fn video_trim_save(app:tauri::AppHandle,window:tauri::WebviewWindow,st
             job_app.state::<Editors>().last.lock().map_err(|_|"Editor ocupado")?.insert(label.clone(),Last{start,end,path:output.clone()});
         }
         library::remember_file(&job_app.state::<Store>(),&output)?;
-        let mut warning=if ctx.has_audio && !crate::video_transcript::get(&job_app.state::<Store>(),&output).is_ok_and(|t|t.status=="ready"){crate::video_transcript::transcribe_selection(&job_app,&output).err().unwrap_or_default()}else{String::new()};
+        let mut warning=if crate::video_transcript::recording_enabled(&job_app.state::<Store>()) && ctx.has_audio && !crate::video_transcript::get(&job_app.state::<Store>(),&output).is_ok_and(|t|t.status=="ready"){crate::video_transcript::transcribe_selection(&job_app,&output).err().unwrap_or_default()}else{String::new()};
         if let Err(error)=crate::video_transcript::copy_selection(&job_app,&output){if !warning.is_empty(){warning.push_str(". ");}warning.push_str(&format!("Guardado, pero no se pudo copiar: {error}. Volvé a pulsar Guardar para reintentar."));}
         let transcript=ctx.has_audio&&warning.is_empty()&&output.with_extension("transcript.txt").is_file();
         Ok(Saved{path:output.to_string_lossy().into_owned(),transcript,warning})

@@ -33,8 +33,8 @@ pub async fn set_startup(window: tauri::WebviewWindow, enabled: bool) -> Result<
 }
 
 #[tauri::command]
-pub fn complete_setup(store: State<Store>) -> Result<(), String> {
-    groq::entry()?.get_password().map_err(|_| "Configure Groq first / Configura Groq primero")?;
+pub fn complete_setup(store: State<Store>, reading_only: Option<bool>) -> Result<(), String> {
+    if !reading_only.unwrap_or(false) { groq::entry()?.get_password().map_err(|_| "Configure Groq first / Configura Groq primero")?; }
     store.put("setup_complete", &true)
 }
 

@@ -7,7 +7,7 @@ import { native } from './client';
 import './screen-recorder.css';
 import {useAutoSave,AutoSaveStatus} from './useAutoSave';
 import { SettingsSwitch } from './ResourceControls';
-import { type CapturePreferences as Preferences, defaultCapturePreferences, VideoAudioSettings } from './CaptureSettings';
+import { type CapturePreferences as Preferences, defaultCapturePreferences, VideoAudioSettings, VideoAudioChoice } from './CaptureSettings';
 import { commandKey, isMac, systemName } from './platform';
 
 type Status = { phase: string; seconds: number; path: string; error: string; copied: boolean; notice?: string };
@@ -61,6 +61,7 @@ export default function ScreenRecorder() {
     {preferencesError&&<p className="notice" role="alert">No se pudieron cargar las preferencias: {preferencesError} <button onClick={()=>setPreferencesAttempt(value=>value+1)}>Volver a cargar preferencias</button></p>}
     <>
       <h3>Audio predeterminado</h3>
+      <p className="muted-note">Se usa al iniciar desde el atajo o el icono. También podés elegir otro audio antes de seleccionar el área.</p>
       <VideoAudioSettings value={preferences.audio} disabled={occupied||busy} onChange={audio=>changePreferences({...preferences,audio})}/>
       <h3>Capturas de imagen</h3>
       {!isMac && <div className="form-row"><label htmlFor="windows-capture-shortcuts">Impr Pant para Whispera<span>Mientras Whispera está abierto, las capturas de Windows pasan a Ctrl + Alt + Shift + F12.</span></label><SettingsSwitch id="windows-capture-shortcuts" label="Impr Pant para Whispera" checked={windowsShortcuts} disabled={!native||occupied||busy} onChange={enabled=>void run(async()=>{await invoke('save_windows_capture_shortcuts',{enabled});setWindowsShortcuts(enabled);},'Atajos de captura guardados.')}/></div>}

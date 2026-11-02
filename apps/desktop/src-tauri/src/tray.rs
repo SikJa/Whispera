@@ -95,7 +95,7 @@ pub fn show(app: &tauri::AppHandle, cursor: tauri::PhysicalPosition<f64>) -> Res
         .ok_or("No hay pantalla disponible")?;
     let scale = monitor.scale_factor();
     let work = monitor.work_area();
-    let (w, h) = ((WIDTH * scale).round() as i32, (height * scale).round() as i32);
+    let (w, h) = ((WIDTH * scale).round() as i32, ((height * scale).round() as i32).min(work.size.height as i32));
     let (left, top) = (work.position.x, work.position.y);
     let (right, bottom) = (left + work.size.width as i32, top + work.size.height as i32);
     let (cx, cy) = (cursor.x.round() as i32, cursor.y.round() as i32);
@@ -132,11 +132,13 @@ pub fn tray_menu_state(app: tauri::AppHandle) -> serde_json::Value {
         "update": crate::updates::available_version(&app),
         "theme": settings.app_theme,
         "background": settings.app_background,
+        "reader": crate::reader::tray_status(&app),
         "shortcuts": {
             "recorder": shortcut_keys(&settings.hotkey),
             "video": shortcut_keys(&screen.hotkey),
             "capture": shortcut_keys(&screen.image_hotkey),
             "library": shortcut_keys(&crate::library::hotkey(&app)),
+            "reading": shortcut_keys(&crate::reader::hotkey(&app)),
         },
     })
 }
@@ -150,7 +152,8 @@ pub fn tray_menu_fit(app: tauri::AppHandle, window: tauri::WebviewWindow, height
     *app.state::<TrayMenu>().height.lock().map_err(|_| "Menú ocupado")? = height;
     let scale = window.scale_factor().map_err(|e| e.to_string())?;
     let size = window.inner_size().map_err(|e| e.to_string())?;
-    let target = (height * scale).round() as u32;
+    let available=window.current_monitor().ok().flatten().map(|m|m.work_area().size.height).unwrap_or(u32::MAX);
+    let target = ((height * scale).round() as u32).min(available);
     if size.height != target && window.is_visible().unwrap_or(false) {
         // Keep the edge nearest the cursor fixed (the bottom when opened upward).
         let position = window.outer_position().map_err(|e| e.to_string())?;
@@ -178,6 +181,17 @@ pub fn run(app: &tauri::AppHandle, action: &str) {
     use crate::{engine, library, lifecycle, replay, screen};
     let app = app.clone();
     match action {
+        "ai-usage" | "reading" => {
+            let event=if action=="reading" {"reader-open"} else {"ai-usage-open"};
+            if crate::open_settings(app.clone()).is_ok() {let _=app.emit_to("main",event,());}
+        }
+        "reader-pause" | "reader-stop" => {
+            let action=action.to_owned();
+            tauri::async_runtime::spawn_blocking(move || {if let Err(error)=crate::reader::control_from_tray(&app,&action) {crate::reader::report_shortcut_error(&app,error);}});
+        }
+        "reader-export-cancel" => crate::reader_export::cancel(&app),
+        "reader-export" => {tauri::async_runtime::spawn_blocking(move || {if let Err(error)=crate::reader_export::save(&app,None) {crate::reader::report_shortcut_error(&app,error);}});}
+
         "library" => { tauri::async_runtime::spawn(async move { let _ = library::library_toggle(app).await; }); }
         "settings" => { if let Err(error) = crate::open_settings(app.clone()) { let _ = app.state::<Store>().event(&error); } }
         "updates" => { let _ = crate::open_updates(app); }
@@ -199,6 +213,7 @@ pub fn run(app: &tauri::AppHandle, action: &str) {
                 let _ = screen::stop(&app);
                 engine::shutdown(&app);
                 replay::stop(&app);
+                crate::reader::stop(&app);
                 app.exit(0);
             });
         }

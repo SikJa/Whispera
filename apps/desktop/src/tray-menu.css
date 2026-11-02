@@ -88,3 +88,6 @@ button:focus-visible { box-shadow: 0 0 0 2px color-mix(in srgb, var(--app-accent
 .tm-tile .tm-keys kbd { min-width: 18px; padding: 2px 4px; }
 
 @media (prefers-reduced-motion: reduce) { .tm-card, .tm-status i { animation: none !important; } }
+
+.tm-row:disabled {opacity:.42;cursor:default;}
+.tm-card {max-height:calc(100dvh - 20px);overflow-y:auto;overscroll-behavior:contain;}

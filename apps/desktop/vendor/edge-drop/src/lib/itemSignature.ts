@@ -44,7 +44,7 @@ export function itemRenderKey(item: ClipboardItemDto): string {
               `${en.name},${en.size},${en.isImage ? 1 : 0},${en.isDirectory ? 1 : 0},${en.preview ?? ''}`
           )
           .join(';') ?? ''
-      key = `f|${d.paths.join('\n')}|${entries}`
+      key = `f|${d.paths.join('\n')}|${entries}|${JSON.stringify(d.processing ?? null)}`
       break
     }
   }

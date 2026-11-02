@@ -1,0 +1,93 @@
+:root {
+  --app-background: #211922; --app-surface: #2b2030; --app-card: #372939;
+  --app-ink: #f8edf4; --app-muted: #c2afbf; --app-accent: #f4b59c; --app-border: #f8edf426;
+  --tm-hairline: color-mix(in srgb, var(--app-ink) 8%, transparent);
+  --tm-raised: color-mix(in srgb, var(--app-ink) 5%, transparent);
+  --tm-hover: color-mix(in srgb, var(--app-ink) 9%, transparent);
+  --tm-live: #e5484d;
+  --tm-ease: cubic-bezier(.22, 1, .36, 1);
+  font-family: "Instrument Sans Variable", "Segoe UI", system-ui, sans-serif;
+  color-scheme: dark;
+  -webkit-font-smoothing: antialiased;
+  user-select: none;
+}
+* { box-sizing: border-box; }
+/* Room for the shadow inside the transparent native window. */
+.tm-shell { padding: 10px; outline: none; }
+.tm-card {
+  padding: 8px; border-radius: 16px;
+  color: var(--app-ink);
+  background: var(--app-surface);
+  border: 1px solid var(--tm-hairline);
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--app-ink) 6%, transparent), 0 16px 40px -12px #000b;
+  transform-origin: bottom right;
+  animation: tm-in 180ms var(--tm-ease);
+}
+@keyframes tm-in { from { opacity: 0; transform: translateY(8px); } }
+
+/* Head: name, version and what Whispera is doing right now. */
+.tm-head { display: flex; align-items: center; gap: 12px; padding: 4px 4px 12px; }
+.tm-logo { width: 32px; height: 32px; border-radius: 8px; }
+.tm-title { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.tm-title strong { font-size: 15px; font-weight: 500; line-height: 20px; }
+.tm-title span { font-size: 12px; line-height: 16px; color: var(--app-muted); font-variant-numeric: tabular-nums; }
+.tm-status { margin-left: auto; display: inline-flex; align-items: center; gap: 8px; font-size: 12px; color: var(--app-muted); }
+.tm-status i { width: 8px; height: 8px; border-radius: 50%; background: color-mix(in srgb, var(--app-ink) 35%, transparent); }
+/* The on-air light: the only thing that moves, and only while it is live. */
+.tm-status[data-tone="live"] { color: var(--app-ink); }
+.tm-status[data-tone="live"] i { background: var(--tm-live); animation: tm-on-air 1.6s ease-in-out infinite; }
+.tm-status[data-tone="busy"] i { background: var(--app-accent); }
+.tm-status[data-tone="warn"] i { background: #e5a54d; }
+@keyframes tm-on-air { 50% { opacity: .4; } }
+
+button { font: inherit; color: inherit; border: 0; background: none; cursor: pointer; outline: none; }
+button:focus-visible { box-shadow: 0 0 0 2px color-mix(in srgb, var(--app-accent) 70%, transparent); }
+
+/* The three captures, each with the key that starts it. */
+.tm-tiles { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; padding-bottom: 8px; }
+.tm-tile {
+  display: flex; flex-direction: column; align-items: center; gap: 8px;
+  padding: 16px 4px 12px; border-radius: 12px;
+  background: var(--tm-raised);
+  border: 1px solid var(--tm-hairline);
+  transition: background-color 140ms var(--tm-ease), transform 140ms var(--tm-ease);
+}
+.tm-tile:hover, .tm-tile:focus-visible { background: var(--tm-hover); }
+.tm-tile:active { transform: scale(.97); }
+.tm-tile-icon { display: grid; place-items: center; height: 20px; color: var(--app-ink); opacity: .8; }
+.tm-tile[data-live="true"] .tm-tile-icon { color: var(--tm-live); opacity: 1; }
+.tm-tile-label { font-size: 13px; font-weight: 500; line-height: 16px; }
+.tm-tile .tm-keys { justify-content: center; flex-wrap: nowrap; }
+
+.tm-group { display: flex; flex-direction: column; gap: 2px; padding: 4px 0; border-top: 1px solid var(--tm-hairline); }
+.tm-tiles + .tm-group { border-top: 0; padding-top: 0; }
+.tm-row {
+  display: flex; align-items: center; gap: 12px; width: 100%; height: 36px;
+  padding: 0 8px; border-radius: 8px; text-align: left; font-size: 14px;
+  transition: background-color 120ms var(--tm-ease), color 120ms var(--tm-ease);
+}
+.tm-row:hover, .tm-row:focus-visible { background: var(--tm-hover); }
+.tm-row-icon { display: grid; place-items: center; width: 16px; flex-shrink: 0; color: var(--app-muted); }
+.tm-row-label { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tm-row[data-tone="accent"] .tm-row-icon { color: var(--app-accent); }
+.tm-update { font-size: 12px; color: var(--app-accent); font-variant-numeric: tabular-nums; }
+.tm-row[data-tone="danger"] { color: var(--app-muted); }
+.tm-row[data-tone="danger"]:hover, .tm-row[data-tone="danger"]:focus-visible { color: #ff8b8e; background: color-mix(in srgb, var(--tm-live) 12%, transparent); }
+.tm-row[data-tone="danger"]:hover .tm-row-icon { color: inherit; }
+
+/* Signature: shortcuts drawn as physical keys. */
+.tm-keys { display: inline-flex; gap: 4px; }
+.tm-keys kbd {
+  font: 500 11px/16px "Instrument Sans Variable", "Segoe UI", sans-serif;
+  font-variant-numeric: tabular-nums;
+  min-width: 20px; height: 20px; padding: 2px 6px; text-align: center; border-radius: 4px;
+  color: var(--app-muted);
+  background: color-mix(in srgb, var(--app-ink) 7%, transparent);
+  box-shadow: inset 0 -1px 0 #0006, 0 0 0 1px var(--tm-hairline);
+}
+.tm-tile .tm-keys kbd { min-width: 18px; padding: 2px 4px; }
+
+@media (prefers-reduced-motion: reduce) { .tm-card, .tm-status i { animation: none !important; } }
+
+.tm-row:disabled {opacity:.42;cursor:default;}
+.tm-card {max-height:calc(100dvh - 20px);overflow-y:auto;overscroll-behavior:contain;}

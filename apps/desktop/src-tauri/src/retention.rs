@@ -92,6 +92,7 @@ pub fn start(app: &tauri::AppHandle) {
             if let Ok(_guard) = engine.gate.try_lock() {
                 if !crate::health::busy(&engine.recorder.snapshot().phase) && !engine.processing.load(Ordering::SeqCst) {
                     let store = app.state::<Store>();
+                    let _ = store.prune_events();
                     match clean(&store, &engine.recorder.root, Utc::now()) {
                         Ok((sessions, history)) if sessions + history > 0 => { let _ = store.event(&format!("Retencion 48h: {sessions} sesiones y {history} transcripciones eliminadas")); }
                         Err(error) => { let _ = store.event(&format!("Retencion 48h no completada: {error}")); }

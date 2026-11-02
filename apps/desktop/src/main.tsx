@@ -1,6 +1,7 @@
 import VideoTrim from './VideoTrim';
 import ReaderPanel from './ReaderPanel';
 import AIUsagePanel from './AIUsagePanel';
+import {startHeartbeat} from './ui-heartbeat';
 import {applyAppTheme,AppThemePicker} from './app-theme';
 import {useUpdates} from "./UpdatesPanel";
 import {listen as listenUpdate} from "@tauri-apps/api/event";
@@ -34,6 +35,8 @@ import "./style.css";
 import "./desktop.css";
 import { SetupGate } from './Onboarding';
 import GroqKeyGuide from './GroqKeyGuide';
+import { LocalEngine } from "./LocalEngine";
+import { MicrophoneSelect } from './MicrophoneSelect';
 import { ShortcutSettings, CaptureHistory } from './CaptureSettings';
 import LibrarySettings from './LibrarySettings';
 import ApplicationSettings from './ApplicationSettings';
@@ -138,6 +141,7 @@ function SettingsApp({sidebarExpanded}:{sidebarExpanded:boolean}) {
   },[route]);
   useEffect(()=>{if(!api.native)return;let alive=true;let off:(()=>void)|undefined;void listenUpdate('updater-open',()=>{if(alive)setRoute('updates');},{target:'main'}).then(remove=>{if(alive)off=remove;else remove();});return()=>{alive=false;off?.();};},[]);
   useEffect(()=>{if(!api.native)return;let alive=true;let off:(()=>void)|undefined;void listenUpdate('ai-usage-open',()=>{if(alive)setRoute('ai-usage');},{target:'main'}).then(remove=>{if(alive)off=remove;else remove();});return()=>{alive=false;off?.();};},[]);
+  useEffect(()=>{if(!api.native)return;let alive=true;let off:(()=>void)|undefined;void listenUpdate('reader-open',()=>{if(alive)setRoute('reading');},{target:'main'}).then(remove=>{if(alive)off=remove;else remove();});return()=>{alive=false;off?.();};},[]);
   const run = async (work: () => Promise<unknown>, success: string) => {
     setBusy(true);
     try { await work(); await refresh(); setMessage(success); return true; }
@@ -159,7 +163,7 @@ function SettingsApp({sidebarExpanded}:{sidebarExpanded:boolean}) {
   const title = routes.find(r => r.id === route)!.name;
 
   return <div className="desktop-app">
-    <SettingsSidebar items={routes} value={route} expanded={sidebarExpanded} count={data.rules.length}
+    <SettingsSidebar items={routes} value={route} expanded={sidebarExpanded} count={data.rules.length} badges={{updates:updater.status.version?'Nueva':undefined}}
       onChange={id=>{setSearchTarget(undefined);setRoute(id as Route);setSearch('');setMessage('');}}
       brand={<a className="desktop-brand" href="?view=settings"><span className="brand-mark"><img src="/cristal/64x64.png" alt="" /></span><span className="brand-copy"><strong>Whispera</strong><small>Voz, capturas y video</small></span></a>}
       update={(updater.status.version||updater.status.upstream?.phase==='available')&&<button className="sidebar-update" aria-label={updater.status.version?'Actualización disponible':'Novedades de Whispera-K'} onClick={()=>setRoute('updates')}><Download size={16}/><span><strong>{updater.status.version?'Actualización disponible':'Novedades de Whispera-K'}</strong><small>{updater.status.version?`Whispera ${updater.status.version}`:`K ${updater.status.upstream?.version}`}</small></span><ArrowUpRight size={14}/></button>}
@@ -179,10 +183,12 @@ function SettingsApp({sidebarExpanded}:{sidebarExpanded:boolean}) {
         {route==='sounds'&&<SoundSettings settings={data.settings} patch={patch} onError={setMessage}/>}
         {route==='diagnostics'&&<><div className="form-row"><label htmlFor="watchdog">Recuperar interfaz sin respuesta</label><SettingsSwitch id="watchdog" label="Vigilancia de interfaz" checked={data.settings.watchdog} onChange={v=>patch({watchdog:v})}/></div><button disabled={!api.native||busy} onClick={()=>run(()=>invoke('restart_app'),'Reiniciando')}><RotateCcw size={16}/>Reiniciar Whispera</button></>}
         {route === "transcription" && <>
-          <div className="provider-line"><div className="provider-logo"><AudioLines size={22} /></div><div><h2>Groq</h2><p>Proveedor de transcripción</p></div><span className="state-tag"><i />{data.keyConfigured ? "Clave guardada" : "Sin conectar"}</span></div>
+          <LocalEngine settings={data.settings} patch={patch} onError={setMessage} />
+          {(data.settings.transcriptionEngine??"groq")==="groq"&&<div className="provider-line"><div className="provider-logo"><AudioLines size={22} /></div><div><h2>Groq</h2><p>Proveedor de transcripción</p></div><span className="state-tag"><i />{data.keyConfigured ? "Clave guardada" : "Sin conectar"}</span></div>}
           <h3>Voz e idioma</h3>
-          <div className="form-row"><label htmlFor="model">Modelo</label><select id="model" value={data.settings.model} onChange={e => patch({ model: e.target.value })}><option value="whisper-large-v3-turbo">Whisper Large v3 Turbo</option><option value="whisper-large-v3">Whisper Large v3</option></select></div>
+          {(data.settings.transcriptionEngine??"groq")==="groq"&&<div className="form-row"><label htmlFor="model">Modelo</label><select id="model" value={data.settings.model} onChange={e => patch({ model: e.target.value })}><option value="whisper-large-v3-turbo">Whisper Large v3 Turbo</option><option value="whisper-large-v3">Whisper Large v3</option></select></div>}
           <div className="form-row"><label htmlFor="language">Idioma del audio</label><select id="language" value={data.settings.language} onChange={e => patch({ language: e.target.value })}><option value="es">Español</option><option value="en">English</option><option value="pt">Português</option><option value="auto">Detectar automáticamente</option></select></div>
+          <MicrophoneSelect value={data.settings.microphone ?? ""} onChange={microphone => patch({ microphone })} />
           <h3>Conexión</h3><div className="key-line"><label htmlFor="key">Clave API de Groq <span>Almacenada en {credentialStore}</span></label><div><input id="key" type="password" autoComplete="off" value={key} placeholder={data.keyConfigured ? "••••••••••••••••" : "gsk_…"} onChange={e => setKey(e.target.value)} onBlur={()=>{if(key.trim()&&api.native)void run(async()=>{await api.saveKey(key);setKey("");},`Clave guardada automáticamente en ${credentialStore}`);}} /></div></div>
           
           <GroqKeyGuide />
@@ -232,6 +238,8 @@ function SettingsRoot(){
     try{const stored=localStorage.getItem('whispera.sidebar.expanded');return stored===null?window.innerWidth>640:stored==='true';}catch{return true;}
   });
   const toggleSidebar=()=>setSidebarExpanded(value=>{const next=!value;try{localStorage.setItem('whispera.sidebar.expanded',String(next));}catch{}return next;});
+  // [ toggles the sidebar, except while typing.
+  useEffect(()=>{const key=(e:KeyboardEvent)=>{const t=e.target as HTMLElement;if(e.key!=='['||e.ctrlKey||e.metaKey||e.altKey||t.closest('input,textarea,select,[contenteditable=true]'))return;e.preventDefault();toggleSidebar();};window.addEventListener('keydown',key);return()=>window.removeEventListener('keydown',key);},[]);
   return <div className="settings-window"><WindowChrome onError={setWindowError} sidebarExpanded={sidebarExpanded} onToggleSidebar={toggleSidebar}/>{windowError&&<p role="alert" className="window-control-error">{windowError}</p>}<SetupGate><SettingsApp sidebarExpanded={sidebarExpanded}/></SetupGate></div>;
 }
 const view=new URLSearchParams(location.search).get("view");
@@ -242,7 +250,7 @@ if(!view||['settings','import'].includes(view)) {
 if(!view||view==='settings')document.documentElement.dataset.settingsShell='true';
 if (view?.startsWith('screen-')) document.documentElement.dataset.screenSelect = 'true';
 if (view === "record") document.documentElement.dataset.floating = "true";
-if(api.native&&view!=='screen-freeze'){ const heartbeat=()=>void invoke('ui_heartbeat').catch(()=>{}); heartbeat();setInterval(heartbeat,2000); }
+if(api.native&&view!=='screen-freeze'){ const stopHeartbeat=startHeartbeat(); import.meta.hot?.dispose(stopHeartbeat); }
 createRoot(document.getElementById("root")!).render(view === 'video-trim' ? <VideoTrim/> : view === 'screen-freeze' ? <ScreenFrozen/> : view === 'screen-select' ? <ScreenOverlay /> : view === 'screen-ink' ? <ScreenInk/> : view === 'screen-hud' ? <ScreenHud/> : view === 'screen-tools' ? <ScreenTools/> : view === 'screen-indicator' ? <ScreenIndicator /> : view === "import" ? <FileImport/> : view === "sounds" ? <SoundLab /> : view === "recorder" ? <RecorderPreview /> : view === "record" ? <FloatingRecorder /> : view === "details" ? <Recorder /> : <SettingsRoot/>);
 
 import './plum-theme.css';

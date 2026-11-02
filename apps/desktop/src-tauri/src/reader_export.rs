@@ -14,14 +14,7 @@ pub fn cancel(app: &tauri::AppHandle) {
     }
 }
 pub fn sync_tray(app: &tauri::AppHandle) {
-    let app = app.clone();
-    let _ = app.clone().run_on_main_thread(move || {
-        let Some(menu) = app.try_state::<reader::TrayMenu>() else { return; };
-        let exporting = busy(&app);
-        let _ = menu.export.set_text(if exporting {"Guardando MP3…"} else {"Guardar lectura como MP3…"});
-        let _ = menu.export.set_enabled(!exporting && reader::current(&app).is_some());
-        let _ = menu.cancel_export.set_enabled(exporting);
-    });
+    let _=app.emit_to("tray-menu","reader-tray-state",());
 }
 struct Job(tauri::AppHandle);
 impl Drop for Job {

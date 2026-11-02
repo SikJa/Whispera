@@ -14,6 +14,13 @@ try {
   await image.waitForFunction(()=>window.calls.some(c=>c.command==='screen_frozen_ready'));
   assert.deepEqual(await frozen.boundingBox(),{x:0,y:0,width:640,height:480});
   assert.equal(await frozen.evaluate(e=>getComputedStyle(e).pointerEvents),'auto');
+  const pixels=await frozen.evaluate(async e=>{
+    const decoded=new Image();decoded.src=e.style.backgroundImage.slice(5,-2);await decoded.decode();
+    const canvas=document.createElement('canvas');canvas.width=2;canvas.height=2;
+    const ctx=canvas.getContext('2d');ctx.drawImage(decoded,0,0);
+    return [...ctx.getImageData(0,0,2,2).data];
+  });
+  assert.deepEqual(pixels,[255,0,0,255,0,255,0,255,0,0,255,255,255,255,255,255]);
   await image.evaluate(()=>{
     const button=document.createElement('button');button.id='behind';button.textContent='App detrás';
     Object.assign(button.style,{position:'fixed',left:'0',top:'0',width:'640px',height:'480px'});
@@ -50,6 +57,25 @@ try {
   await image.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))));
   assert.equal(await image.evaluate(()=>window.calls.some(c=>c.command==='screen_cancel_selection')),false,'an old load failure cannot cancel the newer capture');
   assert.deepEqual(errors,[]);
+
+  for(const failure of ['transfer','decode']) {
+    const failed=await browser.newPage();
+    await failed.addInitScript(installNativeMock,{kind:'image',selectionPhase:'selecting',frozenImage:[...bmp]});
+    await failed.addInitScript(failure=>{
+      const original=window.__TAURI_INTERNALS__.invoke;
+      window.__TAURI_INTERNALS__.invoke=(command,args)=>{
+        if(command==='screen_selection_image') {
+          if(failure==='transfer')return Promise.reject(Error('Synthetic transfer failure'));
+          return Promise.resolve(new Uint8Array([1,2,3]).buffer);
+        }
+        return original(command,args);
+      };
+    },failure);
+    await failed.goto(base+'/overlay.html?view=screen-freeze');
+    await failed.waitForFunction(()=>window.calls.some(c=>c.command==='screen_cancel_selection'));
+    assert.equal(await failed.getByLabel('Pantalla congelada para captura').count(),0,'failed frozen image cancels instead of exposing the live desktop');
+    await failed.close();
+  }
 
   const video=await browser.newPage();await video.addInitScript(installNativeMock,{kind:'video',selectionPhase:'selecting',frozenImage:[...bmp]});
   await video.goto(base+'/overlay.html?view=screen-freeze');

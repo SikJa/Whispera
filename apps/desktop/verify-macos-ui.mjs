@@ -21,7 +21,7 @@ function installPlatformFixture(platform) {
     return 'data:video/mp4;base64,';
   };
   const invoke = window.__TAURI_INTERNALS__.invoke;
-  window.__TAURI_INTERNALS__.invoke = async (command, args = {}) => {
+  window.__TAURI_INTERNALS__.invoke = async (command, args = {}, options) => {
     const intercepted = ['platform_permissions', 'platform_request_permission', 'startup_enabled', 'set_startup', 'windows_capture_shortcuts', 'video_trim_context', 'video_trim_save', 'read_history'];
     if (intercepted.includes(command)) window.calls.push({command, args});
     if (command === 'platform_permissions') return {...window.mockPermissions};
@@ -38,7 +38,7 @@ function installPlatformFixture(platform) {
     if (command === 'video_trim_context') return {path: mac ? '/tmp/fixture/clip.mp4' : 'C:\\fixture\\clip.mp4', name: 'clip.mp4', duration: 60, hasAudio: false};
     if (command === 'video_trim_save') return {path: 'fixture-trim.mp4', transcript: false, warning: ''};
     if (command === 'read_history') return [];
-    const result = await invoke(command, args);
+    const result = await invoke(command, args, options);
     if (command === 'snapshot') return {...result, keyConfigured: true, settings: {
       model: 'whisper-large-v3-turbo', pattern: 'wave', placement: 'right', autoCopy: true,
       soundTheme: 'cristal', sounds: false, recorderScale: .85, trimSilence: true,

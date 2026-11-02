@@ -28,3 +28,25 @@
 .sidebar-tooltip{position:fixed;z-index:1000;display:flex;align-items:center;min-height:32px;padding:0 11px;border-radius:8px;pointer-events:none;white-space:nowrap;font:500 12px "Instrument Sans Variable","Segoe UI",sans-serif;color:#171916;background:#eeeae2;box-shadow:0 5px 16px #0004}
 @media(max-width:640px){.settings-window .settings-sidebar[data-expanded=true] .brand-copy,.settings-window .settings-sidebar[data-expanded=true] .nav-group,.settings-window .settings-sidebar[data-expanded=true] .sidebar-bottom,.settings-window .settings-sidebar[data-expanded=true] nav button span{display:flex}.settings-window .settings-sidebar[data-expanded=true] .nav-group{display:block}.settings-window .settings-sidebar[data-expanded=true] nav button{justify-content:flex-start;padding:9px 10px}.settings-window .settings-sidebar[data-expanded=true] .sidebar-update>span{display:block}.settings-window .settings-sidebar[data-expanded=true] .sidebar-update>svg:last-child{display:block}}
 @media(prefers-reduced-motion:reduce){.settings-sidebar .brand-copy,.settings-sidebar .sidebar-label,.settings-sidebar .sidebar-count{transition:none}}
+/* Liquid sidebar: the SVG under the panel is the panel. */
+.settings-window{--liquid-fill:var(--app-surface,#2b2030);--liquid-sheen:color-mix(in srgb,var(--app-ink,#f8edf4) 9%,transparent);--liquid-bubble:color-mix(in srgb,var(--app-ink,#f8edf4) 35%,transparent);--badge:#ef4b4b}
+/* Theme text on the liquid: the theme guarantees contrast against --app-surface. */
+.settings-window .liquid-sidebar .desktop-brand{color:var(--app-ink,#f4f3ef)}
+.liquid-sidebar-host{position:relative;align-self:start;isolation:isolate}
+.liquid-panel{position:absolute;z-index:0;pointer-events:none;filter:drop-shadow(0 18px 28px #0008) drop-shadow(0 2px 5px #0006)}
+.liquid-body{fill:var(--liquid-fill)}
+.liquid-bubbles{fill:var(--liquid-bubble)}
+.settings-window .liquid-sidebar{z-index:1;background:transparent!important;border-color:transparent!important;box-shadow:none!important}
+.liquid-sidebar>*{transition:opacity .3s ease}
+.liquid-sidebar[data-filled=false]>*{opacity:0}
+.liquid-sidebar[data-filled=false] nav button>svg{transform:scale(.3);opacity:0}
+.liquid-sidebar[data-filled=true] nav button>svg{animation:liquid-pop .45s cubic-bezier(.34,1.56,.64,1) both;animation-delay:calc(var(--i,0)*32ms)}
+@keyframes liquid-pop{from{transform:scale(.3);opacity:0}}
+/* Labels slide in once the liquid has caught up with the new width. */
+.settings-window .settings-sidebar[data-expanded=true] .sidebar-label{transform:none;transition:opacity .22s ease .2s,transform .32s cubic-bezier(.22,1,.36,1) .2s}
+.settings-window .settings-sidebar[data-expanded=false] .sidebar-label{transform:translateX(-8px)}
+.sidebar-badge{position:absolute;z-index:2;display:grid;place-items:center;left:27px;top:6px;width:8px;height:8px;border-radius:999px;background:var(--badge);box-shadow:0 0 0 2px var(--liquid-fill);transition:left .42s cubic-bezier(.34,1.3,.64,1),top .42s cubic-bezier(.34,1.3,.64,1),width .42s cubic-bezier(.34,1.3,.64,1),height .42s cubic-bezier(.34,1.3,.64,1)}
+.sidebar-badge span{font:650 10px/1 "Instrument Sans Variable","Segoe UI",sans-serif;color:#fff;opacity:0;transition:opacity .15s}
+.settings-window .settings-sidebar[data-expanded=true] .sidebar-badge{left:calc(100% - 52px);top:calc(50% - 9px);width:42px;height:18px;transition-delay:.18s}
+.settings-window .settings-sidebar[data-expanded=true] .sidebar-badge span{opacity:1;transition-delay:.4s}
+@media(prefers-reduced-motion:reduce){.liquid-sidebar[data-filled=true] nav button>svg{animation:none}.sidebar-badge,.sidebar-badge span,.settings-window .settings-sidebar .sidebar-label{transition:none!important}}

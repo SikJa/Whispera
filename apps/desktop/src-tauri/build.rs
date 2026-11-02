@@ -3,6 +3,9 @@ fn main() {
     if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("macos") {
         build_macos_bridge();
     }
+    if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows") {
+        link_vulkan();
+    }
     tauri_build::build()
 }
 
@@ -16,6 +19,18 @@ fn build_windows_usage() {
     let result=Command::new(compiler).args(["/nologo","/target:exe","/optimize+","/reference:System.Web.Extensions.dll"])
         .arg(format!("/out:{}",out.join("WhisperaClaudeUsage.exe").display())).arg(source).output().expect("Windows .NET Framework compiler required");
     assert!(result.status.success(),"Claude usage bridge did not compile: {}{}",String::from_utf8_lossy(&result.stdout),String::from_utf8_lossy(&result.stderr));
+}
+
+// The local transcription engine links the Vulkan loader from the SDK. It is
+// delay-loaded so Whispera still starts on a PC whose video driver has no
+// vulkan-1.dll; local_asr checks for it before touching the engine.
+fn link_vulkan() {
+    println!("cargo:rerun-if-env-changed=VULKAN_SDK");
+    if let Ok(sdk) = std::env::var("VULKAN_SDK") {
+        println!("cargo:rustc-link-search=native={sdk}\\Lib");
+    }
+    println!("cargo:rustc-link-arg=/DELAYLOAD:vulkan-1.dll");
+    println!("cargo:rustc-link-lib=delayimp");
 }
 
 fn build_macos_bridge() {

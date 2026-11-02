@@ -23,6 +23,7 @@ jobs:
           cache: npm
           cache-dependency-path: apps/desktop/package-lock.json
       - uses: dtolnay/rust-toolchain@stable
+      - uses: ./.github/actions/vulkan-sdk
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: apps/desktop/src-tauri
@@ -39,7 +40,7 @@ jobs:
         working-directory: apps/desktop/src-tauri
         shell: pwsh
         run: |
-          cargo test --locked
+          cargo test --locked -- --test-threads=1
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Local reader protocol tests (silent)
         shell: pwsh
@@ -67,7 +68,7 @@ jobs:
         working-directory: apps/desktop
         shell: pwsh
         run: |
-          if ($env:WHISPERA_LIGHT_CHECKS -eq 'true') { npm run test:release -- settings-search application settings-layout hotkeys library-settings app-themes }
+          if ($env:WHISPERA_LIGHT_CHECKS -eq 'true') { npm run test:release -- fork-integration reader ai-usage hotkeys settings-search capture-audio capture-fullscreen capture-docks capture-controls video-recovery video-processing native-library library-media copy-export idle-heartbeat ink-layer app-themes capture-entry recorders }
           else { npm run test:release }
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Checksums

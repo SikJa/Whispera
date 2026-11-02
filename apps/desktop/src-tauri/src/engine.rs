@@ -105,14 +105,25 @@ pub fn control(app: &tauri::AppHandle, action: &str) -> Result<(), String> {
             crate::reader::stop(app);
             let settings: Settings = app.state::<Store>().get("settings")?;
             let rules: Vec<Rule> = app.state::<Store>().get("rules")?;
-            if groq::entry()?.get_password().is_err() {
+            let local = settings.transcription_engine == "local";
+            if local {
+                let model = crate::local_asr::spec(&settings.local_model).ok_or("Modelo local desconocido")?;
+                if !crate::local_asr::installed(model) {
+                    return Err(format!("Instalá el modelo local {} en Configuración › Transcripción", model.name));
+                }
+                crate::local_asr::preload(&settings);
+            } else if groq::entry()?.get_password().is_err() {
                 return Err("Configura o importa la clave Groq antes de grabar".into());
             }
             if !["recording", "paused"].contains(&state.phase.as_str()) {
                 system_audio::restore(&engine.mute_journal)?;
             }
-            let id = engine.recorder.start()?;
-            if settings.incremental_transcription {
+            let id = engine.recorder.start(&settings.microphone)?;
+            // The upload compressor runs at stop; load it while the user speaks.
+            if let Ok(binary) = crate::screen::ffmpeg(app) { crate::screen::warm_encoder(&binary); }
+            // A local model transcribes the whole take in well under a second, so
+            // the windowed upload pipeline only matters for Groq.
+            if settings.incremental_transcription && !local {
                 let dir = audio::session_dir(&engine.recorder.root, &id)?;
                 if let Err(e) = crate::incremental::prepare(&dir, settings.clone(), rules) {
                     let _ = engine.recorder.stop();
@@ -172,6 +183,11 @@ pub fn control(app: &tauri::AppHandle, action: &str) -> Result<(), String> {
             engine.recorder.change(|s| s.muted = !state.muted);
         }
         "stop" | "save" | "cancel" => {
+            // People release the shortcut while still finishing the last syllable;
+            // keep 200 ms more (as Hex does) so the final word is not clipped.
+            if action == "stop" && state.phase == "recording" {
+                std::thread::sleep(std::time::Duration::from_millis(200));
+            }
             let result = engine.recorder.stop();
             {
                 let live = engine.live.lock().map_err(|_| "Cola ocupada")?;
@@ -262,9 +278,13 @@ fn schedule(
                         engine.recorder.change(|s| s.error = e);
                     }
                 }
+                // A take with no speech (pressed by mistake) keeps the previous
+                // transcription as "the last one": nothing is copied or replaced.
                 engine.recorder.change(|s| {
                     s.phase = "done".into();
-                    s.text = text;
+                    if !text.trim().is_empty() {
+                        s.text = text;
+                    }
                     s.progress.clear();
                 });
                 let _ = app.state::<Store>().event(&format!("Dictado: texto listo en {text_ready_ms} ms; copia/pegado en {} ms",
@@ -326,12 +346,15 @@ async fn process(app: &tauri::AppHandle, id: &str) -> Result<String, String> {
                     if trim {
                         audio::trimmed_copy(&original)
                     } else {
-                        Ok(original)
+                        Ok(Some(original))
                     }
                 })
                 .await
                 .map_err(|e| e.to_string())??;
-                let text = groq::transcribe_raw(&prepared, &settings, &rules).await?;
+                let text = match prepared {
+                    Some(prepared) => groq::transcribe_raw(&prepared, &settings, &rules).await?,
+                    None => String::new(),
+                };
                 audio::write_new(&cache, text.as_bytes())?;
                 text
             };
@@ -397,7 +420,8 @@ pub async fn reveal_recording(id: String, app: tauri::AppHandle) -> Result<(), S
 pub fn shutdown(app: &tauri::AppHandle) {
     crate::reader::stop(app);
     let engine = app.state::<Engine>();
-    let _guard = engine.gate.lock().unwrap();
+    // Quitting or updating must still finish the recording if a worker panicked.
+    let _guard = engine.gate.lock().unwrap_or_else(|e| e.into_inner());
     if ["recording", "paused"].contains(&engine.recorder.snapshot().phase.as_str()) {
         let _ = engine.recorder.stop();
     }

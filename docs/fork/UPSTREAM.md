@@ -1,4 +1,24 @@
-# Upstream integration — 0.3.0-readaloud.9
+# Upstream integration — 0.3.0-readaloud.11
+
+Integrated `SikJa/Whispera` through **87253eb9af45ba0aec632a969bcc52745ea4e4a6** (Windows release 0.2.38), from the previous integration point **8266b3075a5eebdeb4f9e120c25e22c772c37b6d**. This includes 26 upstream commits. The fork baseline before this merge was **28e530af60c9ebdfa928e1c84cd9933f1bf5d4aa**.
+
+## Adaptations
+
+- Preserve installed profile identity, local reading, automatic reading-language selection, MP3, AI quota connections, settings search and visible installed version.
+- Move the reader controls and AI usage link into the new custom tray. Reader state uses phase/export metadata only; it does not expose selected text or start a synthesis helper to open the menu. Tray actions keep their own window authorization; general reader IPC remains restricted to Settings.
+- Keep exact-original-field validation when pasting. Retain upstream UWP target discovery and Antigravity-specific video path handling, without the fallback to a different active field.
+- Decode imported audio to a temporary local WAV when Local is selected. Local mode rejects cloud transcription requests before reading credentials or contacting Groq, including video transcript paths. To transcribe videos in Groq the user must explicitly select Groq and opt into video transcription.
+- Install the 1.2 MB speech detector only following an explicit local-model installation. Startup may reuse an installed detector, without downloading one. Model downloads retain upstream pinned revisions, byte lengths and SHA-256 verification.
+- Carry the per-video audio selection into the extracted capture view and monitor/fullscreen starts. Audio defaults remain unchanged, and failed preference loading blocks recording instead of silently choosing no audio.
+- Retain opt-in defaults for global clipboard collection, video transcription and transcript attachments. Keep the recording consent check while adopting upstream per-file transcript job leases.
+- Preserve the fork's package version and license notices. Add the upstream Vulkan SDK build step together with the Windows reader and quota helpers; keep author-only release/macOS publication restrictions and manual installation.
+- Resolve 14 conflicting files. Ordinary native tests run sequentially once, matching the upstream fixtures' shared native initialization. Optional device/network fixtures remain ignored. Focus UI checks on changed capture, tray and engine paths plus the fork's reader, MP3, quota and search features.
+
+Build results and installer hashes are recorded with the downloaded installer. This integration is validated using synthetic inputs and mocked UI IPC; real microphone/GPU quality, physical monitors and Windows application focus still require a user-led device check. No private recordings, selected text or account settings are used in the fixtures.
+
+## Earlier integration
+
+### 0.3.0-readaloud.9
 
 Integrated repository: https://github.com/SikJa/Whispera
 

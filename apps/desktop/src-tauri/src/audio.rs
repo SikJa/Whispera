@@ -39,7 +39,7 @@ pub struct Recovery {
 }
 type Reply = mpsc::Sender<Result<String, String>>;
 enum Command {
-    Start(Reply),
+    Start(String, Reply),
     Pause(Reply),
     Stop(Reply),
 }
@@ -167,8 +167,9 @@ impl Recorder {
             .map_err(|_| "El motor de audio se cerro")?;
         rx.recv().map_err(|_| "El motor de audio no respondio")?
     }
-    pub fn start(&self) -> Result<String, String> {
-        self.request(Command::Start)
+    pub fn start(&self, device: &str) -> Result<String, String> {
+        let device = device.to_owned();
+        self.request(|reply| Command::Start(device, reply))
     }
     pub fn pause(&self) -> Result<String, String> {
         self.request(Command::Pause)
@@ -202,11 +203,34 @@ fn send_samples<T: Copy>(
         .collect();
     input.send(mono);
 }
-fn begin(root: &Path) -> Result<Capture, String> {
+/// Names of the microphones Windows/macOS currently expose, for Configuración.
+pub fn input_devices() -> Vec<String> {
+    cpal::default_host()
+        .input_devices()
+        .map(|devices| devices.filter_map(|device| device.name().ok()).collect())
+        .unwrap_or_default()
+}
+// An empty or unplugged choice falls back to the system default microphone.
+fn input_device(preferred: &str) -> Option<cpal::Device> {
+    let host = cpal::default_host();
+    (!preferred.is_empty())
+        .then(|| host.input_devices().ok()?.find(|device| device.name().is_ok_and(|name| name == preferred)))
+        .flatten()
+        .or_else(|| host.default_input_device())
+}
+// A microphone that fails to open leaves no audio to recover; do not leave an
+// empty session folder behind, since retention only removes finished sessions.
+fn begin(root: &Path, preferred: &str) -> Result<Capture, String> {
+    let mut created = None;
+    let result = open_capture(root, preferred, &mut created);
+    if let (Err(_), Some(dir)) = (&result, created) {
+        let _ = fs::remove_dir_all(dir);
+    }
+    result
+}
+fn open_capture(root: &Path, preferred: &str, created: &mut Option<PathBuf>) -> Result<Capture, String> {
     crate::permissions::ensure_microphone()?;
-    let device = cpal::default_host()
-        .default_input_device()
-        .ok_or("No hay microfono disponible")?;
+    let device = input_device(preferred).ok_or("No hay microfono disponible")?;
     let config = device
         .default_input_config()
         .map_err(|e| format!("No se pudo abrir el microfono: {e}"))?;
@@ -215,6 +239,7 @@ fn begin(root: &Path) -> Result<Capture, String> {
     let id = uuid::Uuid::new_v4().to_string();
     let dir = root.join(&id);
     fs::create_dir(&dir).map_err(|e| e.to_string())?;
+    *created = Some(dir.clone());
     let manifest = Manifest {
         id,
         sample_rate: rate,
@@ -265,8 +290,21 @@ fn begin(root: &Path) -> Result<Capture, String> {
                 error,
                 None,
             ),
+            // Some USB and studio interfaces only expose 32-bit or 64-bit formats.
+            cpal::SampleFormat::I32 => device.build_input_stream(
+                &cfg,
+                move |data: &[i32], _| send_samples(data, channels, |x| x as f32 / 2_147_483_648., &f, &p),
+                error,
+                None,
+            ),
+            cpal::SampleFormat::F64 => device.build_input_stream(
+                &cfg,
+                move |data: &[f64], _| send_samples(data, channels, |x| x as f32, &f, &p),
+                error,
+                None,
+            ),
             _ => return Err(
-                "Formato del microfono no compatible. Selecciona PCM 16 bits o float32 en el sistema."
+                "Formato del microfono no compatible. Selecciona PCM 16/32 bits o float en el sistema."
                     .into(),
             ),
         }
@@ -353,6 +391,14 @@ fn record_capture_error(dir: &Path, error: &str) {
         let _ = write_new(&dir.join("capture-error.json"), &bytes);
     }
 }
+fn receive_command(rx: &mpsc::Receiver<Command>, capturing: bool) -> Result<Command, mpsc::RecvTimeoutError> {
+    if capturing {
+        rx.recv_timeout(Duration::from_millis(10))
+    } else {
+        rx.recv().map_err(|_| mpsc::RecvTimeoutError::Disconnected)
+    }
+}
+
 fn worker(rx: mpsc::Receiver<Command>, view: Arc<Mutex<RecordingState>>, root: PathBuf) {
     let mut capture: Option<Capture> = None;
     loop {
@@ -374,21 +420,21 @@ fn worker(rx: mpsc::Receiver<Command>, view: Arc<Mutex<RecordingState>>, root: P
                     }
                     record_capture_error(&dir, &error);
                 }
-                let mut s = view.lock().unwrap();
+                let mut s = view.lock().unwrap_or_else(|e| e.into_inner());
                 s.phase = "error".into();
                 s.error = format!("{error} El audio guardado esta en Recuperar.");
             }
         }
-        match rx.recv_timeout(Duration::from_millis(10)) {
-            Ok(Command::Start(reply)) => {
+        match receive_command(&rx, capture.is_some()) {
+            Ok(Command::Start(device, reply)) => {
                 if capture.is_some() {
                     let _ = reply.send(Err("Ya estas grabando".into()));
                     continue;
                 }
-                match begin(&root) {
+                match begin(&root, &device) {
                     Ok(c) => {
                         let id = c.dir.file_name().unwrap().to_string_lossy().into_owned();
-                        *view.lock().unwrap() = RecordingState {
+                        *view.lock().unwrap_or_else(|e| e.into_inner()) = RecordingState {
                             phase: "recording".into(),
                             session: id.clone(),
                             ..Default::default()
@@ -405,7 +451,7 @@ fn worker(rx: mpsc::Receiver<Command>, view: Arc<Mutex<RecordingState>>, root: P
                 if let Some(c) = capture.as_ref() {
                     let paused = !c.paused.load(Ordering::Relaxed);
                     c.paused.store(paused, Ordering::Relaxed);
-                    view.lock().unwrap().phase = if paused { "paused" } else { "recording" }.into();
+                    view.lock().unwrap_or_else(|e| e.into_inner()).phase = if paused { "paused" } else { "recording" }.into();
                     let _ = reply.send(Ok(String::new()));
                 } else {
                     let _ = reply.send(Err("No hay grabacion activa".into()));
@@ -418,7 +464,7 @@ fn worker(rx: mpsc::Receiver<Command>, view: Arc<Mutex<RecordingState>>, root: P
                     Err("No hay grabacion activa".into())
                 };
                 {
-                    let mut s = view.lock().unwrap();
+                    let mut s = view.lock().unwrap_or_else(|e| e.into_inner());
                     match &result {
                         Ok(_) => s.phase = "ready".into(),
                         Err(e) => {
@@ -486,14 +532,15 @@ pub fn recoveries(root: &Path) -> Result<Vec<Recovery>, String> {
     Ok(result)
 }
 // Work only on a derived WAV. Never rewrite the durable microphone PCM.
-pub fn trimmed_copy(path: &Path) -> Result<PathBuf, String> {
+// Ok(None) means nothing audible: uploading it only makes Whisper invent words.
+pub fn trimmed_copy(path: &Path) -> Result<Option<PathBuf>, String> {
     let mut reader = hound::WavReader::open(path).map_err(|e| e.to_string())?;
     let spec = reader.spec();
     if spec.channels != 1
         || spec.bits_per_sample != 16
         || spec.sample_format != hound::SampleFormat::Int
     {
-        return Ok(path.to_path_buf());
+        return Ok(Some(path.to_path_buf()));
     }
     let samples: Vec<i16> = reader
         .samples::<i16>()
@@ -503,12 +550,15 @@ pub fn trimmed_copy(path: &Path) -> Result<PathBuf, String> {
     let audible: Vec<bool> = samples
         .chunks(chunk)
         .map(|s| {
-            s.iter().map(|x| (*x as f64 / 32768.).powi(2)).sum::<f64>() / s.len() as f64
+            // Variance, not raw power: a microphone DC offset is not sound.
+            let n = s.len() as f64;
+            let mean = s.iter().map(|x| *x as f64 / 32768.).sum::<f64>() / n;
+            s.iter().map(|x| (*x as f64 / 32768. - mean).powi(2)).sum::<f64>() / n
                 > 0.005f64.powi(2)
         })
         .collect();
     if !audible.iter().any(|x| *x) {
-        return Ok(path.to_path_buf());
+        return Ok(None);
     }
     let output = path.with_extension("trim.wav");
     let mut writer = hound::WavWriter::create(&output, spec).map_err(|e| e.to_string())?;
@@ -521,7 +571,7 @@ pub fn trimmed_copy(path: &Path) -> Result<PathBuf, String> {
         }
     }
     writer.finalize().map_err(|e| e.to_string())?;
-    Ok(output)
+    Ok(Some(output))
 }
 // Raw PCM + immutable format metadata remain the recovery source, even if a WAV is interrupted.
 pub fn materialize(dir: &Path, part_bytes: usize) -> Result<Vec<PathBuf>, String> {
@@ -575,6 +625,29 @@ pub fn materialize(dir: &Path, part_bytes: usize) -> Result<Vec<PathBuf>, String
 mod tests {
     use super::*;
     #[test]
+    fn performance_idle_receive_waits_for_command_without_polling() {
+        let (tx, rx) = mpsc::channel();
+        let sender = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(100));
+            let (reply, _) = mpsc::channel();
+            tx.send(Command::Stop(reply)).unwrap();
+        });
+        let mut wakeups = 0;
+        loop {
+            match receive_command(&rx, false) {
+                Ok(Command::Stop(_)) => break,
+                Err(mpsc::RecvTimeoutError::Timeout) => wakeups += 1,
+                _ => panic!("Unexpected idle command result"),
+            }
+        }
+        sender.join().unwrap();
+        assert_eq!(wakeups, 0, "Idle audio worker should wake only for commands");
+        let (tx, rx) = mpsc::channel();
+        assert!(matches!(receive_command(&rx, true), Err(mpsc::RecvTimeoutError::Timeout)));
+        drop(tx);
+        assert!(matches!(receive_command(&rx, false), Err(mpsc::RecvTimeoutError::Disconnected)));
+    }
+    #[test]
     fn trim_preserves_source_and_guard_audio() {
         let dir = std::env::temp_dir().join(format!("whispera-trim-{}", uuid::Uuid::new_v4()));
         fs::create_dir(&dir).unwrap();
@@ -588,7 +661,7 @@ mod tests {
         let mut w = hound::WavWriter::create(&path, spec).unwrap();
         for i in 0..160000 {
             w.write_sample(if (72000..80000).contains(&i) {
-                4000i16
+                (4000. * (i as f64 * 0.3).sin()) as i16
             } else {
                 0
             })
@@ -596,7 +669,7 @@ mod tests {
         }
         w.finalize().unwrap();
         let before = fs::read(&path).unwrap();
-        let out = trimmed_copy(&path).unwrap();
+        let out = trimmed_copy(&path).unwrap().unwrap();
         assert_eq!(fs::read(&path).unwrap(), before);
         assert_ne!(out, path);
         let trimmed = hound::WavReader::open(out).unwrap();

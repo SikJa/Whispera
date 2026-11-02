@@ -22,36 +22,54 @@ pub fn corrections(text: &str, rules: &[Rule]) -> String {
 // Recompiling the same regex for every phrase adds avoidable latency.
 pub fn corrections_many(texts: &[&str], rules: &[Rule]) -> Vec<String> {
     let mut outputs: Vec<String> = texts.iter().map(|text|(*text).to_owned()).collect();
+    // Stored rules keep what the user typed; a stray space must not stop a
+    // match at the end of a sentence or swallow the space beside the word.
     let mut active: Vec<_> = rules
         .iter()
         .filter(|r| r.enabled && !r.source.trim().is_empty())
+        .map(|r| (r.source.trim(), r.target.trim()))
         .collect();
-    active.sort_by_key(|r| std::cmp::Reverse(r.source.chars().count()));
-    for rule in active {
-        if let Ok(pattern) = regex::RegexBuilder::new(&regex::escape(&rule.source))
-            .case_insensitive(true)
-            .build()
-        {
-            static WORD: OnceLock<regex::Regex> = OnceLock::new();
-            let word = WORD.get_or_init(|| regex::Regex::new(r"^\w$").unwrap());
-            for output in &mut outputs {
+    active.sort_by_key(|(source, _)| std::cmp::Reverse(source.chars().count()));
+    let word = |c: char| c.is_alphanumeric() || c == '_';
+    for (source, target) in active {
+        // Whisper is inconsistent with accents and joins phrases with spaces,
+        // hyphens or commas: match on folded text and accept any of those.
+        let tokens: Vec<String> = fold(source)
+            .split(|c: char| c.is_whitespace() || c == '-')
+            .filter(|t| !t.is_empty())
+            .map(regex::escape)
+            .collect();
+        if tokens.is_empty() { continue; }
+        let Ok(pattern) = regex::Regex::new(&tokens.join(r"(?:\s*[,\-]\s*|\s+)")) else { continue; };
+        for output in &mut outputs {
+            // Each folded char remembers the original byte range it came from.
+            let mut folded = String::new();
+            let mut spans: Vec<(usize, usize, usize)> = vec![];
+            for (start, c) in output.char_indices() {
+                let end = start + c.len_utf8();
+                for f in fold(&c.to_string()).chars() {
+                    spans.push((folded.len(), start, end));
+                    folded.push(f);
+                }
+            }
             let mut next = String::new();
             let mut previous = 0;
-            for m in pattern.find_iter(&output) {
-                let left = output[..m.start()].chars().next_back();
-                let right = output[m.end()..].chars().next();
-                if left.is_some_and(|c| word.is_match(&c.to_string()))
-                    || right.is_some_and(|c| word.is_match(&c.to_string()))
+            for m in pattern.find_iter(&folded) {
+                let Ok(first) = spans.binary_search_by_key(&m.start(), |s| s.0) else { continue; };
+                let last = match spans.binary_search_by_key(&m.end(), |s| s.0) { Ok(i) | Err(i) => i - 1 };
+                let (from, to) = (spans[first].1, spans[last].2);
+                if from < previous
+                    || output[..from].chars().next_back().is_some_and(word)
+                    || output[to..].chars().next().is_some_and(word)
                 {
                     continue;
                 }
-                next.push_str(&output[previous..m.start()]);
-                next.push_str(&rule.target);
-                previous = m.end();
+                next.push_str(&output[previous..from]);
+                next.push_str(target);
+                previous = to;
             }
             next.push_str(&output[previous..]);
             *output = next;
-            }
         }
     }
     outputs
@@ -115,6 +133,16 @@ async fn transcribe_inner(
     rules: &[Rule],
     apply: bool,
 ) -> Result<String, String> {
+    if settings.transcription_engine == "local" {
+        if !path.extension().is_some_and(|e| e.eq_ignore_ascii_case("wav")) {
+            return Err("El modo local necesita audio WAV. Importá el archivo desde Whispera para convertirlo sin enviarlo a Groq.".into());
+        }
+        let (path, local) = (path.to_owned(), settings.clone());
+        let text = tauri::async_runtime::spawn_blocking(move || crate::local_asr::transcribe(&path, &local))
+            .await
+            .map_err(|e| e.to_string())??;
+        return Ok(if apply { corrections(&text, rules) } else { text });
+    }
     let json = request(path, settings, rules, false).await?;
     let text = json
         .get("text")
@@ -141,6 +169,44 @@ pub async fn request_segments(path: &Path, settings: &Settings, rules: &[Rule]) 
 }
 
 async fn request_format(path: &Path, settings: &Settings, rules: &[Rule], granularity: Option<&str>) -> Result<serde_json::Value, String> {
+    let prepared = prepare_upload(path).await?;
+    request_prepared(prepared, settings, rules, granularity).await
+}
+
+#[derive(Clone)]
+struct PreparedUpload {
+    bytes: Vec<u8>,
+    extension: String,
+    background: bool,
+    silent: bool,
+    /// The recording contains voice-like energy (see `has_speech`).
+    speech: bool,
+}
+
+// Scoped to one immutable incremental part; never persists audio or credentials.
+pub struct Upload {
+    path: std::path::PathBuf,
+    prepared: Option<PreparedUpload>,
+}
+impl Upload {
+    pub fn new(path: &Path) -> Self {
+        Self { path: path.to_path_buf(), prepared: None }
+    }
+
+    async fn prepare(&mut self) -> Result<&PreparedUpload, String> {
+        if self.prepared.is_none() {
+            self.prepared = Some(prepare_upload(&self.path).await?);
+        }
+        Ok(self.prepared.as_ref().unwrap())
+    }
+
+    pub async fn request(&mut self, settings: &Settings, rules: &[Rule], word_times: bool) -> Result<serde_json::Value, String> {
+        let prepared = self.prepare().await?.clone();
+        request_prepared(prepared, settings, rules, word_times.then_some("word")).await
+    }
+}
+
+async fn prepare_upload(path: &Path) -> Result<PreparedUpload, String> {
     let ext = path
         .extension()
         .and_then(|s| s.to_str())
@@ -161,32 +227,62 @@ async fn request_format(path: &Path, settings: &Settings, rules: &[Rule], granul
             "Selecciona un archivo de audio de hasta 24 MB. El original no se modifica.".into(),
         );
     }
-    let bytes = tokio::fs::read(path)
+    let mut bytes = tokio::fs::read(path)
         .await
         .map_err(|_| "No se pudo leer el audio")?;
     if ext == "wav" && digital_silence(&bytes) {
-        return Ok(serde_json::json!({"text":"","words":[],"segments":[]}));
+        return Ok(PreparedUpload { bytes: Vec::new(), extension: ext, background: false, silent: true, speech: false });
     }
+    // Silero hears no voice (a bump, a click, room noise): send nothing, so Whisper
+    // has no chance to invent "Gracias". Without the detector the checks below apply.
+    if ext == "wav" {
+        let probe = bytes.clone();
+        let verdict = tauri::async_runtime::spawn_blocking(move || crate::local_asr::contains_speech(&probe)).await.ok().flatten();
+        if verdict == Some(false) {
+            return Ok(PreparedUpload { bytes: Vec::new(), extension: ext, background: false, silent: true, speech: false });
+        }
+    }
+    // Keep every nonzero sample and its original time coordinate. Long digital
+    // silence at the end can make Whisper invent a closing phrase. This only
+    // shortens the upload copy; it never filters recognized words or the source.
+    if ext == "wav" { crate::upload_tail::trim(&mut bytes); }
     // Quiet microphone noise is not digital zero. Only reject the known closing
-    // hallucination when the *original* PCM is stationary background; quiet or
-    // brief speech keeps its modulation and is never rejected by volume alone.
+    // hallucination when the PCM is stationary background; quiet or brief speech
+    // keeps its modulation and is never rejected by volume alone. The retained
+    // 200 ms zero tail also preserves the non-stationary classification after trim.
     let stationary_background = ext == "wav" && stationary_background(&bytes);
+    // Imported mp3/m4a/... cannot be measured here; treat them as speech.
+    let speech = ext != "wav" || has_speech(&bytes);
     let (bytes,ext)=crate::lossless_upload::prepare(bytes,ext).await;
     if bytes.is_empty() {return Err("No se pudo preparar el envío. El audio original sigue guardado.".into());}
-    let key = entry()?
+    Ok(PreparedUpload { bytes, extension: ext, background: stationary_background, silent: false, speech })
+}
+
+async fn request_prepared(prepared: PreparedUpload, settings: &Settings, rules: &[Rule], granularity: Option<&str>) -> Result<serde_json::Value, String> {
+    if settings.transcription_engine=="local" {return Err("El modo local no envía audio a Groq. Para transcribir videos en la nube, seleccioná Groq expresamente.".into());}
+    send_prepared(prepared, settings, rules, granularity,
+        "https://api.groq.com/openai/v1/audio/transcriptions", || entry()?
         .get_password()
-        .map_err(|_| "Configura la clave de Groq en Transcripcion")?;
-    let file = multipart::Part::bytes(bytes).file_name(format!("audio.{ext}"));
+        .map_err(|_| "Configura la clave de Groq en Transcripcion".into())).await
+}
+
+async fn send_prepared(prepared: PreparedUpload, settings: &Settings, rules: &[Rule], granularity: Option<&str>, url: &str,
+    read_key: impl FnOnce() -> Result<String, String>) -> Result<serde_json::Value, String> {
+    if prepared.silent { return Ok(serde_json::json!({"text":"","words":[],"segments":[]})); }
+    let key = read_key()?;
+    let file = multipart::Part::bytes(prepared.bytes).file_name(format!("audio.{}", prepared.extension));
     let mut form = multipart::Form::new()
         .part("file", file)
         .text("model", settings.model.clone())
-        .text(
-            "response_format",
-            if granularity.is_some() { "verbose_json" } else { "json" },
-        )
+        // verbose_json always: its per-segment no_speech_prob is what lets us
+        // discard words Whisper invents over background noise.
+        .text("response_format", "verbose_json")
         .text("temperature", "0");
     if let Some(value) = granularity {
         form = form.text("timestamp_granularities[]", value.to_owned());
+        if value != "segment" {
+            form = form.text("timestamp_granularities[]", "segment");
+        }
     }
     if !rules.is_empty() {
         form = form.text("prompt", prompt(rules));
@@ -195,24 +291,147 @@ async fn request_format(path: &Path, settings: &Settings, rules: &[Rule], granul
         form = form.text("language", settings.language.clone());
     }
     let response = client()?
-        .post("https://api.groq.com/openai/v1/audio/transcriptions")
+        .post(url)
         .bearer_auth(key)
         .multipart(form)
         .send()
         .await
         .map_err(|_| "No se pudo conectar con Groq. El audio original sigue disponible.")?;
     if !response.status().is_success() {
-        return Err(format!(
-            "Groq respondio HTTP {}. El audio original sigue disponible para reintentar.",
-            response.status().as_u16()
-        ));
+        return Err(http_error(response.status().as_u16()));
     }
     let mut json: serde_json::Value = response
         .json()
         .await
         .map_err(|_| "Groq devolvio una respuesta no valida")?;
-    suppress_background_closing(&mut json, stationary_background);
+    suppress_background_closing(&mut json, prepared.background);
+    drop_silent_segments(&mut json);
+    drop_phantom_text(&mut json, prepared.speech);
     Ok(json)
+}
+
+pub(crate) fn fold(text: &str) -> String {
+    text.chars()
+        .flat_map(char::to_lowercase)
+        .map(|c| match c {
+            'á' | 'à' | 'â' | 'ä' | 'ã' | 'å' => 'a',
+            'é' | 'è' | 'ê' | 'ë' => 'e',
+            'í' | 'ì' | 'î' | 'ï' => 'i',
+            'ó' | 'ò' | 'ô' | 'ö' | 'õ' => 'o',
+            'ú' | 'ù' | 'û' | 'ü' => 'u',
+            'ç' => 'c',
+            other => other,
+        })
+        .collect()
+}
+pub(crate) fn letters(text: &str) -> String {
+    fold(text).chars().filter(|c| c.is_alphanumeric()).collect()
+}
+// Phrases Whisper is known to produce from subtitle training data when nobody speaks.
+fn known_hallucination(normalized: &str) -> bool {
+    normalized.contains("amaraorg")
+        || [
+            "gracias", "graciasporver", "graciasporvermivideo", "suscribete", "suscribeteamicanal",
+            "musica", "thankyou", "thanksforwatching", "thankyouforwatching", "music", "obrigado",
+            "obrigadoporassistir", "s", "eh", "mm", "mmm", "ah",
+        ]
+        .contains(&normalized)
+}
+// Whisper's own decoding rule treats a window as silence when the model thinks
+// there is no speech AND its tokens are low-confidence. Groq reports both.
+fn silent_segment(segment: &serde_json::Value) -> bool {
+    let no_speech = segment["no_speech_prob"].as_f64().unwrap_or(0.);
+    let logprob = segment["avg_logprob"].as_f64().unwrap_or(0.);
+    let text = letters(segment["text"].as_str().unwrap_or(""));
+    (no_speech > 0.6 && logprob < -1.0)
+        || (no_speech > 0.4 && known_hallucination(&text))
+        || (no_speech > 0.8 && text.chars().count() <= 2)
+}
+// Voice evidence: at least ~0.3 s of 30 ms frames that are loud enough for
+// speech and stand clearly above the recording's own noise floor. A fan, hum or
+// open microphone never produces that, however Whisper labels its output.
+fn has_speech(bytes: &[u8]) -> bool {
+    let Ok(mut wav) = hound::WavReader::new(std::io::Cursor::new(bytes)) else { return true };
+    let spec = wav.spec();
+    if spec.channels != 1 || spec.bits_per_sample != 16 || spec.sample_format != hound::SampleFormat::Int { return true; }
+    let size = (spec.sample_rate as usize * 3 / 100).max(1);
+    let samples: Vec<f64> = wav.samples::<i16>().filter_map(Result::ok).map(|s| f64::from(s) / 32768.).collect();
+    let mut levels: Vec<f64> = samples.chunks(size).filter(|c| c.len() == size).map(|c| {
+        let mean = c.iter().sum::<f64>() / c.len() as f64;
+        (c.iter().map(|s| (s - mean).powi(2)).sum::<f64>() / c.len() as f64).sqrt()
+    }).collect();
+    if levels.is_empty() { return false; }
+    let loud = levels.clone();
+    levels.sort_by(f64::total_cmp);
+    let floor = levels[levels.len() / 5].max(0.002);
+    loud.iter().filter(|level| **level > 0.02 && **level > floor * 3.).count() >= 10
+}
+fn repeated_letters(normalized: &str) -> bool {
+    let mut chars = normalized.chars();
+    chars.next().is_some_and(|first| chars.all(|c| c == first))
+}
+// Whisper fills silence with subtitle credits, "Gracias" or strings like "ss.s".
+// Drop a whole result made only of such phrases when the audio has no voice.
+fn drop_phantom_text(json: &mut serde_json::Value, speech: bool) {
+    if speech { return; }
+    let text = letters(json["text"].as_str().unwrap_or(""));
+    if text.is_empty() { return; }
+    let phantom = known_hallucination(&text) || repeated_letters(&text) || text.chars().count() <= 3
+        || json["text"].as_str().unwrap_or("").split(|c: char| ".,;!?¡¿\n".contains(c)).map(letters).filter(|s| !s.is_empty()).all(|s| known_hallucination(&s) || repeated_letters(&s));
+    if phantom {
+        json["text"] = serde_json::json!("");
+        for key in ["segments", "words"] {
+            if json.get(key).is_some() { json[key] = serde_json::json!([]); }
+        }
+    }
+}
+/// The same phantom rule for a plain transcript, given the WAV it came from.
+pub(crate) fn drop_phantom(text: &str, wav: &[u8]) -> String {
+    let mut json = serde_json::json!({ "text": text });
+    drop_phantom_text(&mut json, has_speech(wav));
+    json["text"].as_str().unwrap_or("").to_owned()
+}
+fn drop_silent_segments(json: &mut serde_json::Value) {
+    if let Some(segments) = json.get("segments").and_then(|s| s.as_array()).cloned() {
+        let (kept, dropped): (Vec<_>, Vec<_>) = segments.into_iter().partition(|s| !silent_segment(s));
+        if !dropped.is_empty() {
+            let text: String = kept.iter().filter_map(|s| s["text"].as_str()).collect();
+            json["text"] = serde_json::json!(text.trim());
+            let ranges: Vec<(f64, f64)> = dropped
+                .iter()
+                .filter_map(|s| Some((s["start"].as_f64()?, s["end"].as_f64()?)))
+                .collect();
+            if let Some(words) = json.get("words").and_then(|w| w.as_array()).cloned() {
+                json["words"] = serde_json::json!(words
+                    .into_iter()
+                    .filter(|w| {
+                        let mid = (w["start"].as_f64().unwrap_or(-1.) + w["end"].as_f64().unwrap_or(-1.)) / 2.;
+                        !ranges.iter().any(|(a, b)| mid >= *a && mid <= *b)
+                    })
+                    .collect::<Vec<_>>());
+            }
+            json["segments"] = serde_json::json!(kept);
+        }
+    }
+    // A lone letter ("S", "Y") is never a real dictation; it is noise read as speech.
+    if letters(json["text"].as_str().unwrap_or("")).chars().count() <= 1 {
+        json["text"] = serde_json::json!("");
+        for key in ["segments", "words"] {
+            if json.get(key).is_some() { json[key] = serde_json::json!([]); }
+        }
+    }
+}
+
+// A bare status code does not tell the user whether to fix the key or wait.
+fn http_error(status: u16) -> String {
+    let reason = match status {
+        401 | 403 => "la clave Groq es inválida o fue revocada. Revisala en Configuración".into(),
+        413 => "el audio supera el tamaño que acepta Groq".into(),
+        429 => "se alcanzó el límite de uso de Groq. Esperá unos minutos".into(),
+        500..=599 => format!("Groq no está disponible ahora (HTTP {status}). Probá de nuevo en unos minutos"),
+        _ => format!("Groq respondió HTTP {status}"),
+    };
+    format!("No se pudo transcribir: {reason}. El audio original sigue disponible para reintentar.")
 }
 
 fn suppress_background_closing(json: &mut serde_json::Value, background: bool) {
@@ -230,10 +449,19 @@ fn stationary_background(bytes: &[u8]) -> bool {
     let size=(spec.sample_rate/50) as usize; // 20ms windows, no resampling or model.
     let (mut count,mut sum,mut squares,mut windows)=(0usize,0f64,0f64,0usize);
     let (mut low,mut high)=(f64::INFINITY,0f64);
+    let mut boundary_zero = false;
     for sample in wav.samples::<i16>() {
         let Ok(sample)=sample else{return false};let sample=f64::from(sample);
         sum+=sample;squares+=sample*sample;count+=1;
         if count==size {
+            // Ignore exact digital padding only at the boundaries. An internal
+            // silent window is modulation, so it must still preserve speech.
+            if squares == 0. {
+                boundary_zero |= windows > 0;
+                (count,sum,squares)=(0,0.,0.);
+                continue;
+            }
+            if boundary_zero { return false; }
             let power=(squares/count as f64-(sum/count as f64).powi(2)).max(0.);
             low=low.min(power);high=high.max(power);windows+=1;
             (count,sum,squares)=(0,0.,0.);
@@ -241,7 +469,7 @@ fn stationary_background(bytes: &[u8]) -> bool {
     }
     // Any quiet/short/unsupported/ambiguous signal is kept. This is intentionally
     // narrower than VAD: it does not remove words or trim the user's recording.
-    if count>0 && squares/count as f64-(sum/count as f64).powi(2)>high*1.8{return false;}
+    if count>0 && ((boundary_zero && squares>0.) || squares/count as f64-(sum/count as f64).powi(2)>high*1.8){return false;}
     windows>=5 && high>0. && low>0. && high/low<1.8
 }
 
@@ -257,6 +485,133 @@ fn digital_silence(bytes:&[u8])->bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn performance_incremental_upload_is_prepared_once_and_retains_original_bytes() {
+        let path = std::env::temp_dir().join(format!("whispera-upload-reuse-{}.wav", uuid::Uuid::new_v4()));
+        let mut cursor = std::io::Cursor::new(Vec::new());
+        {
+            let mut writer = hound::WavWriter::new(&mut cursor, hound::WavSpec {
+                channels: 1, sample_rate: 16000, bits_per_sample: 16, sample_format: hound::SampleFormat::Int,
+            }).unwrap();
+            for i in 0..16000 { writer.write_sample(if (i / 1600) % 2 == 0 { 0i16 } else { 1000 }).unwrap(); }
+            writer.finalize().unwrap();
+        }
+        let original = cursor.into_inner();
+        std::fs::write(&path, &original).unwrap();
+        let retained = tauri::async_runtime::block_on(async {
+            let mut upload = Upload::new(&path);
+            let prepared = upload.prepare().await.unwrap();
+            assert_eq!(prepared.bytes, original);
+            assert!(!prepared.silent && !prepared.background);
+            std::fs::remove_file(&path).unwrap();
+            let mut outcomes = Vec::new();
+            for _ in 0..3 { outcomes.push(upload.prepare().await.map(|next| next.bytes == original)); }
+            outcomes
+        });
+        assert_eq!(retained, vec![Ok(true); 3], "Retry preparation must not reopen or change immutable audio");
+    }
+
+    #[test]
+    fn prepared_attempts_preserve_payload_options_sanitization_and_fresh_credentials() {
+        use std::io::{BufRead, BufReader, Read, Write};
+        let server = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}/fixture", server.local_addr().unwrap());
+        let worker = std::thread::spawn(move || {
+            let mut requests = Vec::new();
+            for attempt in 0..3 {
+                let (mut stream, _) = server.accept().unwrap();
+                stream.set_read_timeout(Some(std::time::Duration::from_secs(5))).unwrap();
+                let mut input = BufReader::new(stream.try_clone().unwrap());
+                let mut headers = String::new();
+                let mut length = None;
+                loop {
+                    let mut line = String::new();
+                    assert!(input.read_line(&mut line).unwrap() > 0);
+                    if line == "\r\n" { break; }
+                    if let Some(value) = line.to_lowercase().strip_prefix("content-length:") {
+                        length = Some(value.trim().parse::<usize>().unwrap());
+                    }
+                    headers.push_str(&line);
+                }
+                let mut body = vec![0; length.unwrap()];
+                input.read_exact(&mut body).unwrap();
+                requests.push((headers, body));
+                let status = if attempt < 2 { "500 Internal Server Error" } else { "200 OK" };
+                let body = r#"{"text":"Gracias.","words":[{"word":"Gracias.","start":0,"end":1}]}"#;
+                write!(stream, "HTTP/1.1 {status}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len()).unwrap();
+            }
+            requests
+        });
+        let settings = Settings { language: "es".into(), ..Default::default() };
+        let rules = vec![rule("whisper", "Whispera")];
+        let payload = b"synthetic immutable payload".to_vec();
+        let mut reads = 0;
+        tauri::async_runtime::block_on(async {
+            for attempt in 0..3 {
+                let prepared = PreparedUpload { bytes: payload.clone(), extension: "wav".into(), background: true, silent: false, speech: false };
+                let result = send_prepared(prepared, &settings, &rules, Some("word"), &url, || {
+                    reads += 1;
+                    Ok(format!("synthetic-key-{reads}"))
+                }).await;
+                if attempt < 2 { assert!(result.unwrap_err().contains("HTTP 500")); }
+                else { let result = result.unwrap(); assert_eq!(result["text"], ""); assert_eq!(result["words"], serde_json::json!([])); }
+            }
+        });
+        assert_eq!(reads, 3);
+        for (index, (headers, body)) in worker.join().unwrap().iter().enumerate() {
+            assert!(headers.to_lowercase().contains(&format!("authorization: bearer synthetic-key-{}", index + 1)));
+            assert!(body.windows(payload.len()).any(|window| window == payload));
+            let body = String::from_utf8_lossy(body);
+            for value in ["audio.wav", &settings.model, "verbose_json", "timestamp_granularities[]", "word", "temperature", "language", "es", "Whispera"] {
+                assert!(body.contains(value), "Missing request field: {value}");
+            }
+        }
+    }
+    #[test]
+    fn stationary_noise_with_digital_boundary_padding_is_still_background() {
+        let mut bytes=std::io::Cursor::new(Vec::new());
+        let spec=hound::WavSpec{channels:1,sample_rate:16000,bits_per_sample:16,sample_format:hound::SampleFormat::Int};
+        let mut writer=hound::WavWriter::new(&mut bytes,spec).unwrap();
+        for _ in 0..3200 {writer.write_sample(0i16).unwrap();}
+        let mut seed=13u32;
+        for _ in 0..32000 {seed=seed.wrapping_mul(1664525).wrapping_add(1013904223);writer.write_sample(((seed>>16)%161) as i16-80).unwrap();}
+        for _ in 0..3200 {writer.write_sample(0i16).unwrap();}
+        writer.finalize().unwrap();
+        assert!(stationary_background(bytes.get_ref()));
+    }
+    #[test]
+    #[ignore = "Explicit synthetic-only probe for repeated speech and genuine thanks; no microphone or profile writes"]
+    fn synthetic_thanks_probe() {
+        let root=std::path::PathBuf::from(std::env::var_os("WHISPERA_THANKS_FIXTURES").expect("Synthetic fixtures"));
+        let manifest:serde_json::Value=serde_json::from_slice(&std::fs::read(root.join("manifest.json")).unwrap()).unwrap();
+        assert_eq!(manifest["syntheticOnly"],true);
+        crate::upload_tail::BENCHMARK_BYPASS.store(std::env::var("WHISPERA_THANKS_BASELINE").as_deref()==Ok("1"),std::sync::atomic::Ordering::SeqCst);
+        crate::lossless_upload::configure(Path::new(env!("CARGO_MANIFEST_DIR")).join(if cfg!(windows){"../node_modules/ffmpeg-static/ffmpeg.exe"}else{"../node_modules/ffmpeg-static/ffmpeg"}));
+        let files=std::env::var("WHISPERA_THANKS_FILES").expect("Explicit fixture names");
+        let output=std::path::PathBuf::from(std::env::var_os("WHISPERA_THANKS_RESULTS").expect("Output"));
+        let mut rows=vec![];
+        tauri::async_runtime::block_on(async {
+            for file in files.split(',') {
+                assert!(file.ends_with(".wav")&&!file.contains(['/', '\\']));
+                let mut settings=Settings::default();
+                if let Ok(model)=std::env::var("WHISPERA_THANKS_MODEL") {settings.model=model;}
+                let granularity=std::env::var("WHISPERA_THANKS_GRANULARITY").unwrap_or_else(|_|"word".into());
+                let began=std::time::Instant::now();
+                let response=request_format(&root.join(file),&settings,&[],if granularity=="json"{None}else{Some(&granularity)}).await.unwrap();
+                rows.push(serde_json::json!({"file":file,"model":settings.model,"granularity":granularity,"elapsedMs":began.elapsed().as_secs_f64()*1000.,"response":response}));
+                std::fs::write(&output,serde_json::to_vec_pretty(&rows).unwrap()).unwrap();
+                eprintln!("Synthetic {file}: {:.1} ms",rows.last().unwrap()["elapsedMs"].as_f64().unwrap());
+            }
+        });
+        if std::env::var("WHISPERA_THANKS_VALIDATE").as_deref()==Ok("1") {
+            for row in &rows {
+                let case=manifest["cases"].as_array().unwrap().iter().find(|case|case["file"]==row["file"]).expect("Reference case");
+                let expected=case["expectedThanksCount"].as_u64().unwrap() as usize;
+                let actual=row["response"]["text"].as_str().unwrap().split_whitespace().filter(|word|word.chars().filter(|c|c.is_alphanumeric()).collect::<String>().to_lowercase()=="gracias").count();
+                assert_eq!(actual,expected,"Wrong thanks count: {}",row["file"]);
+            }
+        }
+    }
     #[test]
     fn stationary_background_filter_preserves_voice_and_real_thanks() {
         let mut noise=serde_json::json!({"text":" Gracias.","segments":[{"text":" Gracias."}],"duration":3});
@@ -403,6 +758,85 @@ mod tests {
         );
     }
     #[test]
+    fn dictionary_ignores_accents_and_phrase_separators() {
+        let rules = vec![rule("wispera", "Whispera"), rule("cloud code", "Claude Code"), rule("árbol", "Árbol")];
+        assert_eq!(
+            corrections("Abrí Wíspera y WISPERA. Uso cloud-code, Cloud, code y cloud   code. arbol", &rules),
+            "Abrí Whispera y Whispera. Uso Claude Code, Claude Code y Claude Code. Árbol"
+        );
+        assert_eq!(corrections("wisperas y awispera", &rules), "wisperas y awispera");
+    }
+    #[test]
+    fn stray_spaces_in_saved_rules_still_match_at_sentence_edges() {
+        let rules = vec![rule("grok ", " Groq")];
+        assert_eq!(corrections("Uso grok. Y grok, otra vez grok", &rules), "Uso Groq. Y Groq, otra vez Groq");
+    }
+    fn synthetic_wav(seconds: f64, sample: impl Fn(usize, u32) -> f64) -> Vec<u8> {
+        let rate = 16000;
+        let mut bytes = std::io::Cursor::new(Vec::new());
+        {
+            let mut w = hound::WavWriter::new(&mut bytes, hound::WavSpec { channels: 1, sample_rate: rate, bits_per_sample: 16, sample_format: hound::SampleFormat::Int }).unwrap();
+            for i in 0..(seconds * rate as f64) as usize { w.write_sample((sample(i, rate) * 32767.).clamp(-32768., 32767.) as i16).unwrap(); }
+            w.finalize().unwrap();
+        }
+        bytes.into_inner()
+    }
+    #[test]
+    fn open_microphone_noise_is_not_speech_but_voice_is() {
+        let mut seed = 9u32;
+        let mut noise = || { seed = seed.wrapping_mul(1664525).wrapping_add(1013904223); ((seed >> 16) as f64 / 65535. - 0.5) * 0.02 };
+        let fan: Vec<f64> = (0..48000).map(|_| noise()).collect();
+        assert!(!has_speech(&synthetic_wav(3., |i, _| fan[i])), "steady room noise");
+        assert!(!has_speech(&synthetic_wav(3., |_, _| 0.)), "digital silence");
+        let clicks = synthetic_wav(3., |i, rate| if i % (rate as usize / 2) < 80 { 0.4 } else { fan[i] });
+        assert!(!has_speech(&clicks), "a few keyboard clicks are not speech");
+        // Syllables: a 180 Hz voiced tone switched on and off four times a second.
+        let voice = synthetic_wav(3., |i, rate| { let t = i as f64 / rate as f64; let on = (t * 4.).fract() < 0.6; fan[i] + if on { 0.15 * (t * 180. * 6.283).sin() } else { 0. } });
+        assert!(has_speech(&voice), "voice-like syllables");
+        let quiet = synthetic_wav(3., |i, rate| { let t = i as f64 / rate as f64; fan[i] * 0.2 + if (t * 4.).fract() < 0.6 { 0.04 * (t * 180. * 6.283).sin() } else { 0. } });
+        assert!(has_speech(&quiet), "quiet but real speech");
+    }
+    #[test]
+    fn phantom_results_without_voice_are_removed_and_real_words_stay() {
+        for phantom in [" Gracias.", " ss.s", "¡Gracias por ver!", " Subtítulos realizados por la comunidad de Amara.org", " Mmm.", " Gracias. Gracias.", " S"] {
+            let mut json = serde_json::json!({"text": phantom, "segments": [{"text": phantom}]});
+            drop_phantom_text(&mut json, false);
+            assert_eq!(json["text"], "", "{phantom}");
+            assert_eq!(json["segments"], serde_json::json!([]));
+        }
+        let mut real = serde_json::json!({"text": " Gracias."});
+        drop_phantom_text(&mut real, true);
+        assert_eq!(real["text"], " Gracias.", "a spoken thanks stays when there is voice");
+        let mut sentence = serde_json::json!({"text": " Mandale el archivo a Juan."});
+        drop_phantom_text(&mut sentence, false);
+        assert_eq!(sentence["text"], " Mandale el archivo a Juan.", "ordinary words are never removed by this rule");
+    }
+    #[test]
+    fn noise_segments_and_lone_letters_are_dropped_but_speech_stays() {
+        let mut json = serde_json::json!({"text":" Hola, esto es real. Subtítulos realizados por la comunidad de Amara.org S","segments":[
+            {"start":0.0,"end":2.0,"text":" Hola, esto es real.","no_speech_prob":0.02,"avg_logprob":-0.2},
+            {"start":2.0,"end":5.0,"text":" Subtítulos realizados por la comunidad de Amara.org","no_speech_prob":0.5,"avg_logprob":-0.4},
+            {"start":5.0,"end":6.0,"text":" S","no_speech_prob":0.7,"avg_logprob":-1.3}],
+            "words":[{"word":"Hola","start":0.1,"end":0.4},{"word":"real","start":1.2,"end":1.6},{"word":"Subtítulos","start":2.1,"end":2.9},{"word":"S","start":5.2,"end":5.4}]});
+        drop_silent_segments(&mut json);
+        assert_eq!(json["text"], "Hola, esto es real.");
+        assert_eq!(json["words"].as_array().unwrap().len(), 2);
+        let mut lone = serde_json::json!({"text":" S."});
+        drop_silent_segments(&mut lone);
+        assert_eq!(lone["text"], "");
+        let mut quiet_but_confident = serde_json::json!({"text":" Gracias.","segments":[{"start":0.0,"end":1.0,"text":" Gracias.","no_speech_prob":0.1,"avg_logprob":-0.3}]});
+        drop_silent_segments(&mut quiet_but_confident);
+        assert_eq!(quiet_but_confident["text"], " Gracias.");
+    }
+    #[test]
+    fn http_errors_explain_what_to_do() {
+        assert!(http_error(401).contains("clave"));
+        assert!(http_error(429).contains("límite"));
+        assert!(http_error(503).contains("503"));
+        assert!(http_error(418).contains("418"));
+        for status in [401, 413, 429, 503, 418] { assert!(http_error(status).contains("reintentar")); }
+    }
+    #[test]
     fn rules_reject_duplicates_and_noops() {
         assert!(validate_rules(&[rule("Groq", "Groq")]).is_err());
         assert!(validate_rules(&[rule("grok", "Groq"), rule(" GROK ", "Otro")]).is_err());
@@ -431,5 +865,19 @@ mod tests {
             enabled: true,
         };
         assert_eq!(corrections("GROK grokking", &[r]), "Groq $1 grokking");
+    }
+}
+
+#[cfg(test)]
+mod local_privacy_tests {
+    use super::*;
+    #[tokio::test]
+    async fn local_mode_rejects_cloud_requests_before_credentials_or_network() {
+        let settings=Settings{transcription_engine:"local".into(),..Default::default()};
+        let prepared=PreparedUpload{bytes:vec![1,2,3],extension:"wav".into(),background:false,silent:false,speech:true};
+        let error=request_prepared(prepared,&settings,&[],None).await.unwrap_err();
+        assert!(error.contains("no envía audio a Groq"));
+        let error=transcribe_inner(Path::new("not-a-real-private-file.mp3"),&settings,&[],false).await.unwrap_err();
+        assert!(error.contains("modo local necesita audio WAV"));
     }
 }

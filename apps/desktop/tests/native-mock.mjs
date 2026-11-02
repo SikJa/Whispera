@@ -18,8 +18,17 @@ export function installNativeMock({kind='video',width=640,height=480,scale=1,set
   window.__TAURI_INTERNALS__={
     metadata:{currentWindow:{label},currentWebview:{label}},
     transformCallback:callback=>{const id=next++;callbacks.set(id,callback);return id;},
-    invoke:async(command,args={})=>{
+    invoke:async(command,args={},options={})=>{
+      if(command==='screen_image_export_binary'){
+        if(!(args instanceof ArrayBuffer))throw Error('Expected binary image body');
+        window.binaryExportCount=(window.binaryExportCount??0)+1;
+        const headers=new Headers(options.headers);
+        args={id:headers.get('x-whispera-session'),action:headers.get('x-whispera-action'),bytes:Array.from(new Uint8Array(args))};
+        command='screen_image_export';
+      }
       window.calls.push({command,args});
+      if(command==='audio_input_devices')return [];
+      if(command==='local_models')return {models:[],install:{phase:'',model:'',downloaded:0,total:0,error:''},device:'',loaded:'',error:''};
       if(command==='reader_preferences')return window.readerPreferences;
       if(command==='reader_configure'){Object.assign(window.readerPreferences,args);return null;}
       if(command==='reader_status')return window.readerStatus;
@@ -37,6 +46,11 @@ export function installNativeMock({kind='video',width=640,height=480,scale=1,set
         return 'C:\\Audio\\lectura.mp3';
       }
       if(command==='reader_export_cancel'){window.readerStatus.exporting=false;window.finishReaderExport?.(null);return null;}
+      if(command==='screen_overlay_customize'){
+        window.captureDock??={zoom:1,compact:false};
+        if(args.action==='configure')for(const key of ['zoom','compact','horizontal'])if(args[key]!==undefined)window.captureDock[key]=args[key];
+        return {...window.captureDock};
+      }
       if(command==='plugin:event|listen'){const id=next++;listeners.set(id,args);return id;}
       if(command==='plugin:event|unlisten')return;
       if(command==='replay_preferences')return{enabled:false,seconds:60,audio:'none',folder:'',hotkey:''};
@@ -59,6 +73,8 @@ export function installNativeMock({kind='video',width=640,height=480,scale=1,set
       if(command==='read_rules')return [];
       if(command==='screen_recent')return[{id:'recent-1',kind:'image',created_at:'2026-10-02T00:00:00Z',path:'test.png'}];
       if(command==='screen_selection_kind')return kind;
+      if(command==='screen_monitors')return [{index:0,name:'Principal',width:1920,height:1080},{index:1,name:'Secundaria',width:2560,height:1440}];
+      if(command==='screen_start_monitor'){window.videoStatus.phase='recording';return;}
       if(command==='screen_selection_image')return frozenImage?new Uint8Array(frozenImage).buffer:new ArrayBuffer(0);
       if(command==='screen_frozen_state')return kind==='image'&&['selecting','editing'].includes(window.videoStatus.phase)?1:null;
       if(command==='screen_preferences')return window.videoPreferences;

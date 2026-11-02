@@ -35,6 +35,7 @@ export function isUpdateMode(value: unknown): value is UpdateMode {
 
 /** How a clipboard bitmap was captured. Omitted on older persisted items. */
 export type ClipboardImageSource = 'screenshot' | 'image'
+export type VideoProcessing = { status:'processing'|'error'; seconds:number; directory:string; error?:string }
 
 export type ClipboardImageFields = {
   imageId: string
@@ -51,7 +52,7 @@ export type ItemData =
   | { kind: 'text'; text: string; html?: string; isUrl: boolean; isColor?: boolean; hasFullPayload?: boolean; previewText?: string }
   | ({ kind: 'image' } & ClipboardImageFields)
   | { kind: 'image-collection'; images: ClipboardImageFields[] }
-  | { kind: 'files'; paths: string[]; entries?: FileEntry[] }
+  | { kind: 'files'; paths: string[]; entries?: FileEntry[]; processing?:VideoProcessing }
 
 export type ItemKind = ItemData['kind']
 
@@ -93,7 +94,7 @@ export interface ClipboardItemDto extends Omit<ClipboardItem, 'data'> {
   | { kind: 'text'; text: string; html?: string; isUrl: boolean; isColor?: boolean; hasFullPayload?: boolean; previewText?: string }
   | ({ kind: 'image'; preview: string } & ClipboardImageFields)
   | { kind: 'image-collection'; images: Array<ClipboardImageFields & { preview: string }> }
-  | { kind: 'files'; paths: string[]; previews?: string[]; entries?: FileEntry[] }
+  | { kind: 'files'; paths: string[]; previews?: string[]; entries?: FileEntry[]; processing?:VideoProcessing }
 }
 
 /** Section the renderer groups items into. */

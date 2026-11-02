@@ -26,6 +26,11 @@ pub struct Settings {
     pub trim_silence: bool,
     pub watchdog: bool,
     pub incremental_transcription: bool,
+    /// Input device name; empty uses the system default microphone.
+    pub microphone: String,
+    /// "groq" (cloud) or "local" (on-device model).
+    pub transcription_engine: String,
+    pub local_model: String,
 }
 impl Default for Settings {
     fn default() -> Self {
@@ -49,6 +54,9 @@ impl Default for Settings {
             trim_silence: true,
             watchdog: true,
             incremental_transcription: true,
+            microphone: String::new(),
+            transcription_engine: "groq".into(),
+            local_model: "parakeet-v3".into(),
         }
     }
 }
@@ -77,6 +85,9 @@ impl Settings {
         if !["whisper-large-v3-turbo", "whisper-large-v3"].contains(&self.model.as_str()) {
             return Err("Modelo no admitido".into());
         }
+        if !["groq", "local"].contains(&self.transcription_engine.as_str()) || crate::local_asr::spec(&self.local_model).is_none() {
+            return Err("Motor de transcripción no admitido".into());
+        }
         if !["es", "en", "pt", "auto"].contains(&self.language.as_str()) {
             return Err("Idioma no admitido".into());
         }
@@ -90,6 +101,9 @@ impl Settings {
             || !["left", "right", "top", "bottom"].contains(&self.placement.as_str())
         {
             return Err("Apariencia no admitida".into());
+        }
+        if self.microphone.len() > 300 {
+            return Err("Micrófono no válido".into());
         }
         if self.hotkey.trim().is_empty() || self.hotkey.len() > 80 {
             return Err("Atajo invalido".into());
@@ -177,7 +191,19 @@ impl Store {
             CREATE TABLE IF NOT EXISTS history(id TEXT PRIMARY KEY, timestamp TEXT NOT NULL, text TEXT NOT NULL);
             CREATE TABLE IF NOT EXISTS imports(path TEXT PRIMARY KEY);
             CREATE TABLE IF NOT EXISTS events(id INTEGER PRIMARY KEY, message TEXT NOT NULL);").map_err(|e| e.to_string())?;
-        Ok(Self(Mutex::new(conn)))
+        let store = Self(Mutex::new(conn));
+        store.prune_events()?;
+        Ok(store)
+    }
+    // Only the latest 100 events are shown; without a bound the diagnostic log
+    // grows for as long as the profile exists.
+    pub fn prune_events(&self) -> Result<(), String> {
+        self.0
+            .lock()
+            .map_err(|_| "Base de datos ocupada")?
+            .execute("DELETE FROM events WHERE id <= (SELECT MAX(id) FROM events) - 2000", [])
+            .map_err(|e| e.to_string())?;
+        Ok(())
     }
     pub fn get<T: serde::de::DeserializeOwned + Default>(&self, key: &str) -> Result<T, String> {
         let conn = self.0.lock().map_err(|_| "Base de datos ocupada")?;
@@ -321,6 +347,15 @@ mod tests {
         );
         assert!(store.update_transcript("missing", "Texto").is_err());
         assert!(store.update_transcript("first", " ").is_err());
+    }
+    #[test]
+    fn diagnostic_events_stay_bounded_and_keep_the_latest() {
+        let store = Store::open(Path::new(":memory:")).unwrap();
+        for i in 0..2500 { store.event(&format!("evento {i}")).unwrap(); }
+        store.prune_events().unwrap();
+        let count: i64 = store.0.lock().unwrap().query_row("SELECT COUNT(*) FROM events", [], |r| r.get(0)).unwrap();
+        assert_eq!(count, 2000);
+        assert!(store.logs().unwrap()[0].ends_with("evento 2499"));
     }
     #[test]
     fn defaults_valid() {

@@ -14,7 +14,7 @@ use std::{
     },
     time::{Duration, Instant},
 };
-use tauri::{Manager, State};
+use tauri::{Emitter, Manager, State};
 #[cfg(windows)]
 use std::os::windows::process::CommandExt;
 
@@ -53,6 +53,8 @@ pub struct Status {
     pub path: String,
     pub error: String,
     pub copied: bool,
+    /// Short-lived hint shown by the HUD (for example, the Esc confirmation).
+    pub notice: String,
 }
 pub struct Screen {
     pub secondary: bool,
@@ -67,6 +69,7 @@ pub struct Screen {
     snapshots: Mutex<std::collections::HashMap<String, crate::screen_capture::FrozenFrame>>,
 }
 struct Active {
+    directory: PathBuf,
     stop: mpsc::Sender<CaptureControl>,
     thread: std::thread::JoinHandle<()>,
 }
@@ -184,6 +187,20 @@ pub(crate) fn ffmpeg(app: &tauri::AppHandle) -> Result<PathBuf, String> {
     }
     Ok(path)
 }
+/// The bundled FFmpeg is ~80 MB: a cold launch (disk read plus antivirus scan)
+/// measured 2.4 s versus 80 ms warm. Load it while the user is still selecting
+/// a region or speaking, so the encoder and the upload compressor start warm.
+pub(crate) fn warm_encoder(binary: &Path) {
+    static LAST: Mutex<Option<Instant>> = Mutex::new(None);
+    {
+        let Ok(mut last) = LAST.lock() else { return; };
+        if last.is_some_and(|at| at.elapsed() < Duration::from_secs(120)) { return; }
+        *last = Some(Instant::now());
+    }
+    let mut cmd = command(binary);
+    cmd.args(["-hide_banner", "-version"]).stdin(Stdio::null()).stderr(Stdio::null());
+    std::thread::spawn(move || { let _ = cmd.status(); });
+}
 pub(crate) fn command(binary: &Path) -> Command {
     let mut cmd = Command::new(binary);
     #[cfg(windows)]
@@ -242,6 +259,28 @@ pub fn escape(app: &tauri::AppHandle) -> Result<(), String> {
     if app.state::<session::ImageCapture>().screen.busy(){return cancel_selection_for(app.clone(), "image-session");}
     let screen = app.state::<Screen>();
     let _gate = screen.gate.lock().map_err(|_| "Video ocupado")?;
+    // One Esc must never end a recording by accident: the first press asks for
+    // a second one within two seconds. The HUD stop button and shortcut still work.
+    {
+        static ARMED: Mutex<Option<Instant>> = Mutex::new(None);
+        const NOTICE: &str = "Apretá Esc otra vez para terminar la grabación";
+        let mut state = screen.state.lock().map_err(|_| "Estado ocupado")?;
+        if ["recording", "paused", "pausing", "resuming", "reframing"].contains(&state.phase.as_str()) {
+            let mut armed = ARMED.lock().map_err(|_| "Video ocupado")?;
+            if !armed.is_some_and(|at| at.elapsed() < Duration::from_secs(2)) {
+                *armed = Some(Instant::now());
+                state.notice = NOTICE.into();
+                let status = screen.state.clone();
+                std::thread::spawn(move || {
+                    std::thread::sleep(Duration::from_secs(2));
+                    if let Ok(mut state) = status.lock() { if state.notice == NOTICE { state.notice.clear(); } }
+                });
+                return Ok(());
+            }
+            *armed = None;
+            state.notice.clear();
+        }
+    }
     stop_locked(app, &screen)?;
     let mut state = screen.state.lock().map_err(|_| "Estado ocupado")?;
     if ["selecting", "editing"].contains(&state.phase.as_str()) {
@@ -278,6 +317,14 @@ pub(crate) fn protect(window: &tauri::WebviewWindow) -> Result<(), String> {
         },
     };
     let hwnd = HWND(window.hwnd().map_err(|e| e.to_string())?.0);
+    // Windows 11 can paint the active accent at a monitor edge even on a
+    // borderless overlay. The capture already draws its own single frame.
+    unsafe {
+        let no_border=0xfffffffe_u32; // DWMWA_COLOR_NONE; older Windows ignores it.
+        let _=windows::Win32::Graphics::Dwm::DwmSetWindowAttribute(hwnd,
+            windows::Win32::Graphics::Dwm::DWMWA_BORDER_COLOR,
+            &no_border as *const _ as *const _,std::mem::size_of_val(&no_border) as u32);
+    }
     let mut affinity = 0;
     unsafe {
         SetWindowDisplayAffinity(hwnd, WDA_EXCLUDEFROMCAPTURE)
@@ -437,13 +484,14 @@ pub fn select_image(app: &tauri::AppHandle) -> Result<(), String> {
     select_locked(app,&screen,"image")
 }
 fn select_locked(app: &tauri::AppHandle, screen: &Screen, kind: &str) -> Result<(), String> {
+    let selection_requested = Instant::now();
     let _updating=crate::updates::work(app)?;
     if screen.busy() {
         let phase = screen.state.lock().map_err(|_| "Estado ocupado")?.phase.clone();
         return Err(format!("Ya hay una grabacion o seleccion de pantalla (estado: {phase})"));
     }
     crate::library::hide(app)?;
-    if kind != "image" { ffmpeg(app)?; }
+    if kind != "image" { warm_encoder(&ffmpeg(app)?); }
     let monitors = app.available_monitors().map_err(|e| e.to_string())?;
     if monitors.is_empty() {
         return Err("No hay pantallas disponibles".into());
@@ -464,7 +512,7 @@ fn select_locked(app: &tauri::AppHandle, screen: &Screen, kind: &str) -> Result<
         }
     }
     hide_selectors(app, screen);
-    *screen.selection_started.lock().map_err(|_| "Captura ocupada")? = Some(Instant::now());
+    *screen.selection_started.lock().map_err(|_| "Captura ocupada")? = Some(selection_requested);
     *screen.snapshots.lock().map_err(|_| "Captura ocupada")? = snapshots;
     crate::shortcuts::register(app, "Escape")?;
     screen.selection_ready.store(false, Ordering::SeqCst);
@@ -586,6 +634,61 @@ pub async fn screen_select(app: tauri::AppHandle) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || select(&app))
         .await
         .map_err(|e| e.to_string())?
+}
+/// Windows reports monitors as "\\.\DISPLAY1"; the picker shows the EDID name ("TV", "S19B150").
+#[cfg(windows)]
+fn monitor_names() -> std::collections::HashMap<String, String> {
+    use windows::Win32::Devices::Display::*;
+    let mut names = std::collections::HashMap::new();
+    unsafe {
+        let (mut paths, mut modes) = (0u32, 0u32);
+        if GetDisplayConfigBufferSizes(QDC_ONLY_ACTIVE_PATHS, &mut paths, &mut modes).is_err() { return names; }
+        let mut path_info = vec![DISPLAYCONFIG_PATH_INFO::default(); paths as usize];
+        let mut mode_info = vec![DISPLAYCONFIG_MODE_INFO::default(); modes as usize];
+        if QueryDisplayConfig(QDC_ONLY_ACTIVE_PATHS, &mut paths, path_info.as_mut_ptr(), &mut modes, mode_info.as_mut_ptr(), None).is_err() { return names; }
+        let text = |wide: &[u16]| String::from_utf16_lossy(&wide[..wide.iter().position(|c| *c == 0).unwrap_or(wide.len())]);
+        for path in &path_info[..paths as usize] {
+            let mut source = DISPLAYCONFIG_SOURCE_DEVICE_NAME::default();
+            source.header.r#type = DISPLAYCONFIG_DEVICE_INFO_GET_SOURCE_NAME;
+            source.header.size = std::mem::size_of::<DISPLAYCONFIG_SOURCE_DEVICE_NAME>() as u32;
+            source.header.adapterId = path.sourceInfo.adapterId;
+            source.header.id = path.sourceInfo.id;
+            let mut target = DISPLAYCONFIG_TARGET_DEVICE_NAME::default();
+            target.header.r#type = DISPLAYCONFIG_DEVICE_INFO_GET_TARGET_NAME;
+            target.header.size = std::mem::size_of::<DISPLAYCONFIG_TARGET_DEVICE_NAME>() as u32;
+            target.header.adapterId = path.targetInfo.adapterId;
+            target.header.id = path.targetInfo.id;
+            if DisplayConfigGetDeviceInfo(&mut source.header) != 0 || DisplayConfigGetDeviceInfo(&mut target.header) != 0 { continue; }
+            let friendly = text(&target.monitorFriendlyDeviceName);
+            if !friendly.trim().is_empty() { names.insert(text(&source.viewGdiDeviceName), friendly); }
+        }
+    }
+    names
+}
+#[tauri::command]
+pub fn screen_monitors(app: tauri::AppHandle) -> Result<Vec<serde_json::Value>, String> {
+    #[cfg(windows)]
+    let names = monitor_names();
+    let primary = app.primary_monitor().ok().flatten().map(|m| *m.position());
+    Ok(app.available_monitors().map_err(|e|e.to_string())?.iter().enumerate().map(|(index,m)| {
+        #[cfg(windows)]
+        let name = m.name().map(|n| names.get(n).cloned().unwrap_or_else(|| n.clone()));
+        #[cfg(not(windows))]
+        let name = m.name().cloned();
+        serde_json::json!({"index":index,"name":name,"x":m.position().x,"y":m.position().y,"width":m.size().width,"height":m.size().height,"primary":primary==Some(*m.position())})
+    }).collect())
+}
+#[tauri::command]
+pub async fn screen_start_monitor(app: tauri::AppHandle, index: usize, audio: Option<String>) -> Result<(), String> {
+    if *app.state::<Screen>().kind.lock().map_err(|_|"Captura ocupada")? != "video" {return Err("Abri primero la seleccion de video".into());}
+    let monitor=app.available_monitors().map_err(|e|e.to_string())?.into_iter().nth(index).ok_or("La pantalla ya no esta disponible")?;
+    let window=app.get_webview_window(&format!("screen-select-{index}")).ok_or("Abri primero la seleccion de video")?;
+    if window.inner_position().map_err(|e|e.to_string())? != *monitor.position() || window.inner_size().map_err(|e|e.to_string())? != *monitor.size() {
+        return Err("Cambio la configuracion de pantallas. Volve a abrir la seleccion.".into());
+    }
+    let size=window.inner_size().map_err(|e|e.to_string())?;
+    let scale=window.scale_factor().map_err(|e|e.to_string())?;
+    screen_start(app,window,Rect{x:0.,y:0.,width:size.width as f64/scale,height:size.height as f64/scale}, audio).await
 }
 #[cfg(target_os = "macos")]
 pub(crate) fn set_frame_region(window: &tauri::WebviewWindow, rect: Option<Rect>) -> Result<(), String> {
@@ -890,13 +993,36 @@ pub async fn screen_start(
         let state = screen.state.clone();
         let history_app = app.clone();
         let transcribe_microphone = crate::video_transcript::recording_enabled(&app.state::<Store>());
+        let active_directory = dir.clone();
+        let startup_generation = screen.frozen_generation.load(Ordering::SeqCst);
         let thread = std::thread::spawn(move || {
+            let recovery_dir = dir.clone();
             capture(region, prefs, binary, dir, state.clone(), stop_rx, ready, transcribe_microphone);
+            let failed = state.lock().map(|s| s.phase == "error").unwrap_or(false);
+            if failed && transcribe_microphone {
+                let engine = history_app.state::<crate::engine::Engine>();
+                let recovery = crate::capture_finalize::preserve_microphone(&recovery_dir, &engine.recorder.root);
+                let note = match recovery {
+                    Ok(Some(_)) => "Microfono conservado en Audios pendientes: podes transcribirlo sin esperar al video.".into(),
+                    Ok(None) => "No hay pista de microfono; se conservaron los originales del video.".into(),
+                    Err(error) => format!("Recuperacion automatica pendiente: {error}. Originales en {}", recovery_dir.display()),
+                };
+                let cause = state.lock().map(|s| s.error.clone()).unwrap_or_default();
+                let _ = fs::write(recovery_dir.join("recovery-error.txt"), format!("{cause}\n{note}"));
+                let _ = history_app.state::<Store>().event(&note);
+                if let Ok(mut s) = state.lock() { s.error.push_str(&format!(" {note}")); }
+            }
             let path = state
                 .lock()
                 .ok()
                 .map(|s| s.path.clone())
                 .unwrap_or_default();
+            let processing_error = state.lock().map(|s| s.error.clone()).unwrap_or_default();
+            if let Err(error) = crate::library::finish_processing_video(&history_app.state::<Store>(), &recovery_dir,
+                if path.is_empty() { None } else { Some(Path::new(&path)) }, &processing_error) {
+                let _ = history_app.state::<Store>().event(&format!("Estado del video en portapapeles: {error}"));
+            }
+            let _ = history_app.emit("library-changed", ());
             if !path.is_empty() {
                 if transcribe_microphone {
                     if let Err(error) = crate::video_transcript::enqueue(&history_app.state::<Store>(), Path::new(&path)) {
@@ -914,36 +1040,48 @@ pub async fn screen_start(
             if let Ok(status) = state.lock() {
                 if status.phase == "error" {
                     let _ = history_app.state::<Store>().event(&status.error);
-                    hide_selectors(&history_app, &history_app.state::<Screen>());
+                    let screen = history_app.state::<Screen>();
+                    if screen.frozen_generation.load(Ordering::SeqCst) == startup_generation { hide_selectors(&history_app, &screen); }
                 }
             }
         });
-        match ready_rx.recv() {
-            Ok(Ok(())) => {
-                let _=app.state::<Store>().event(&format!("Captura video: motor listo en {} ms",editor_started.elapsed().as_millis()));
-                *screen.active.lock().map_err(|_| "Video ocupado")? = Some(Active { stop, thread });
-                if let Err(error) = crate::screen_editor::open(&app, &window, rect, region, "video")
-                {
-                    if let Some(active) = screen.active.lock().map_err(|_| "Video ocupado")?.take()
-                    {
-                        let _ = active.stop.send(CaptureControl::Cancel);
-                        let _ = active.thread.join();
-                    }
-                    hide_selectors(&app, &screen);
-                    report_error(&app, error.clone());
-                    return Err(error);
-                }
-                Ok(())
+        let startup_directory = active_directory.clone();
+        *screen.active.lock().map_err(|_| "Video ocupado")? = Some(Active { directory: active_directory, stop, thread });
+        // Configure tools while the encoder starts. The HUD stays in "starting"
+        // until the worker verifies its first output; no recording is claimed early.
+        if let Err(error) = crate::screen_editor::open(&app, &window, rect, region, "video") {
+            if let Some(active) = screen.active.lock().map_err(|_| "Video ocupado")?.take() {
+                let _ = active.stop.send(CaptureControl::Cancel);
+                let _ = active.thread.join();
             }
-            result => {
-                let _ = thread.join();
-                let error = result
-                    .unwrap_or_else(|_| Err("El motor de video se cerro".into()))
-                    .unwrap_err();
-                report_error(&app, error.clone());
-                Err(error)
-            }
+            hide_selectors(&app, &screen);
+            report_error(&app, error.clone());
+            return Err(error);
         }
+        let startup_app = app.clone();
+        tauri::async_runtime::spawn_blocking(move || {
+            match ready_rx.recv() {
+                Ok(Ok(())) => {
+                    let _ = startup_app.state::<Store>().event(&format!("Captura video: motor listo en {} ms",editor_started.elapsed().as_millis()));
+                },
+                result => {
+                    let error = result.unwrap_or_else(|_| Err("El motor de video se cerro".into())).unwrap_err();
+                    let screen = startup_app.state::<Screen>();
+                    if let Ok(_gate) = screen.gate.lock() {
+                        // Cancellation/new sessions must not be hidden by a late startup failure.
+                        let active = screen.active.lock().ok().and_then(|mut a| {
+                            if screen.frozen_generation.load(Ordering::SeqCst) == startup_generation && a.as_ref().is_some_and(|a| a.directory == startup_directory) { a.take() } else { None }
+                        });
+                        if let Some(active) = active {
+                            let _ = active.thread.join();
+                            hide_selectors(&startup_app, &screen);
+                            report_error(&startup_app, error);
+                        }
+                    };
+                },
+            }
+        });
+        Ok(())
     })
     .await
     .map_err(|e| e.to_string())?
@@ -956,6 +1094,13 @@ pub fn stop(app: &tauri::AppHandle) -> Result<(), String> {
 fn stop_locked(app: &tauri::AppHandle, screen: &Screen) -> Result<(), String> {
     let active = screen.active.lock().map_err(|_| "Video ocupado")?.take();
     if let Some(active) = active {
+        let status = screen.state.lock().map(|s| s.clone()).unwrap_or_default();
+        if ["recording", "paused", "pausing", "resuming", "reframing"].contains(&status.phase.as_str()) {
+            if let Err(error) = crate::library::processing_video(&app.state::<Store>(), &active.directory, status.seconds) {
+                let _ = app.state::<Store>().event(&format!("No se pudo mostrar video pendiente: {error}"));
+            }
+        }
+        let _ = app.emit("library-changed", ());
         let _ = active.stop.send(CaptureControl::Stop);
         // The worker finalizes the MP4 without keeping the capture UI visible.
         hide_selectors(app, screen);
@@ -1023,8 +1168,8 @@ enum ToggleAction {
 }
 fn gated_action(screen: &Screen) -> Result<(MutexGuard<'_, ()>, ToggleAction), String> {
     let gate = screen.gate.lock().map_err(|_| "Video ocupado")?;
-    // Starting capture holds the gate. A second shortcut must see the state
-    // after startup, otherwise it attempts to cancel an already-finished selection.
+    // Only configuration holds the gate; startup can be stopped while the
+    // encoder is still preparing its first frame.
     let action = match screen
         .state
         .lock()
@@ -1035,7 +1180,7 @@ fn gated_action(screen: &Screen) -> Result<(MutexGuard<'_, ()>, ToggleAction), S
         "recording" | "paused" | "pausing" | "resuming" | "reframing" => ToggleAction::Stop,
         "selecting" => ToggleAction::Cancel,
         "editing" => ToggleAction::Cancel,
-        "starting" => ToggleAction::Wait,
+        "starting" => ToggleAction::Stop,
         "saving" | "cancelling" => ToggleAction::Wait,
         _ => ToggleAction::Select,
     };
@@ -1173,6 +1318,18 @@ impl AudioTrack {
                 move |d: &[u16], info| {
                     samples(d, |v| (v as f32 - 32768.) / 32768., clock.end(info,d.len(),cfg.sample_rate.0,cfg.channels), &tx, &callback_fault)
                 },
+                on_error,
+                None,
+            ),
+            cpal::SampleFormat::I32 => device.build_input_stream(
+                &cfg,
+                move |d: &[i32], info| samples(d, |v| v as f32 / 2_147_483_648., clock.end(info,d.len(),cfg.sample_rate.0,cfg.channels), &tx, &callback_fault),
+                on_error,
+                None,
+            ),
+            cpal::SampleFormat::F64 => device.build_input_stream(
+                &cfg,
+                move |d: &[f64], info| samples(d, |v| v as f32, clock.end(info,d.len(),cfg.sample_rate.0,cfg.channels), &tx, &callback_fault),
                 on_error,
                 None,
             ),
@@ -1417,7 +1574,7 @@ fn capture(
                     File::create(dir.join("join.log")).map_err(|e| e.to_string())?,
                 ));
             let mut encoder = crate::encoder_job::Encoder::spawn(&mut join)?;
-            wait_encoder(&mut encoder.child)?;
+            wait_encoder(&mut encoder.child, elapsed)?;
             if fs::metadata(&output).map_err(|e| e.to_string())?.len() == 0 {
                 return Err("El video quedo vacio".into());
             }
@@ -1426,6 +1583,12 @@ fn capture(
             }
         }
         state.lock().map_err(|_| "Estado ocupado")?.seconds = elapsed;
+        // Keep all microphone segments until the entire video is finalized.
+        for part in &parts {
+            if !part.join("speech-error.txt").exists() {
+                let _ = fs::remove_file(part.join("microphone.pcm"));
+            }
+        }
         Ok(Some(output))
     })();
     match result {
@@ -1447,6 +1610,7 @@ fn capture(
             }
         }
         Err(e) => {
+            let _ = fs::write(dir.join("recovery-error.txt"), &e);
             let _ = ready.send(Err(e.clone()));
             if let Ok(mut status) = state.lock() {
                 status.phase = "error".into();
@@ -1456,8 +1620,21 @@ fn capture(
     }
 }
 
-fn wait_encoder(child: &mut Child) -> Result<(), String> {
-    let deadline = Instant::now() + Duration::from_secs(120);
+#[tauri::command]
+pub fn screen_pending(app: tauri::AppHandle) -> Result<Vec<crate::capture_finalize::PendingVideo>, String> {
+    crate::capture_finalize::pending(&app.path().app_local_data_dir().map_err(|e| e.to_string())?.join("screen-recordings"))
+}
+
+#[tauri::command]
+pub fn screen_pending_reveal(app: tauri::AppHandle, id: String) -> Result<(), String> {
+    uuid::Uuid::parse_str(&id).map_err(|_| "Identificador invalido")?;
+    let root = app.path().app_local_data_dir().map_err(|e| e.to_string())?.join("screen-recordings");
+    if !crate::capture_finalize::pending(&root)?.iter().any(|p| p.id == id) { return Err("Recuperacion no disponible".into()); }
+    crate::platform::reveal_path(&root.join(id))
+}
+
+fn wait_encoder(child: &mut Child, seconds: f64) -> Result<(), String> {
+    let deadline = Instant::now() + crate::capture_finalize::budget(seconds);
     loop {
         if let Some(exit) = child.try_wait().map_err(|e| e.to_string())? {
             return if exit.success() {
@@ -1493,6 +1670,11 @@ fn record(
     }
     if ["microphone", "both"].contains(&prefs.audio.as_str()) {
         tracks.push(AudioTrack::new(false, &dir)?);
+    }
+    for track in &tracks {
+        if track.path.file_name().is_some_and(|name| name == "microphone.pcm") {
+            crate::capture_finalize::remember_microphone(dir, track.rate, track.channels)?;
+        }
     }
     let video = dir.join("video.mkv");
     let log = File::create(dir.join("capture.log")).map_err(|e| e.to_string())?;
@@ -1556,8 +1738,14 @@ fn record(
     #[cfg(target_os = "macos")]
     let started = native_video.started;
     // Wait for FFmpeg to actually create output, rather than reporting a successful spawn.
-    let startup = (|| -> Result<(), String> {
+    let mut queued_control = None;
+    let startup = (|| -> Result<bool, String> {
         loop {
+            match stop.try_recv() {
+                Ok(CaptureControl::Cancel | CaptureControl::Stop) => return Ok(true),
+                Ok(action) => queued_control = Some(action),
+                Err(_) => {},
+            }
             #[cfg(target_os = "macos")]
             native_video.error()?;
             if child.try_wait().map_err(|e| e.to_string())?.is_some() {
@@ -1567,7 +1755,7 @@ fn record(
                 ));
             }
             if fs::metadata(&video).map(|m| m.len() > 0).unwrap_or(false) {
-                return Ok(());
+                return Ok(false);
             }
             for track in &mut tracks {
                 track.drain(started)?;
@@ -1578,10 +1766,13 @@ fn record(
             std::thread::sleep(Duration::from_millis(30));
         }
     })();
-    if let Err(e) = startup {
-        let _ = child.kill();
-        let _ = child.wait();
-        return Err(e);
+    let cancelled = match startup {
+        Ok(cancelled) => cancelled,
+        Err(e) => { let _ = child.kill(); let _ = child.wait(); return Err(e); },
+    };
+    if cancelled {
+        let _ = child.kill(); let _ = child.wait();
+        return Ok((None, CaptureControl::Cancel, 0.));
     }
     *state.lock().map_err(|_| "Estado ocupado")? = Status {
         phase: "recording".into(),
@@ -1593,7 +1784,7 @@ fn record(
     let mut reason = CaptureControl::Stop;
     let mut last_status=Instant::now();
     loop {
-        match stop.recv_timeout(Duration::from_millis(25)) {
+        match queued_control.take().map(Ok).unwrap_or_else(||stop.recv_timeout(Duration::from_millis(25))) {
             Ok(CaptureControl::Resume) => continue,
             Ok(action) => {
                 reason = action;
@@ -1702,24 +1893,7 @@ fn record(
         ));
     let mut mux_encoder = crate::encoder_job::Encoder::spawn(&mut mux)?;
     let mux_child = &mut mux_encoder.child;
-    let deadline = Instant::now() + Duration::from_secs(120);
-    loop {
-        if let Some(exit) = mux_child.try_wait().map_err(|e| e.to_string())? {
-            if !exit.success() {
-                return Err(format!(
-                    "No se pudo preparar el MP4. Originales en {}",
-                    dir.display()
-                ));
-            }
-            break;
-        }
-        if Instant::now() > deadline {
-            let _ = mux_child.kill();
-            let _ = mux_child.wait();
-            return Err("La preparacion del MP4 tardo demasiado; originales conservados".into());
-        }
-        std::thread::sleep(Duration::from_millis(50));
-    }
+    wait_encoder(mux_child, seconds)?;
     if transcribe_microphone { crate::video_timing::record_part_duration(&output, dir); }
     let mut preserve_microphone = false;
     if transcribe_microphone {
@@ -1736,7 +1910,7 @@ fn record(
         return Err("El video quedo vacio".into());
     }
     for file in ["video.mkv", "system.pcm", "microphone.pcm"] {
-        if file == "microphone.pcm" && preserve_microphone { continue; }
+        if file == "microphone.pcm" && (preserve_microphone || transcribe_microphone) { continue; }
         let _ = fs::remove_file(dir.join(file));
     }
     Ok((Some(output), reason, seconds))
@@ -1888,7 +2062,7 @@ mod tests {
     #[test]
     fn shortcut_finishes_paused_video_without_starting_another_selection() {
         let screen = Screen::new();
-        for phase in ["paused", "pausing", "resuming", "reframing"] {
+        for phase in ["starting", "paused", "pausing", "resuming", "reframing"] {
             screen.state.lock().unwrap().phase = phase.into();
             assert!(screen.busy());
             let (_guard, action) = gated_action(&screen).unwrap();

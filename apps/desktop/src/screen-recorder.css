@@ -104,6 +104,9 @@ html[data-screen-select="true"], html[data-screen-select="true"] body, html[data
 .capture-hud[data-paused="true"] .capture-hud-time i { background:#ffca3a; }
 .capture-hud-error { position:absolute; top:54px; right:8px; left:8px; padding:8px; background:#302126; border:1px solid #9b5656; border-radius:8px; color:#ffd0d0; font-size:12px; }
 .editable-capture-frame { pointer-events:none; outline:none; }
+/* Focus belongs to the existing frame, never a second full-screen contour. */
+.capture-frame-move:focus-visible {outline:none;box-shadow:inset 0 0 0 1px var(--capture-frame-color,#fff);}
+.capture-frame-handle:focus-visible {outline:2px solid var(--capture-frame-color,#fff);outline-offset:0;}
 .capture-frame-move,.capture-frame-handle { position:absolute; pointer-events:auto; touch-action:none; padding:0; margin:0; border:0; background:transparent; }
 .capture-frame-move { inset:-5px; border:10px solid transparent; border-radius:inherit; cursor:move; clip-path:polygon(0 0,100% 0,100% 100%,0 100%,0 0,10px 10px,10px calc(100% - 10px),calc(100% - 10px) calc(100% - 10px),calc(100% - 10px) 10px,10px 10px); }
 .capture-frame-handle { width:16px; height:16px; transform:translate(-50%,-50%); }
@@ -130,3 +133,37 @@ html[data-screen-select="true"], html[data-screen-select="true"] body, html[data
 .screen-selection-audio > small { display:block; color:#aaa; font-size:11px; line-height:1.5; }
 .screen-selection-audio p { margin:8px 0 0; font-size:12px; }
 @media(max-width:480px) { .screen-selection-audio .audio-mode-grid { grid-template-columns:repeat(2,minmax(0,1fr)); } }
+.capture-hud-esc { display:inline-flex; align-items:center; gap:6px; padding:0 10px; height:28px; border-radius:8px; background:#ff5f6226; color:#ffd9d9; font-size:12px; font-weight:600; white-space:nowrap; animation:capture-hud-esc-in .18s ease-out; }
+.capture-hud-esc kbd { padding:1px 6px; border-radius:5px; background:#ffffff1f; font:inherit; font-size:11px; }
+@keyframes capture-hud-esc-in { from { opacity:0; transform:translateX(-4px); } }
+@media(prefers-reduced-motion:reduce){ .capture-hud-esc { animation:none; } }
+/* Monitor picker: the screens drawn in their real arrangement. */
+.monitor-picker {pointer-events:none;position:absolute;top:var(--monitor-picker-top,84px);left:50%;transform:translateX(-50%);z-index:2;display:flex;flex-direction:column;align-items:center;gap:16px;padding:20px 22px 16px;max-width:calc(100% - 32px);color:#eeede9;border:1px solid #ffffff26;border-radius:22px;background:linear-gradient(160deg,#26242af7,#131215f7);box-shadow:inset 0 1px #ffffff1a,0 24px 60px #0009;font-family:"Instrument Sans Variable","Segoe UI",sans-serif;animation:monitor-in .26s cubic-bezier(.22,1,.36,1);}
+@keyframes monitor-in {from{opacity:0;transform:translate(-50%,-8px) scale(.98);}}
+.monitor-picker-head {display:flex;align-items:center;gap:12px;align-self:stretch;}
+.monitor-picker-icon {display:grid;place-items:center;width:38px;height:38px;flex-shrink:0;border-radius:12px;color:#d9c8ff;background:#a17bf024;}
+.monitor-picker-head strong {display:block;font-size:16px;font-weight:650;letter-spacing:-.01em;}
+.monitor-picker-head small {display:block;margin-top:2px;font-size:12px;color:#b5b0bd;}
+.monitor-map {position:relative;flex-shrink:0;}
+.monitor-tile {position:absolute;display:flex;flex-direction:column;justify-content:flex-end;align-items:flex-start;gap:1px;padding:10px 12px;overflow:hidden;color:inherit;font:inherit;text-align:left;cursor:pointer;border:1.5px solid #ffffff24;border-radius:12px;background:linear-gradient(160deg,#ffffff12,#ffffff05);transition:border-color .15s,background .15s,transform .15s;}
+.monitor-tile:hover,.monitor-tile:focus-visible {outline:none;border-color:#b896ff;background:linear-gradient(160deg,#a17bf03a,#a17bf014);}
+.monitor-tile:active {transform:scale(.98);}
+.monitor-tile[data-current="true"] {border-color:#ffffff55;}
+.monitor-number {position:absolute;top:8px;left:10px;display:grid;place-items:center;min-width:22px;height:22px;padding:0 6px;border-radius:7px;font-size:12px;font-weight:700;background:#0008;}
+.monitor-tile[data-roomy="false"] {justify-content:center;align-items:center;}
+.monitor-tile[data-roomy="false"] .monitor-number {position:static;}
+.monitor-name {font-size:13.5px;font-weight:650;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.monitor-tile small {font-size:11px;color:#c3bdcc;}
+.monitor-here {position:absolute;top:8px;right:9px;padding:3px 8px;border-radius:999px;font-size:10.5px;font-style:normal;font-weight:650;color:#1a1520;background:#d9c8ff;}
+.monitor-picker-keys {display:flex;align-items:center;gap:6px;margin:0;font-size:11.5px;color:#a9a3b2;}
+.monitor-picker-keys span {margin-left:10px;}
+.monitor-picker-keys kbd {padding:2px 6px;border-radius:5px;font:600 10.5px/1.3 inherit;color:#ddd6e8;background:#ffffff14;box-shadow:inset 0 -1px #0006;}
+@media (prefers-reduced-motion:reduce) {.monitor-picker{animation:none;}}
+/* The card never blocks dragging an area; only the screen tiles take clicks. */
+.monitor-tile {pointer-events:auto;}
+/* "Press Esc again", centered over the recorded area (ink layer, never recorded). */
+.screen-esc-notice { position:fixed; left:50%; top:50%; z-index:50; transform:translate(-50%,-50%); display:flex; align-items:center; gap:12px; padding:12px 20px 12px 16px; border-radius:14px; pointer-events:none; white-space:nowrap; font:500 16px/24px 'Instrument Sans Variable','Segoe UI',sans-serif; color:#f2f2f4; background:#1b1b1df2; border:1px solid #ffffff14; box-shadow:inset 0 1px 0 #ffffff0f,0 16px 40px -12px #000c; animation:screen-esc-in 180ms cubic-bezier(.22,1,.36,1); }
+.screen-esc-notice i { width:10px; height:10px; border-radius:50%; background:#e5484d; flex-shrink:0; }
+.screen-esc-notice kbd { min-width:32px; height:26px; padding:3px 8px; text-align:center; border-radius:6px; font:500 13px/20px inherit; color:#f2f2f4; background:#ffffff14; box-shadow:inset 0 -2px 0 #0006,0 0 0 1px #ffffff14; }
+@keyframes screen-esc-in { from { opacity:0; transform:translate(-50%,calc(-50% + 8px)); } }
+@media(prefers-reduced-motion:reduce){ .screen-esc-notice { animation:none; } }

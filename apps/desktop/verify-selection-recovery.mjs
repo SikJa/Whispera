@@ -9,6 +9,8 @@ try{
   for(const broken of ['screen_appearance','screen_selection_image','screen_overlay_ready']) {
     const failed=await browser.newPage();
     await failed.addInitScript(installNativeMock,{kind:'image'});
+    // The selector retains its own preview only on macOS; Windows loads it in ScreenFrozen.
+    if(broken==='screen_selection_image') await failed.addInitScript(()=>Object.defineProperty(navigator,'platform',{get:()=> 'MacIntel'}));
     await failed.addInitScript(broken=>{
       const original=window.__TAURI_INTERNALS__.invoke;
       window.__TAURI_INTERNALS__.invoke=async(command,args)=>{

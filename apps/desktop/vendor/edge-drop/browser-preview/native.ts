@@ -39,11 +39,13 @@ useStore.subscribe((next,previous)=>{
 });
 const nativeListen=(event:string,callback:Function)=>invoke('plugin:event|listen',{event,target:{kind:'WebviewWindow',label:'library'},handler:(window as any).__TAURI_INTERNALS__.transformCallback(callback)});
 await nativeListen('library-open',()=>{
+  void refresh().catch(()=>{});
   window.dispatchEvent(new Event('panel:open-request'));
   if(useStore.getState().open)void surface.open().catch(surfaceError);
   else useStore.getState().setOpen(true);
 });
 await nativeListen('library-close',()=>void closePanel().catch(()=>{}));
+await nativeListen('library-changed',()=>void refresh().catch(()=>{}));
 await nativeListen('tauri://drag-drop',async({payload}:any)=>{
   const point=payload.position;
   const element=document.elementFromPoint(point.x/devicePixelRatio,point.y/devicePixelRatio);

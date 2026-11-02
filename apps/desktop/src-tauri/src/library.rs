@@ -35,6 +35,7 @@ fn image_hash(rgba: &[u8], width: u32, height: u32) -> String {
 
 #[derive(Default)]
 pub struct Library {
+    opening: Mutex<Option<std::time::Instant>>,
     target: Mutex<Option<paste::Target>>,
     sequence: Mutex<Option<u64>>,
     open_requested: std::sync::atomic::AtomicBool,
@@ -122,9 +123,15 @@ fn validate_preferences(patch: &Value) -> Result<(), String> {
     }
     Ok(())
 }
-fn save(store: &Store, mut items: Vec<Value>) -> Result<Vec<Value>, String> {
-    let previous = rows(store)?;
-    let config = settings(store)?;
+fn save(store: &Store, items: Vec<Value>) -> Result<Vec<Value>, String> {
+    retain_and_save(store, rows(store)?, items, &settings(store)?)
+}
+fn retain_and_save(store: &Store, previous: Vec<Value>, mut items: Vec<Value>, config: &Value) -> Result<Vec<Value>, String> {
+    retain_items(&mut items, config);
+    if previous != items { store.put("library_items", &items)?; }
+    Ok(items)
+}
+fn retain_items(items: &mut Vec<Value>, config: &Value) {
     let limit = config["historyLimit"]
         .as_u64()
         .unwrap_or(250)
@@ -136,6 +143,7 @@ fn save(store: &Store, mut items: Vec<Value>) -> Result<Vec<Value>, String> {
     let cutoff = chrono::Utc::now().timestamp_millis() - hours * 3_600_000;
     let mut count = 0;
     items.retain(|i| {
+        if i["data"]["processing"].is_object() { return true; }
         if i["pinned"].as_bool().unwrap_or(false) {
             return true;
         }
@@ -145,10 +153,6 @@ fn save(store: &Store, mut items: Vec<Value>) -> Result<Vec<Value>, String> {
         count += 1;
         count <= limit
     });
-    if previous != items {
-        store.put("library_items", &items)?;
-    }
-    Ok(items)
 }
 fn add(store: &Store, data: Value) -> Result<(), String> {
     let mut items = rows(store)?;
@@ -173,6 +177,49 @@ fn add(store: &Store, data: Value) -> Result<(), String> {
 fn files_data(paths: &[String]) -> Value {
     let entries: Vec<Value> = paths.iter().map(|p| { let path=Path::new(p); json!({"name":path.file_name().unwrap_or_default().to_string_lossy(),"ext":path.extension().unwrap_or_default().to_string_lossy(),"size":fs::metadata(path).map(|m|m.len()).unwrap_or(0),"isImage":false}) }).collect();
     json!({"kind":"files","paths":paths,"entries":entries})
+}
+pub(crate) fn processing_video(store: &Store, directory: &Path, seconds: f64) -> Result<(), String> {
+    let _guard = GATE.lock().map_err(|_| "Biblioteca ocupada")?;
+    if settings(store)?["incognito"].as_bool().unwrap_or(false) { return Ok(()); }
+    let id = directory.file_name().and_then(|n| n.to_str()).ok_or("Sesion de video invalida")?;
+    let mut items = rows(store)?;
+    if items.iter().any(|i| i["id"] == id) { return Ok(()); }
+    items.insert(0, json!({"id":id,"capturedAt":chrono::Utc::now().timestamp_millis(),"hitCount":1,"pinned":false,
+        "data":{"kind":"files","paths":[directory.join("video-pending.mp4").to_string_lossy()],
+        "entries":[{"name":"Video de Whispera","ext":"mp4","size":0,"isImage":false}],
+        "processing":{"status":"processing","seconds":seconds,"directory":directory.to_string_lossy()}}}));
+    save(store, items)?;
+    Ok(())
+}
+pub(crate) fn finish_processing_video(store: &Store, directory: &Path, path: Option<&Path>, error: &str) -> Result<(), String> {
+    let _guard = GATE.lock().map_err(|_| "Biblioteca ocupada")?;
+    let id = directory.file_name().and_then(|n| n.to_str()).ok_or("Sesion de video invalida")?;
+    let mut items = rows(store)?;
+    // A deleted or incognito card must not be resurrected by a late worker.
+    if let Some(item) = items.iter_mut().find(|i| i["id"] == id && i["data"]["processing"].is_object()) {
+        if let Some(path) = path { item["data"] = files_data(&[path.to_string_lossy().into_owned()]); item["capturedAt"] = json!(chrono::Utc::now().timestamp_millis()); }
+        else { item["data"]["processing"]["status"] = json!("error"); item["data"]["processing"]["error"] = json!(error); }
+        if path.is_some() {
+            let data = item["data"].clone();
+            let pinned = items.iter().any(|i| i["data"] == data && i["pinned"] == true);
+            items.retain(|i| i["id"] == id || i["data"] != data);
+            if pinned { if let Some(item) = items.iter_mut().find(|i| i["id"] == id) { item["pinned"] = json!(true); } }
+        }
+        save(store, items)?;
+    }
+    Ok(())
+}
+fn recover_processing_videos(store: &Store) -> Result<(), String> {
+    let _guard = GATE.lock().map_err(|_| "Biblioteca ocupada")?;
+    let mut items = rows(store)?;
+    for item in &mut items {
+        if item["data"]["processing"]["status"] == "processing" {
+            item["data"]["processing"]["status"] = json!("error");
+            item["data"]["processing"]["error"] = json!("El procesamiento se interrumpio al cerrar Whispera. Los originales siguen en la carpeta de recuperacion.");
+        }
+    }
+    save(store, items)?;
+    Ok(())
 }
 pub fn remember_file(store: &Store, path: &Path) -> Result<(), String> {
     let _guard = GATE.lock().map_err(|_| "Biblioteca ocupada")?;
@@ -261,6 +308,10 @@ fn collect(app: &tauri::AppHandle) -> Result<(), String> {
             let is_url = text.starts_with("https://") || text.starts_with("http://");
             add(&store, json!({"kind":"text","text":text,"isUrl":is_url}))?;
         }
+    } else {
+        // Cut/Copy owners can still hold OpenClipboard during the notification.
+        // Do not acknowledge the sequence until its content was readable.
+        return Err("El portapapeles todavia esta ocupado".into());
     }
     *state.sequence.lock().map_err(|_| "Biblioteca ocupada")? = sequence;
     Ok(())
@@ -326,24 +377,31 @@ pub fn start(app: &tauri::AppHandle) {
     if settings(&store).unwrap_or(Value::Null).is_null() {
         let _ = store.put("library_settings", &json!({"captureGlobal":false,"autoDeleteHours":48,"historyLimit":250,"incognito":false,"toggleHotkey":"Alt+C"}));
     }
+    let _ = recover_processing_videos(&store);
     if settings(&store)
         .ok()
         .is_some_and(|c| c["clearUnpinnedOnRestart"] == true)
     {
         if let Ok(_guard) = GATE.lock() {
             if let Ok(mut items) = rows(&store) {
-                items.retain(|i| i["pinned"] == true);
+                items.retain(|i| i["pinned"] == true || i["data"]["processing"].is_object());
                 let _ = save(&store, items);
             }
         }
     }
+    #[cfg(windows)]
+    let clipboard_events=app.get_webview_window("main").map(|w|crate::clipboard_events::subscribe(&w));
     let app = app.clone();
     std::thread::spawn(move || {
-        let mut ticks = 0u64;
+        let mut maintenance=std::time::Instant::now()-Duration::from_secs(3600);
         loop {
+            #[cfg(windows)]
+            if let Some(events)=&clipboard_events {let _=events.recv_timeout(Duration::from_millis(750));}
+            else {std::thread::sleep(Duration::from_millis(750));}
+            #[cfg(not(windows))]
             std::thread::sleep(Duration::from_millis(750));
-            ticks += 1;
-            if ticks % 4800 == 1 {
+            if maintenance.elapsed()>=Duration::from_secs(3600) {
+                maintenance=std::time::Instant::now();
                 if let Ok(_guard) = GATE.lock() {
                     let store = app.state::<Store>();
                     if let Ok(items) = rows(&store).and_then(|items| save(&store, items)) {
@@ -380,14 +438,38 @@ pub fn start(app: &tauri::AppHandle) {
                         }
                     }
                 }
+                let _ = app.emit("library-changed", ());
             }
             if config["captureGlobal"].as_bool().unwrap_or(false)
                 && !config["incognito"].as_bool().unwrap_or(false)
             {
-                let _ = collect(&app);
+                for attempt in 0..4 {
+                    if collect(&app).is_ok(){break;}
+                    std::thread::sleep(Duration::from_millis(15*(attempt+1)));
+                }
             }
         }
     });
+}
+fn state_snapshot(store: &Store, revision: Option<&str>, startup: bool) -> Result<Value, String> {
+        let mut items = rows(store)?;
+        let config = settings(store)?;
+        let previous_len = items.len();
+        retain_items(&mut items, &config);
+        // Retention only removes entries; unchanged length means identical content.
+        if items.len() != previous_len { store.put("library_items", &items)?; }
+        use std::hash::{Hash, Hasher};
+        let mut hash = std::collections::hash_map::DefaultHasher::new();
+        serde_json::to_string(&(&items, &config, startup))
+            .map_err(|e| e.to_string())?
+            .hash(&mut hash);
+        let current = format!("{:x}", hash.finish());
+        if revision == Some(&current) {
+            return Ok(json!({"unchanged":true}));
+        }
+        let mut result = json!({"items":items,"settings":config,"version":env!("CARGO_PKG_VERSION"),"isStoreBuild":false});
+        result["revision"] = json!(current);
+        Ok(result)
 }
 #[tauri::command]
 pub async fn library_state(
@@ -397,18 +479,9 @@ pub async fn library_state(
     tauri::async_runtime::spawn_blocking(move || {
         let _guard = GATE.lock().map_err(|_| "Biblioteca ocupada")?;
         let store = app.state::<Store>();
-        let items = save(&store, rows(&store)?)?;
-        use std::hash::{Hash, Hasher};
         let startup=crate::startup::cached_enabled()?;
-        let mut hash = std::collections::hash_map::DefaultHasher::new();
-        serde_json::to_string(&(items, settings(&store)?, startup))
-            .map_err(|e| e.to_string())?
-            .hash(&mut hash);
-        let current = format!("{:x}", hash.finish());
-        if revision.as_deref() == Some(&current) {
-            return Ok(json!({"unchanged":true}));
-        }
-        let mut result = payload(&store)?;
+        let mut result = state_snapshot(&store, revision.as_deref(), startup)?;
+        if result["unchanged"] == true { return Ok(result); }
         for item in result["items"].as_array().into_iter().flatten() {
             for path in paths(&item["data"]) {
                 if path.is_file() {
@@ -416,7 +489,6 @@ pub async fn library_state(
                 }
             }
         }
-        result["revision"] = json!(current);
         if !result["settings"].is_object() {
             result["settings"] = json!({});
         }
@@ -520,6 +592,16 @@ pub async fn library_action(
     let state=app.state::<Library>();let _guard=GATE.lock().map_err(|_|"Biblioteca ocupada")?;let store=app.state::<Store>();let mut items=rows(&store)?;
     if action=="settings" { return update_settings(&app,&value); }
     let index=id.as_ref().and_then(|id|items.iter().position(|i|i["id"].as_str()==Some(id)));
+    if index.is_some_and(|i| items[i]["data"]["processing"].is_object()) {
+        match action.as_str() {
+            "reveal" => {
+                let i=index.unwrap(); let path=items[i]["data"]["processing"]["directory"].as_str().ok_or("Carpeta no disponible")?;
+                crate::platform::reveal_path(Path::new(path))?; return Ok(json!(true));
+            },
+            "pin" | "delete" | "clear" | "settings" => {},
+            _ => return Err("El video todavia se esta preparando. Los originales estan conservados.".into()),
+        }
+    }
     match action.as_str(){
       "pin"=>{let i=index.ok_or("Elemento inexistente")?;items[i]["pinned"]=json!(value.as_bool().unwrap_or(false));},
       "delete"=>{if let Some(i)=index{items.remove(i);}},
@@ -527,7 +609,16 @@ pub async fn library_action(
       "merge"=>{let source=index.ok_or("Elemento inexistente")?;let target=items.iter().position(|i|i["id"]==value).ok_or("Destino inexistente")?;if source==target{return Err("Selecciona otro elemento".into());}let a=items[source]["data"].clone();let b=items[target]["data"].clone();if a["kind"]=="files"&&b["kind"]=="files"{let mut ps=b["paths"].as_array().cloned().unwrap_or_default();ps.extend(a["paths"].as_array().cloned().unwrap_or_default());if ps.len()>10{return Err("Maximo 10 archivos".into());}let ps:Vec<_>=ps.iter().filter_map(|p|p.as_str().map(String::from)).collect();items[target]["data"]=files_data(&ps);}else{let imgs=|d:&Value|->Vec<Value>{if d["kind"]=="image"{vec![d.clone()]}else if d["kind"]=="image-collection"{d["images"].as_array().cloned().unwrap_or_default()}else{vec![]}};let mut images=imgs(&b);let more=imgs(&a);if images.is_empty()||more.is_empty(){return Err("Tipos incompatibles".into());}images.extend(more);if images.len()>10{return Err("Maximo 10 imagenes".into());}items[target]["data"]=json!({"kind":"image-collection","images":images});}items.remove(source);},
       "split"|"remove-part"=>{let i=index.ok_or("Elemento inexistente")?;let part=detach(&mut items[i]["data"],&value)?;if paths(&items[i]["data"]).is_empty(){items.remove(i);}if action=="split"{items.insert(0,json!({"id":uuid::Uuid::new_v4().to_string(),"data":part,"capturedAt":chrono::Utc::now().timestamp_millis(),"hitCount":1,"pinned":false}));}},
       "reveal"=>{let i=index.ok_or("Elemento inexistente")?;let data=selected(&items[i]["data"],&value)?;let path=paths(&data).into_iter().next().filter(|p|p.is_file()).ok_or("Archivo inexistente")?;reveal_file(&path)?;return Ok(json!(true));},
-      "copy"|"paste"=>{let i=index.ok_or("Elemento inexistente")?;let data=selected(&items[i]["data"],&value)?;if data["kind"]=="text"{app.clipboard().write_text(data["text"].as_str().unwrap_or("")).map_err(|e|e.to_string())?;}else if data["kind"]=="image"{let path=paths(&data).into_iter().next().ok_or("Imagen inexistente")?;let bytes=fs::read(path).map_err(|e|e.to_string())?;let image=tauri::image::Image::from_bytes(&bytes).map_err(|e|e.to_string())?;app.clipboard().write_image(&image).map_err(|e|e.to_string())?;}else{let p=paths(&data);if p.is_empty(){return Err("Los archivos ya no existen".into());}crate::video_transcript::copy_files(&app,&p)?;}
+      "copy-path"=>{
+        let i=index.ok_or("Elemento inexistente")?;
+        let data=selected(&items[i]["data"],&value)?;
+        let p=paths(&data);if p.is_empty(){return Err("Los archivos ya no existen".into());}
+        crate::video_transcript::copy_paths(&app,&p)?;
+        return Ok(json!(true));
+      },
+      "copy"|"paste"=>{let i=index.ok_or("Elemento inexistente")?;let data=selected(&items[i]["data"],&value)?;if data["kind"]=="text"{app.clipboard().write_text(data["text"].as_str().unwrap_or("")).map_err(|e|e.to_string())?;}else if data["kind"]=="image"{let path=paths(&data).into_iter().next().ok_or("Imagen inexistente")?;let bytes=fs::read(path).map_err(|e|e.to_string())?;let image=tauri::image::Image::from_bytes(&bytes).map_err(|e|e.to_string())?;app.clipboard().write_image(&image).map_err(|e|e.to_string())?;}else{let p=paths(&data);if p.is_empty(){return Err("Los archivos ya no existen".into());}
+        let path_only=p.iter().any(|path|path.extension().and_then(|ext|ext.to_str()).is_some_and(|ext|ext.eq_ignore_ascii_case("mp4"))) && state.target.lock().map_err(|_|"Destino ocupado")?.is_some_and(paste::prefers_video_path);
+        if path_only {crate::video_transcript::copy_paths(&app,&p)?;}else{crate::video_transcript::copy_files(&app,&p)?;}}
         if data["kind"]=="text"||data["kind"]=="image"{suppress_clipboard(&app);}
         if action=="paste"{hide(&app)?;let target=state.target.lock().map_err(|_|"Destino ocupado")?.ok_or("No hay destino. Contenido copiado para pegar manualmente")?;paste::restore_and_paste(target)?;}return Ok(json!(true));},
       "add"=>{let p:Vec<String>=value.as_array().ok_or("Archivos invalidos")?.iter().filter_map(|p|p.as_str().map(String::from)).filter(|p|Path::new(p).is_file()).take(10).collect();if !p.is_empty(){add(&store,files_data(&p))?;}return payload(&store);},
@@ -618,6 +709,92 @@ pub async fn library_pick(app: tauri::AppHandle) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn snapshot_reuses_reads_preserves_retention_and_revision() {
+        let store = Store::open(Path::new(":memory:")).unwrap();
+        store.put("library_settings", &json!({"historyLimit":10,"autoDeleteHours":1})).unwrap();
+        let now = chrono::Utc::now().timestamp_millis();
+        let mut items: Vec<Value> = (0..20).map(|i| json!({"id":i,"capturedAt":now,"data":{"kind":"text","text":"reference"}})).collect();
+        items.insert(0, json!({"id":"expired","capturedAt":0}));
+        items.push(json!({"id":"pinned","capturedAt":0,"pinned":true}));
+        items.push(json!({"id":"processing","capturedAt":0,"data":{"processing":{}}}));
+        store.put("library_items", &items).unwrap();
+        let expected = payload(&store).unwrap();
+        store.put("library_items", &items).unwrap();
+        let actual = state_snapshot(&store, None, false).unwrap();
+        assert_eq!(actual["items"], expected["items"]);
+        assert_eq!(actual["settings"], expected["settings"]);
+        assert_eq!(rows(&store).unwrap(), actual["items"].as_array().unwrap().clone());
+        assert_eq!(actual["items"].as_array().unwrap().len(),12);
+        assert_eq!(state_snapshot(&store, actual["revision"].as_str(), false).unwrap(), json!({"unchanged":true}));
+        assert_ne!(state_snapshot(&store, actual["revision"].as_str(), true).unwrap(), json!({"unchanged":true}));
+    }
+
+    #[test]
+    fn snapshot_synthetic_comparison() {
+        use std::{hash::{Hash,Hasher},time::Instant};
+        for count in [0,250,1000] {
+            let store = Store::open(Path::new(":memory:")).unwrap();
+            store.put("library_settings", &json!({"historyLimit":1000,"autoDeleteHours":0})).unwrap();
+            let items: Vec<Value> = (0..count).map(|i| json!({"id":i,"capturedAt":0,"data":{"kind":"text","text":"synthetic reference ".repeat(20)}})).collect();
+            store.put("library_items", &items).unwrap();
+            let old = |revision: Option<&str>| {
+                let items=save(&store,rows(&store).unwrap()).unwrap();
+                let mut hash=std::collections::hash_map::DefaultHasher::new();
+                serde_json::to_string(&(items,settings(&store).unwrap(),false)).unwrap().hash(&mut hash);
+                let current=format!("{:x}",hash.finish());
+                if revision==Some(&current) {return json!({"unchanged":true});}
+                let mut value=payload(&store).unwrap();value["revision"]=json!(current);value
+            };
+            let expected=old(None);assert_eq!(expected,state_snapshot(&store,None,false).unwrap());
+            for revision in [None,expected["revision"].as_str()] {
+                assert_eq!(old(revision),state_snapshot(&store,revision,false).unwrap());
+                let mut before=vec![];let mut after=vec![];
+                for iteration in 0..21 {
+                    let mut measure_old=||{let at=Instant::now();std::hint::black_box(old(revision));before.push(at.elapsed());};
+                    let mut measure_new=||{let at=Instant::now();std::hint::black_box(state_snapshot(&store,revision,false).unwrap());after.push(at.elapsed());};
+                    if iteration%2==0 {measure_old();measure_new();} else {measure_new();measure_old();}
+                }
+                before.sort();after.sort();
+                println!("library snapshot items={count} unchanged={} baseline={:?} candidate={:?}; static SELECT counts changed 8->2, unchanged 4->2",revision.is_some(),before[10],after[10]);
+            }
+        }
+    }
+    #[test]
+    fn video_processing_survives_retention_and_keeps_identity_when_ready() {
+        let store = Store::open(Path::new(":memory:")).unwrap();
+        let directory = Path::new("screen-recordings/test-session");
+        processing_video(&store, directory, 2400.).unwrap();
+        processing_video(&store, directory, 2400.).unwrap();
+        let mut items = rows(&store).unwrap();
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0]["data"]["processing"]["seconds"], 2400.);
+        items[0]["capturedAt"] = json!(0);
+        store.put("library_items", &items).unwrap();
+        assert_eq!(save(&store, items).unwrap().len(), 1);
+        let path = Path::new("ready.mp4");
+        add(&store, files_data(&["ready.mp4".into()])).unwrap();
+        finish_processing_video(&store, directory, Some(path), "").unwrap();
+        let items = rows(&store).unwrap();
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0]["id"], "test-session");
+        assert!(items[0]["data"]["processing"].is_null());
+        assert_eq!(items[0]["data"]["paths"][0], "ready.mp4");
+    }
+    #[test]
+    fn interrupted_processing_remains_visible_and_deleted_cards_stay_deleted() {
+        let store = Store::open(Path::new(":memory:")).unwrap();
+        let directory = Path::new("screen-recordings/interrupted");
+        processing_video(&store, directory, 1800.).unwrap();
+        recover_processing_videos(&store).unwrap();
+        assert_eq!(rows(&store).unwrap()[0]["data"]["processing"]["status"], "error");
+        store.put("library_items", &Vec::<Value>::new()).unwrap();
+        finish_processing_video(&store, directory, None, "failure").unwrap();
+        assert!(rows(&store).unwrap().is_empty());
+        store.put("library_settings", &json!({"incognito":true})).unwrap();
+        processing_video(&store, directory, 1800.).unwrap();
+        assert!(rows(&store).unwrap().is_empty());
+    }
     #[test]
     fn main_library_preferences_reject_invalid_limits_and_flags() {
         assert!(validate_preferences(&json!({"captureGlobal":true,"historyLimit":250,"autoDeleteHours":0})).is_ok());
@@ -751,14 +928,29 @@ fn toggle(app: tauri::AppHandle) -> Result<(), String> {
         if w.is_visible().map_err(|e| e.to_string())? {
             return hide(&app);
         }
+        *app.state::<Library>().opening.lock().map_err(|_|"Biblioteca ocupada")? = Some(std::time::Instant::now());
         *app.state::<Library>()
             .target
             .lock()
             .map_err(|_| "Destino ocupado")? = paste::capture();
         app.state::<Library>().open_requested.store(true, std::sync::atomic::Ordering::SeqCst);
         let _ = w.emit("library-open", ());
+        // If the panel page is stuck (suspended renderer, lost event), reload it;
+        // a fresh page opens itself once hydrated while the request is pending.
+        let watch = app.clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_secs(2));
+            let Some(w) = watch.get_webview_window("library") else { return; };
+            if watch.state::<Library>().open_requested.load(std::sync::atomic::Ordering::SeqCst)
+                && !w.is_visible().unwrap_or(true)
+            {
+                let _ = watch.state::<Store>().event("Portapapeles sin respuesta: recargando el panel");
+                if let Ok(url) = w.url() { let _ = w.navigate(url); }
+            }
+        });
         return Ok(()); // The frontend commits its hit region before showing.
     }
+    *app.state::<Library>().opening.lock().map_err(|_|"Biblioteca ocupada")? = Some(std::time::Instant::now());
     *app.state::<Library>()
         .target
         .lock()
@@ -812,6 +1004,9 @@ pub fn library_window(app: tauri::AppHandle, window: tauri::WebviewWindow, opera
             if !app.state::<Library>().open_requested.load(std::sync::atomic::Ordering::SeqCst) {
                 return hide(&app);
             }
+            if let Ok(mut started) = app.state::<Library>().opening.lock() {
+                if let Some(started) = started.take() { let _=app.state::<Store>().event(&format!("Portapapeles visible en {} ms desde solicitud",started.elapsed().as_millis())); }
+            }
             Ok(())
         },
         "hide" => {
@@ -843,7 +1038,15 @@ pub fn library_cursor(
     };
     #[cfg(target_os = "macos")]
     let cursor = window.cursor_position().map_err(|e| e.to_string())?;
-    Ok(
-        json!({"x":(cursor.x-origin.x as f64)/scale,"y":(cursor.y-origin.y as f64)/scale,"displayWidth":size.width as f64/scale,"displayHeight":size.height as f64/scale,"stickPosition":settings(&app.state::<Store>())?["stickPosition"]}),
-    )
+    let mut value = json!({"x":(cursor.x-origin.x as f64)/scale,"y":(cursor.y-origin.y as f64)/scale,"displayWidth":size.width as f64/scale,"displayHeight":size.height as f64/scale,"stickPosition":settings(&app.state::<Store>())?["stickPosition"]});
+    // The open panel stays until a click outside it. "clicked" (the low bit) also
+    // reports a click that started and ended between two polls.
+    #[cfg(windows)]
+    {
+        use windows::Win32::UI::Input::KeyboardAndMouse::{GetAsyncKeyState, VK_LBUTTON, VK_RBUTTON};
+        let states = [VK_LBUTTON, VK_RBUTTON].map(|key| unsafe { GetAsyncKeyState(i32::from(key.0)) } as u16);
+        value["down"] = json!(states.iter().any(|state| state & 0x8000 != 0));
+        value["clicked"] = json!(states.iter().any(|state| state & 0x0001 != 0));
+    }
+    Ok(value)
 }

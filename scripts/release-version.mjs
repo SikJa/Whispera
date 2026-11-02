@@ -3,6 +3,9 @@ import {execFileSync} from 'node:child_process';
 import {pathToFileURL} from 'node:url';
 import {updateMessage} from './publish-release.mjs';
 
+// Floor for Windows stable versions; tauri.conf.json carries the macOS beta version.
+// Published tags above this floor keep incrementing from the latest one.
+export const WINDOWS_STABLE_BASE='0.2.28';
 export function nextVersion(base,tags){
   const parse=v=>{const m=/^v?(\d+)\.(\d+)\.(\d+)$/.exec(v);return m?m.slice(1).map(Number):null;};
   const initial=parse(base);if(!initial)throw Error('La versión base debe ser estable: x.y.z');
@@ -31,7 +34,7 @@ export function stableBase(configured,override){
   return override??configured;
 }
 export function prepare(){
-  const base=stableBase(JSON.parse(readFileSync('apps/desktop/src-tauri/tauri.conf.json','utf8')).version,process.env.WHISPERA_STABLE_BASE);
+  const base=stableBase(JSON.parse(readFileSync('apps/desktop/src-tauri/tauri.conf.json','utf8')).version,process.env.WHISPERA_STABLE_BASE??WINDOWS_STABLE_BASE);
   if(/^\d+\.\d+\.\d+-(?:beta|rc)\.\d+$/.test(base)){
     if(process.env.GITHUB_OUTPUT)appendFileSync(process.env.GITHUB_OUTPUT,'skip=true\n');
     console.log(`La versión ${base} usa el canal de prueba; no se publica como actualización estable.`);

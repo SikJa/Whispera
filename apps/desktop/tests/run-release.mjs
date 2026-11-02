@@ -17,7 +17,12 @@ suites.push('performance');
 suites.push('copy-export');
 suites.push('app-themes');
 suites.push('palette-stability');
-suites.push('settings-search');
+suites.push('capture-docks');
+suites.push('capture-fullscreen');
+suites.push('video-recovery');
+suites.push('video-processing');
+suites.push('idle-heartbeat','ink-performance','ink-layer','capture-entry');
+suites.push('settings-search','fork-integration');
 const requested=process.argv.slice(2);
 if(requested.length){if(requested.some(name=>!suites.includes(name)))throw Error('Unknown suite');suites.splice(0,suites.length,...requested);}
 const failures=[];

@@ -1,1 +1,1 @@
-Corregimos los saltos de la paleta al personalizar colores: el selector permanece quieto mientras arrastrás. Incluye todas las mejoras de la beta 3 y conserva tus preferencias. Disponible para Apple Silicon e Intel.
+Ahora podés mover, contraer y cambiar el tamaño de las barras de captura. Mejoramos la protección contra cierres de texto inventados al terminar un dictado. Conserva tus preferencias y las mejoras anteriores. Disponible para Apple Silicon e Intel.

@@ -17,7 +17,7 @@ export function RatioSelect({value,onChange}:{value:number;onChange:(value:numbe
   const [state,setState]=useState<'closed'|'open'|'closing'>('closed');
   const [position,setPosition]=useState({left:0,top:0});
   const trigger=useRef<HTMLButtonElement>(null),menu=useRef<HTMLDivElement>(null);
-  const timer=useRef<ReturnType<typeof setTimeout>>();
+  const timer=useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const chosen=ratios.find(r=>Math.abs(r.value-value)<.002)||ratios[0];
   const close=(focus=false)=>{clearTimeout(timer.current);setState('closing');if(focus)trigger.current?.focus();const ms=matchMedia('(prefers-reduced-motion: reduce)').matches?0:parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--dropdown-close-dur'))||150;timer.current=setTimeout(()=>setState('closed'),ms);};
   useEffect(()=>()=>clearTimeout(timer.current),[]);

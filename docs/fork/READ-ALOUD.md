@@ -1,4 +1,4 @@
-# Local reading preview — 0.3.0-readaloud.10
+# Local reading preview — 0.3.0-readaloud.11
 
 This fork adds Windows text-to-speech independently of Groq transcription.
 
@@ -22,7 +22,7 @@ shortcut while Windows Terminal remains active. Microsoft documents this behavio
 in [Windows Terminal selection](https://learn.microsoft.com/en-us/windows/terminal/selection).
 This procedure was confirmed to work in the reported WSL session (issue #3).
 
-No new capture mechanism is needed for that case. Version 0.3.0-readaloud.10 keeps
+No new capture mechanism is needed for that case. Version 0.3.0-readaloud.11 keeps
 the original focused-control selection path and adds an explanatory Shift hint
 only when the active window is Windows Terminal and accessibility reports an
 empty/unavailable selection. Successful reads, other applications, password and
@@ -128,3 +128,11 @@ En Configuración, **Buscar opciones** localiza secciones y ajustes por nombre o
 Se puede abrir el buscador con **Ctrl+K** (⌘K en macOS), recorrer los resultados con flechas, elegir con Enter y cerrar con Escape. Este atajo solo actúa dentro de Configuración y no interfiere con los campos donde se graban atajos. La búsqueda usa únicamente un catálogo local de opciones; no consulta ni guarda contenido del portapapeles, transcripciones o datos de cuentas.
 
 **Configuración → Aplicación** muestra la versión instalada obtenida del motor nativo. También aparece en Actualizaciones. La vista del navegador se identifica como vista previa.
+
+## Integración del original 0.2.38
+
+El nuevo menú del icono junto al reloj conserva Lectura, Pausar/Continuar, Detener, Guardar MP3, Cancelar guardado y Uso de IA, con estados que se actualizan al terminar la reproducción. El menú muestra la versión y se adapta con desplazamiento si no cabe en la pantalla.
+
+Transcripción permite elegir el micrófono y Groq o Local. Local requiere instalar un modelo compatible y, en Windows, un controlador Vulkan. La instalación del modelo incluye un detector de voz de 1,2 MB; no se descarga automáticamente al arrancar. Los archivos importados se convierten en el equipo y los originales se conservan. Con Local seleccionado, los caminos de transcripción de video tampoco pueden enviar audio a Groq; para ese servicio hay que elegir Groq expresamente y activar la transcripción de videos en Portapapeles.
+
+La selección de audio por video también se aplica al grabar un monitor completo. Se integran las mejoras de recuperación de videos largos, confirmación con Escape, anotaciones y rendimiento del original, manteniendo el pegado al campo original.

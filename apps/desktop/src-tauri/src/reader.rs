@@ -15,38 +15,16 @@ struct Session { child: Child, stdin: ChildStdin, replies: mpsc::Receiver<String
 impl Drop for Session { fn drop(&mut self) { let _ = self.child.kill(); let _ = self.child.wait(); } }
 #[derive(Default)]
 pub struct Reader(Mutex<Option<Session>>, Mutex<()>, AtomicU64, AtomicBool, Mutex<Option<Reading>>);
-pub struct TrayMenu {
-    pub pause: tauri::menu::MenuItem<tauri::Wry>,
-    pub stop: tauri::menu::MenuItem<tauri::Wry>,
-    pub export: tauri::menu::MenuItem<tauri::Wry>,
-    pub cancel_export: tauri::menu::MenuItem<tauri::Wry>,
-    phase: AtomicU8,
-}
-impl TrayMenu {
-    pub fn new(app: &tauri::AppHandle) -> tauri::Result<Self> {
-        Ok(Self {
-            pause: tauri::menu::MenuItem::with_id(app,"reader-pause","Pausar lectura",false,None::<&str>)?,
-            stop: tauri::menu::MenuItem::with_id(app,"reader-stop","Detener lectura",false,None::<&str>)?,
-            export: tauri::menu::MenuItem::with_id(app,"reader-export","Guardar lectura como MP3…",false,None::<&str>)?,
-            cancel_export: tauri::menu::MenuItem::with_id(app,"reader-export-cancel","Cancelar guardado MP3",false,None::<&str>)?,
-            phase: AtomicU8::new(0),
-        })
-    }
+#[derive(Default)]
+pub struct TrayMenu { phase: AtomicU8 }
+pub fn tray_status(app: &tauri::AppHandle) -> Value {
+    let phase=app.state::<TrayMenu>().phase.load(Ordering::SeqCst);
+    json!({"supported":cfg!(windows),"phase":match phase {1=>"speaking",2=>"paused",_=>"idle"},"exporting":crate::reader_export::busy(app),"has_reading":current(app).is_some()})
 }
 fn sync_tray(app: &tauri::AppHandle, phase: &str) {
-    let Some(menu) = app.try_state::<TrayMenu>() else { return; };
-    let phase = match phase { "speaking" => 1, "paused" => 2, _ => 0 };
-    if menu.phase.swap(phase,Ordering::SeqCst) == phase { return; }
-    let app_copy = app.clone();
-    // Never wait for the UI thread while holding the helper lock: closing the
-    // settings window can stop the reader on that same UI thread.
-    let _ = app.run_on_main_thread(move || {
-        let menu = app_copy.state::<TrayMenu>();
-        if menu.phase.load(Ordering::SeqCst) != phase { return; }
-        let _ = menu.pause.set_text(if phase == 2 { "Continuar lectura" } else { "Pausar lectura" });
-        let _ = menu.pause.set_enabled(phase != 0);
-        let _ = menu.stop.set_enabled(phase != 0);
-    });
+    let Some(menu)=app.try_state::<TrayMenu>() else{return;};
+    let phase=match phase {"speaking"=>1,"paused"=>2,_=>0};
+    if menu.phase.swap(phase,Ordering::SeqCst)!=phase {let _=app.emit_to("tray-menu","reader-tray-state",());}
 }
 pub fn start_tray_monitor(app: &tauri::AppHandle) {
     if !cfg!(windows) { return; }

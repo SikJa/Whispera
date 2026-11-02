@@ -15,7 +15,6 @@ pub struct Updates {
     status:Mutex<Status>,available:Mutex<Option<Update>>,operation:AtomicBool,
     installing:AtomicBool,work:AtomicUsize,recovery_route:AtomicBool,
 }
-pub struct UpdateMenu(pub tauri::menu::MenuItem<tauri::Wry>);
 impl Default for Updates {
     fn default()->Self {Self {
         status:Mutex::new(Status{current_version:env!("CARGO_PKG_VERSION").into(),version:None,notes:String::new(),phase:"idle".into(),downloaded:0,total:None,error:String::new(),upstream:crate::upstream_updates::Status::default()}),
@@ -37,13 +36,6 @@ fn change(app:&tauri::AppHandle,apply:impl FnOnce(&mut Status)) {
     let state=app.state::<Updates>();
     let value={let mut s=state.status.lock().unwrap_or_else(|e|e.into_inner());apply(&mut s);s.clone()};
     let _=app.emit_to("main","updater-status",value);
-    if let Some(menu)=app.try_state::<UpdateMenu>() {
-        let status=snapshot(app);
-        if ["available","current","error"].contains(&status.phase.as_str()) {
-            let label=status.version.map(|v|format!("Actualizar Whispera ({v})")).unwrap_or_else(||"Buscar actualizaciones".into());
-            let _=menu.0.set_text(label);
-        }
-    }
 }
 struct Operation<'a>(&'a AtomicBool);
 impl Drop for Operation<'_>{fn drop(&mut self){self.0.store(false,Ordering::SeqCst);}}
@@ -53,6 +45,8 @@ fn operation(flag:&AtomicBool)->Result<Operation<'_>,String>{
 }
 fn trusted(url:&str)->bool {url.starts_with("https://github.com/SikJa/Whispera/releases/download/")}
 
+/// Version waiting to be installed, shown in the tray menu.
+pub fn available_version(app:&tauri::AppHandle)->Option<String>{let s=snapshot(app);if s.phase=="available"{s.version}else{None}}
 #[tauri::command]
 pub fn updater_status(app:tauri::AppHandle)->Status {snapshot(&app)}
 
@@ -105,7 +99,10 @@ async fn check(app:tauri::AppHandle,manual:bool)->Result<Status,String> {
         let update=own?;
         change(&app,|s|{s.version=update.as_ref().map(|u|u.version.clone());s.notes=update.as_ref().and_then(|u|u.body.clone()).unwrap_or_default();s.phase=if update.is_some(){"available"}else{"current"}.into();s.downloaded=0;s.total=None;});
         *state.available.lock().map_err(|_|"Actualizador ocupado")?=update;
-        let _=app.state::<crate::storage::Store>().event(if snapshot(&app).version.is_some(){"Actualizaciones: nueva versión detectada"}else{"Actualizaciones: consulta completada, sin versiones nuevas"});
+        // Automatic checks run every few minutes; log them only when something changed.
+        if manual||snapshot(&app).version.is_some() {
+            let _=app.state::<crate::storage::Store>().event(if snapshot(&app).version.is_some(){"Actualizaciones: nueva versión detectada"}else{"Actualizaciones: consulta completada, sin versiones nuevas"});
+        }
         Ok(snapshot(&app))
     }.await;
     if let Err(ref e)=result {
@@ -115,8 +112,10 @@ async fn check(app:tauri::AppHandle,manual:bool)->Result<Status,String> {
     }
     result
 }
+// Releases ship a few times a day at most; polling GitHub every 5 minutes only
+// kept the network and the profile log busy. Failures still retry quickly.
 fn retry_delay(failures:u32)->Duration {
-    Duration::from_secs(match failures {0=>300,1=>30,2=>60,3=>120,_=>300})
+    Duration::from_secs(match failures {0=>1800,1=>30,2=>60,3=>120,_=>300})
 }
 fn idle(app:&tauri::AppHandle)->Result<(),String> {
     let engine=app.state::<crate::engine::Engine>();
@@ -167,6 +166,7 @@ pub async fn updater_install(app:tauri::AppHandle,window:tauri::WebviewWindow)->
             std::fs::create_dir_all(&backup_dir).map_err(|e|e.to_string())?;
             let backup=backup_dir.join(format!("before-{}-{}.sqlite",update.version,chrono::Utc::now().format("%Y%m%d-%H%M%S")));
             handle.state::<crate::storage::Store>().0.lock().map_err(|_|"Configuración ocupada")?.backup(rusqlite::DatabaseName::Main,&backup,None).map_err(|e|format!("No se pudo respaldar la configuración: {e}"))?;
+            prune_backups(&backup_dir,5);
             change(&handle,|s|{s.phase="installing".into();s.downloaded=bytes.len() as u64;s.total=Some(bytes.len() as u64);});
             crate::replay::stop(&handle);
             update.install(bytes).map_err(|e|format!("No se pudo iniciar la instalación: {e}"))?;
@@ -179,37 +179,24 @@ pub async fn updater_install(app:tauri::AppHandle,window:tauri::WebviewWindow)->
     if let Err(ref e)=result {change(&app,|s|{s.phase="available".into();s.error=e.clone();});}
     result
 }
+// Every installed release leaves a full profile copy; keep only the newest ones.
+fn prune_backups(directory:&std::path::Path,keep:usize){
+    let Ok(entries)=std::fs::read_dir(directory) else{return};
+    let mut backups:Vec<_>=entries.flatten().map(|e|e.path())
+        .filter(|p|p.is_file()&&p.file_name().and_then(|n|n.to_str()).is_some_and(|n|n.starts_with("before-")&&n.ends_with(".sqlite")))
+        .filter_map(|p|Some((std::fs::metadata(&p).and_then(|m|m.modified()).ok()?,p))).collect();
+    backups.sort_by(|a,b|b.0.cmp(&a.0));
+    for (_,path) in backups.into_iter().skip(keep){let _=std::fs::remove_file(path);}
+}
 pub fn start(app:&tauri::AppHandle){
     let app=app.clone();
     tauri::async_runtime::spawn(async move{
         tokio::time::sleep(Duration::from_secs(8)).await;
-        let mut announced:Option<String>=None;
         let mut failures=0u32;
         loop {
-            if let Ok(status)=check(app.clone(),false).await {
-                failures=0;
-                if let Some(version)=status.version {
-                    if announced.as_deref()!=Some(version.as_str()) {
-                        // Wait only while an update notice is pending; never interrupt active work.
-                        loop {
-                            let current=snapshot(&app);
-                            if current.version.as_deref()!=Some(version.as_str())||current.phase!="available" {break;}
-                            if idle(&app).is_ok() {
-                                if let Some(window)=app.get_webview_window("main") {
-                                    if !window.is_visible().unwrap_or(true)||window.is_minimized().unwrap_or(false) {
-                                        if crate::open_settings(app.clone()).is_ok() {
-                                            let _=app.emit_to("main","updater-open",());
-                                        }
-                                    }
-                                }
-                                announced=Some(version);
-                                break;
-                            }
-                            tokio::time::sleep(Duration::from_secs(2)).await;
-                        }
-                    }
-                }
-            } else {failures=failures.saturating_add(1);}
+            // Whispera lives in the tray: a new version is announced by the
+            // sidebar badge and the tray menu, never by opening a window.
+            if check(app.clone(),false).await.is_ok() {failures=0;} else {failures=failures.saturating_add(1);}
             tokio::time::sleep(retry_delay(failures)).await;
         }
     });
@@ -248,7 +235,18 @@ mod tests {
             println!("GitHub {}: {} signed installer bytes verified; no installation performed",update.version,bytes.len());
         });
     }
-    #[test]fn failed_checks_retry_soon_and_success_restores_normal_interval(){assert_eq!(retry_delay(0).as_secs(),300);assert_eq!(retry_delay(1).as_secs(),30);assert_eq!(retry_delay(2).as_secs(),60);assert_eq!(retry_delay(3).as_secs(),120);assert_eq!(retry_delay(99).as_secs(),300);}
+    #[test]
+    fn update_backups_keep_only_the_newest_profiles(){
+        let dir=std::env::temp_dir().join(format!("whispera-backups-{}",uuid::Uuid::new_v4()));
+        std::fs::create_dir(&dir).unwrap();
+        for i in 0..8 {std::fs::write(dir.join(format!("before-0.2.{i}-x.sqlite")),b"db").unwrap();std::thread::sleep(Duration::from_millis(20));}
+        std::fs::write(dir.join("notes.txt"),b"keep").unwrap();
+        prune_backups(&dir,5);
+        let mut names:Vec<_>=std::fs::read_dir(&dir).unwrap().flatten().map(|e|e.file_name().into_string().unwrap()).collect();names.sort();
+        assert_eq!(names,["before-0.2.3-x.sqlite","before-0.2.4-x.sqlite","before-0.2.5-x.sqlite","before-0.2.6-x.sqlite","before-0.2.7-x.sqlite","notes.txt"]);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+    #[test]fn failed_checks_retry_soon_and_success_restores_normal_interval(){assert_eq!(retry_delay(0).as_secs(),1800);assert_eq!(retry_delay(1).as_secs(),30);assert_eq!(retry_delay(2).as_secs(),60);assert_eq!(retry_delay(3).as_secs(),120);assert_eq!(retry_delay(99).as_secs(),300);}
     #[test]fn new_work_cannot_race_with_installation(){let state=Updates::default();let guard=enter(&state).unwrap();state.installing.store(true,Ordering::SeqCst);assert!(enter(&state).is_err());assert_eq!(state.work.load(Ordering::SeqCst),1);drop(guard);assert_eq!(state.work.load(Ordering::SeqCst),0);state.installing.store(false,Ordering::SeqCst);assert!(enter(&state).is_ok());}
     #[test]fn releases_only_come_from_this_repository(){assert!(trusted("https://github.com/SikJa/Whispera/releases/download/v0.2.15/Whispera.exe"));for u in ["http://github.com/kazu00001/Whispera-K/releases/download/x", "https://github.com.evil.test/kazu00001/Whispera-K/releases/download/x","https://github.com/another/repo/releases/download/x"]{assert!(!trusted(u));}}
     #[test]

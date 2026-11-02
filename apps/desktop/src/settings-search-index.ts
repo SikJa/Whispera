@@ -8,6 +8,8 @@ export type SettingsRoute = keyof typeof sectionNames;
 export type SettingResult = {route:SettingsRoute; title:string; target?:string; keywords:string; librarySettings?:boolean};
 const item=(route:SettingsRoute,title:string,target:string,keywords='',librarySettings=false):SettingResult=>({route,title,target,keywords,librarySettings});
 export const settingOptions:readonly SettingResult[] = [
+  item('transcription','Motor local o Groq','.local-engine','parakeet whisper sin internet modelos descargar privacidad'),
+  item('transcription','Micrófono de dictado','#microphone','entrada dispositivo audio'),
   item('transcription','Modelo de transcripción','#model','groq whisper turbo'),
   item('transcription','Idioma del audio','#language','español ingles english detectar automatico dictado'),
   item('transcription','Clave API de Groq','#key','conexion contraseña credenciales token'),

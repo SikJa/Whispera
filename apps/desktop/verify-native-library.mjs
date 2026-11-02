@@ -155,6 +155,8 @@ try{
   assert.ok(controlsBox.y>=mediaBox.y+mediaBox.height-1,'Video controls must not cover the image');
   assert.equal(await page.locator('[title="Acceso rapido"]').count(),0);
   assert.equal(await page.locator('[title="Editar imagen"]').count(),0,'No image editor on videos');
+  await page.getByRole('button',{name:'Copiar ruta del video',exact:true}).click();
+  assert.ok(await page.evaluate(()=>window.__qa.calls.some(c=>c.command==='library_action'&&c.args.action==='copy-path'&&c.args.id==='video')));
   assert.equal(await page.getByLabel('Texto del video').inputValue(),'Transcripcion de prueba del video.');
   await page.getByRole('button',{name:'Copiar texto',exact:true}).click();
   assert.ok(await page.evaluate(()=>window.__qa.calls.some(c=>c.command==='video_transcript_action'&&c.args.action==='copy')));

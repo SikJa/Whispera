@@ -12,7 +12,7 @@ jobs:
   release:
     if: ${{ github.repository == 'SikJa/Whispera' && !contains(github.event.head_commit.message, '[publish macos]') }}
     runs-on: windows-latest
-    timeout-minutes: 45
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
         with:
@@ -23,6 +23,7 @@ jobs:
           cache: npm
           cache-dependency-path: apps/desktop/package-lock.json
       - uses: dtolnay/rust-toolchain@stable
+      - uses: ./.github/actions/vulkan-sdk
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: apps/desktop/src-tauri
@@ -30,7 +31,6 @@ jobs:
         id: version
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          WHISPERA_STABLE_BASE: '0.2.28'
         run: node scripts/release-version.mjs
       - name: Revisar fuente
         if: steps.version.outputs.skip != 'true'
@@ -73,3 +73,19 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: node scripts/publish-release.mjs
+      - name: Verificar ejecutable de esta version
+        if: steps.version.outputs.skip != 'true'
+        shell: pwsh
+        run: |
+          $exe = 'apps/desktop/src-tauri/target/release/whispera-desktop.exe'
+          $version = (Get-Content apps/desktop/src-tauri/tauri.conf.json -Raw | ConvertFrom-Json).version
+          [ordered]@{source=$env:GITHUB_SHA;version=$version;sha256=(Get-FileHash -LiteralPath $exe -Algorithm SHA256).Hash} | ConvertTo-Json | Out-File -LiteralPath 'apps/desktop/src-tauri/target/release/runtime-verification.json' -Encoding utf8
+      - uses: actions/upload-artifact@v4
+        if: steps.version.outputs.skip != 'true'
+        with:
+          name: whispera-windows-runtime
+          path: |
+            apps/desktop/src-tauri/target/release/whispera-desktop.exe
+            apps/desktop/src-tauri/target/release/runtime-verification.json
+          if-no-files-found: error
+          retention-days: 7

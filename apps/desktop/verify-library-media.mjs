@@ -41,6 +41,18 @@ try{
   assert.ok(await canvas.locator('.composition-layer img').evaluate(img=>img.naturalWidth>0));
   await canvas.locator('.composition-background').waitFor();
   assert.equal(await canvas.locator('.gradient-swatches button').count(),12);
+  await canvas.getByRole('button',{name:'Flecha',exact:true}).click();
+  const annotation=canvas.locator('.annotation-canvas');
+  const annotationBox=await annotation.boundingBox();
+  await canvas.mouse.move(annotationBox.x+annotationBox.width*.2,annotationBox.y+annotationBox.height*.2);
+  await canvas.mouse.down();
+  await canvas.mouse.move(annotationBox.x+annotationBox.width*.7,annotationBox.y+annotationBox.height*.7,{steps:8});
+  await canvas.mouse.up();
+  const ink=()=>annotation.evaluate(c=>Array.from(c.getContext('2d').getImageData(0,0,c.width,c.height).data).filter((n,i)=>i%4===3&&n>0).length);
+  assert.ok(await ink()>100,'Arrow paints actual pixels');
+  await canvas.getByRole('button',{name:'Deshacer trazo',exact:true}).click();assert.equal(await ink(),0);
+  await canvas.getByRole('button',{name:'Rehacer trazo',exact:true}).click();assert.ok(await ink()>100);
+  await canvas.getByRole('button',{name:'Mover capturas',exact:true}).click();
   await canvas.screenshot({path:resolve('../../.local/editor-backgrounds-headless.png')});
   const beforePanel=(await canvas.locator('.composition-stage').boundingBox()).width;
   await canvas.getByRole('button',{name:'Ocultar ajustes',exact:true}).click();
@@ -63,6 +75,11 @@ try{
   await writeFile(resolve('../../.local/media-composition-export.png'),Buffer.from(png.split(',')[1],'base64'));
   const pixel=await canvas.evaluate(async(png)=>{const img=new Image();img.src=png;await img.decode();const c=document.createElement('canvas');c.width=img.width;c.height=img.height;const ctx=c.getContext('2d');ctx.drawImage(img,0,0);return{width:img.width,height:img.height,corner:[...ctx.getImageData(0,0,1,1).data]};},png);
   assert.deepEqual(pixel,{width:960,height:600,corner:[229,179,34,255]});
+  assert.ok(await canvas.evaluate(async(png)=>{
+    const image=new Image();image.src=png;await image.decode();const c=document.createElement('canvas');c.width=image.width;c.height=image.height;
+    const ctx=c.getContext('2d');ctx.drawImage(image,0,0);const pixel=ctx.getImageData(432,270,1,1).data;
+    return pixel[0]>240&&pixel[1]<60&&pixel[2]<80;
+  },png),'Export contains the red arrow, not just the preview');
   await canvas.getByRole('button',{name:'Proporcion',exact:true}).click();
   await canvas.getByRole('menuitemradio',{name:'9:16',exact:true}).click();await canvas.waitForTimeout(250);
   const box=await canvas.locator('.composition-stage').boundingBox();assert.ok(Math.abs(box.width/box.height-9/16)<.002);

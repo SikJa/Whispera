@@ -1,1 +1,1 @@
-Corregimos los saltos de la paleta al personalizar colores: el selector permanece quieto mientras arrastrás. Incluye las mejoras de capturas, audio, guardado de imágenes y transcripción de la versión anterior. Tus preferencias se conservan.
+Capturas más fluidas y copia con Ctrl+C optimizada. Menor consumo en reposo, mejoras en biblioteca y transcripción incremental, y ajustes para evitar «gracias» provocado por ruido constante durante el silencio.

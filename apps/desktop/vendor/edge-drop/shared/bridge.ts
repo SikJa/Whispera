@@ -83,6 +83,9 @@ export interface EdgeApi {
     inZone: boolean
     stickPosition: import('./types').StickPosition
     displayWidth: number
+    /** Whispera: mouse button held / clicked since the last poll (Windows). */
+    down?: boolean
+    clicked?: boolean
     displayHeight: number
   }) => void) => () => void
   onToast: (cb: (toast: { id: string; message: string; tone: 'info' | 'error'; params?: Record<string, string | number> }) => void) => () => void

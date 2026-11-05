@@ -1,30 +1,40 @@
 :root[data-floating="true"], :root[data-floating="true"] body, :root[data-floating="true"] #root { background: transparent !important; margin: 0; width: 100%; height: 100%; min-width: 0; overflow: hidden; }
-.floating-recorder { position: relative; width: 520px; height: 520px; max-width: none; margin: 0; padding: 0; background: transparent; user-select: none; font-family: 'Instrument Sans Variable', sans-serif; }
-.float-rig { position: absolute; left: 100px; top: 220px; width: 321px; height: 270px; transform: scale(.78); transform-origin: top left; cursor: grab; }
+/* The folder is drawn on a 520px board that is shown at (--folder-scale x --rig) of that size. Text and icons must not
+   shrink with it, so they are written in px ON THE SCREEN and multiplied by --px, which undoes that scale. Screen px
+   follow the system's own display scaling, so nothing here depends on the monitor. */
+.floating-recorder { --rig: .78; --px: calc(1 / (var(--folder-scale, .85) * var(--rig))); position: relative; width: 520px; height: 520px; max-width: none; margin: 0; padding: 0; background: transparent; user-select: none; font-family: 'Instrument Sans Variable', sans-serif; }
+.float-rig { position: absolute; left: 100px; top: 220px; width: 321px; height: 270px; transform: scale(var(--rig)); transform-origin: top left; cursor: grab; }
 .float-rig:active { cursor: grabbing; }
 .float-rig[data-artwork=metallic] .folder-controls[data-placement=right] { transform:translateX(-55px); }
 .float-rig[data-artwork=metallic] .folder-controls[data-placement=left] { transform:translateX(55px); }
 .float-rig[data-artwork=metallic] .folder-controls[data-placement=top] { transform:translateY(45px); }
 .float-rig[data-artwork=metallic] .folder-controls[data-placement=bottom] { transform:translateY(-25px); }
 .float-readout { position: absolute; left: 24px; bottom: 27px; z-index: 8; color: var(--folder-ink); pointer-events: none; text-shadow: 0 1px 8px #0002; }
-.float-readout > span { display: flex; align-items: center; gap: 5px; height: 18px; font-size: 10px; }
-.float-readout i { width: 5px; height: 5px; border-radius: 50%; background: currentColor; }
+.float-readout > span { display: flex; align-items: center; gap: calc(5px * var(--px)); height: calc(16px * var(--px)); font-size: calc(12px * var(--px)); }
+.float-readout i { width: calc(6px * var(--px)); height: calc(6px * var(--px)); border-radius: 50%; background: currentColor; }
 .float-readout i[data-phase="recording"] { background: #ff5f62; }
-.float-readout output { display: block; margin-top: 5px; font-size: 25px; font-variant-numeric: tabular-nums; }
+.float-readout output { display: block; margin-top: 3px; font-size: 25px; font-variant-numeric: tabular-nums; }
 .float-rig[data-artwork=metallic] .float-readout { left:111px; top:163px; bottom:auto; transform:rotate(-15deg) skewX(-8deg); transform-origin:left top; }
 .float-rig[data-artwork=metallic] .float-readout output { font-size:22px; margin-top:2px; }
 .floating-recorder:is([data-phase=recording],[data-phase=processing]) .float-rig[data-artwork=metallic] .float-readout { animation:metallic-readout-breathe 2s ease-in-out infinite; }
 @keyframes metallic-readout-breathe { 0%,100% { translate:0 0; } 50% { translate:0 -3px; } }
 @media(prefers-reduced-motion:reduce) { .floating-recorder .float-rig[data-artwork=metallic] .float-readout { animation:none; } }
 .float-actions { position: absolute; right: 18px; bottom: 27px; z-index: 9; display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; width: 168px; }
-.float-actions button { width: 36px; height: 36px; padding: 7px; display: grid; place-items: center; color: var(--folder-ink); border: 1px solid #ffffff50; border-radius: 12px; background: color-mix(in srgb, var(--folder-color) 30%, transparent); box-shadow: inset 0 1px #ffffff38,0 3px 9px #0002; backdrop-filter: blur(8px); transition: background var(--duration-quick, 150ms) ease, transform var(--duration-quick, 150ms) ease; }
+.float-actions button { width: calc(34px * var(--px)); height: calc(34px * var(--px)); padding: calc(7px * var(--px)); display: grid; place-items: center; color: var(--folder-ink); border: 1px solid #ffffff50; border-radius: 12px; background: color-mix(in srgb, var(--folder-color) 30%, transparent); box-shadow: inset 0 1px #ffffff38,0 3px 9px #0002; backdrop-filter: blur(8px); transition: background var(--duration-quick, 150ms) ease, transform var(--duration-quick, 150ms) ease; }
 .float-actions button:hover { background: color-mix(in srgb, var(--folder-color) 65%, white 15%); }
 .float-actions button:active { transform: scale(.94); }
-.float-actions svg { width: 18px; height: 18px; }
+.float-actions svg { width: calc(20px * var(--px)); height: calc(20px * var(--px)); }
 .float-actions button:disabled { opacity: .4; cursor: default; }
 .float-rig .glass-control:focus-visible, .float-actions button:focus-visible { outline: 2px solid var(--folder-ink); outline-offset: 2px; }
-.float-error { position: absolute; left: 24px; top: 276px; display: flex; align-items: center; gap: 6px; width: 275px; border: 1px solid #ffffff30; background: #201718ed; color: #ffd6d0; padding: 8px 10px; border-radius: 8px; font-size: 11px; text-align: left; }
-.float-error span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* Centred under the folder and no wider than it, except that it keeps room for a readable line (220 screen px);
+   longer text wraps to two lines instead of sticking out to one side. */
+.float-error { position: absolute; left: 50%; top: 276px; translate: -50% 0; display: flex; align-items: center; gap: calc(8px * var(--px)); width: max-content; max-width: max(100%, calc(220px * var(--px))); border: 1px solid #ffffff30; background: #201718ed; color: #ffd6d0; padding: calc(5px * var(--px)) calc(10px * var(--px)); border-radius: calc(10px * var(--px)); font-size: calc(13px * var(--px)); line-height: 1.15; text-align: left; }
+.float-error span { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; overflow-wrap: anywhere; }
+.float-error svg { width: calc(16px * var(--px)); height: calc(16px * var(--px)); flex: none; }
+.float-error button { display: flex; align-items: center; gap: calc(6px * var(--px)); padding: 0; border: 0; background: none; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.float-error-text { flex: 1; min-width: 0; }
+.float-error-close { flex: none; padding: calc(1px * var(--px)); border-radius: calc(6px * var(--px)); opacity: .7; transition: opacity 150ms ease, background 150ms ease; }
+.float-error-close:hover, .float-error-close:focus-visible { opacity: 1; background: #ffffff22; outline: none; }
 .float-rig .control-tooltip { display: none; }
 .float-cancel { position:absolute; left:20px; top:145px; z-index:30; width:280px; padding:12px; border-radius:12px; background:#18151ff2; color:#fff; box-shadow:0 6px 24px #0007; }
 .float-cancel span { display:block; margin-bottom:8px; font-size:13px; }

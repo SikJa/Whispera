@@ -1,5 +1,6 @@
 // Tray menu window: a light entry (React + icons only) so it opens instantly.
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { flushSync } from "react-dom";
 import { createRoot } from "react-dom/client";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
@@ -9,11 +10,15 @@ import { applyAppTheme } from "./app-theme-data";
 import "./tray-menu.css";
 
 type Keys = string[];
+// One window, two menus: everything for the tray icon, a short one for the floating folder.
+type Mode = "tray" | "folder";
+const asMode = (value: unknown): Mode | null => value === "tray" || value === "folder" ? value : null;
 type State = {
-  version: string; phase: string; videoBusy: boolean; update: string | null; theme: string; background: string;
+  version: string; mode?: string; phase: string; videoBusy: boolean; update: string | null; theme: string; background: string;
   shortcuts: { recorder: Keys; video: Keys; capture: Keys; library: Keys };
 };
 const native = "__TAURI_INTERNALS__" in window;
+const t = (es: string, en: string) => navigator.language.startsWith("es") ? es : en;
 const preview: State = {
   version: "0.2.35", phase: "idle", videoBusy: false, update: null, theme: "plum", background: "",
   shortcuts: { recorder: ["Ctrl", "Shift", "Espacio"], video: ["Alt", "X"], capture: ["Alt", "A"], library: ["Alt", "C"] },
@@ -21,8 +26,9 @@ const preview: State = {
 
 function Keycaps({ keys, compact }: { keys: Keys; compact?: boolean }) {
   if (!keys.length) return null;
-  // Tiles are narrow: the Shift symbol keeps long combos on one line.
-  const shown = compact ? keys.map(key => key === "Shift" ? "⇧" : key) : keys;
+  // Tiles are narrow: the Shift symbol and a short Space keep long combos on one line.
+  const short: Record<string, string> = { Shift: "⇧", Espacio: "Esp" };
+  const shown = compact ? keys.map(key => short[key] ?? key) : keys;
   return <span className="tm-keys" title={keys.join(" + ")}>{shown.map((key, i) => <kbd key={i}>{key}</kbd>)}</span>;
 }
 
@@ -46,10 +52,16 @@ function Row({ icon, label, hint, keys, action, run, tone }: { icon: ReactNode; 
 function TrayMenu() {
   const [state, setState] = useState<State>(preview);
   const [opening, setOpening] = useState(0);
+  // Empty while closed: the next opening never shows the previous menu for a frame.
+  const [mode, setMode] = useState<Mode | null>(native ? null : "tray");
   const card = useRef<HTMLDivElement>(null);
   const load = useCallback(async () => {
     if (!native) return;
-    try { const next = await invoke<State>("tray_menu_state"); setState(next); applyAppTheme(next.theme, next.background); } catch { /* keep last state */ }
+    try {
+      const next = await invoke<State>("tray_menu_state"); setState(next); applyAppTheme(next.theme, next.background);
+      // A page that finished loading after the open event still learns which menu it is.
+      const known = asMode(next.mode); if (known) setMode(current => current ?? known);
+    } catch { /* keep last state */ }
   }, []);
   const run = useCallback((action: string) => {
     if (native) void invoke("tray_menu_action", { action }).catch(() => {});
@@ -58,16 +70,18 @@ function TrayMenu() {
     try { applyAppTheme(localStorage.getItem("whispera.app.theme") ?? "plum", localStorage.getItem("whispera.app.background") ?? ""); } catch { applyAppTheme("plum"); }
     void load();
     if (!native) return;
-    const off = listen("tray-menu-open", () => { setOpening(n => n + 1); void load(); });
-    return () => { void off.then(stop => stop()); };
+    const opened = listen<string>("tray-menu-open", event => { setMode(asMode(event.payload) ?? "tray"); setOpening(n => n + 1); void load(); });
+    const closed = listen("tray-menu-close", () => flushSync(() => setMode(null)));
+    return () => { void opened.then(stop => stop()); void closed.then(stop => stop()); };
   }, [load]);
   // The native window hugs the card so nothing transparent catches clicks.
+  // Each opening draws a new card, so the observer follows it.
   useLayoutEffect(() => {
-    const element = card.current; if (!element || !native) return;
-    const fit = () => void invoke("tray_menu_fit", { height: Math.ceil(element.getBoundingClientRect().height) + 20 }).catch(() => {});
+    const element = card.current; if (!element || !native || !mode) return;
+    const fit = () => void invoke("tray_menu_fit", { height: Math.ceil(element.getBoundingClientRect().height + 20), mode }).catch(() => {});
     fit(); const observer = new ResizeObserver(fit); observer.observe(element);
     return () => observer.disconnect();
-  }, []);
+  }, [opening, mode]);
   // Each opening takes keyboard focus without highlighting an action; arrows start at the first.
   const shell = useRef<HTMLDivElement>(null);
   useEffect(() => { shell.current?.focus({ preventScroll: true }); }, [opening]);
@@ -81,8 +95,14 @@ function TrayMenu() {
     items[(index + step + items.length) % items.length]?.focus();
   };
   const now = status(state);
-  return <div ref={shell} tabIndex={-1} className="tm-shell" onKeyDown={onKey}>
-    <div ref={card} key={opening} className="tm-card" role="menu" aria-label="Whispera">
+  return <div ref={shell} tabIndex={-1} className="tm-shell" onKeyDown={onKey} onContextMenu={e => e.preventDefault()}>
+    {mode === "folder" && <div ref={card} key={opening} className="tm-card" data-mode="folder" role="menu" aria-label={t("Carpeta flotante", "Floating folder")}>
+      <div className="tm-group">
+        <Row icon={<ClipboardList size={16} strokeWidth={1.5} />} label={t("Portapapeles", "Clipboard")} keys={state.shortcuts.library} action="library" run={run} />
+        <Row icon={<Settings size={16} strokeWidth={1.5} />} label={t("Configuración", "Settings")} action="settings" run={run} />
+      </div>
+    </div>}
+    {mode === "tray" && <div ref={card} key={opening} className="tm-card" role="menu" aria-label="Whispera">
       <header className="tm-head">
         <img className="tm-logo" src="/cristal/64x64.png" alt="" />
         <div className="tm-title"><strong>Whispera</strong><span>Versión {state.version}</span></div>
@@ -106,7 +126,7 @@ function TrayMenu() {
       <div className="tm-group tm-foot">
         <Row icon={<Power size={16} strokeWidth={1.5} />} label="Salir de Whispera" action="quit" run={run} tone="danger" />
       </div>
-    </div>
+    </div>}
   </div>;
 }
 

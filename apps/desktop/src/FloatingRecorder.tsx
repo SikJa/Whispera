@@ -3,7 +3,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { MotionConfig } from 'motion/react';
-import { Mic, Copy, Check, AlertCircle } from 'lucide-react';
+import { Mic, Copy, Check, AlertCircle, X } from 'lucide-react';
 import ControlledFolder from './ControlledFolder';
 import IndicatorArtwork from './IndicatorArtwork';
 import RealisticFolder from './RealisticFolder';
@@ -14,6 +14,7 @@ import './floating-recorder.css';
 import {shallowEqual} from './shallow-equal';
 import {visiblePoll} from './visible-poll';
 
+const t = (es: string, en: string) => navigator.language.startsWith('es') ? es : en;
 type State = { phase: string; seconds: number; error: string; text: string; muted: boolean; progress: string };
 const labels: Record<string, string> = { idle: 'Listo', recording: 'Grabando', paused: 'En pausa', processing: 'Transcribiendo', ready: 'Audio guardado', done: 'Transcripción lista', error: 'Revisar audio' };
 export default function FloatingRecorder() {
@@ -72,6 +73,12 @@ export default function FloatingRecorder() {
     const timer = setTimeout(() => setOpen(true), 160); return () => clearTimeout(timer);
   }, [recording]);
   useEffect(() => setCopied(false), [state.text]);
+  // A notice shown while the folder was open must not greet the next opening.
+  useEffect(() => {
+    const clear = () => { if (document.hidden) setError(''); };
+    document.addEventListener('visibilitychange', clear);
+    return () => document.removeEventListener('visibilitychange', clear);
+  }, []);
   async function run(command: string, args?: Record<string, unknown>) {
     if (busy) return false;
     setBusy(true); setError('');
@@ -83,10 +90,20 @@ export default function FloatingRecorder() {
     if (!native || e.button !== 0 || (e.target as Element).closest('button, a, input')) return;
     e.preventDefault(); void getCurrentWindow().startDragging().catch(e => setError(String(e)));
   }
+  // Whispera's own menu replaces the webview's (Back, Reload, Inspect...).
+  function menu(e: MouseEvent) {
+    e.preventDefault();
+    if (native) void invoke('recorder_menu').catch(err => setError(String(err)));
+  }
+  // Without a microphone nothing else closes the folder: it only hides when a recording ends.
+  function close() {
+    setError('');
+    if (native) void invoke('recorder_close').catch(err => setError(String(err)));
+  }
   const color = settings?.dictationArtwork==='metallic'?(settings.metallicColor??'#ffffff'):(settings?.color??'#9024DC');
   const visual = recording ? 'hover' : state.phase === 'processing' ? (step % 2 ? 'open' : 'rest') : 'rest';
   const time = `${Math.floor(state.seconds / 60).toString().padStart(2, '0')}:${Math.floor(state.seconds % 60).toString().padStart(2, '0')}`;
-  return <main className="floating-recorder" data-phase={state.phase} aria-label="Grabadora flotante" style={{ transform: `scale(${scale})`, transformOrigin: 'top left', '--folder-color': color, '--folder-ink': contrastInk(color), '--metallic-ink':(settings?.metallicOriginal??true)?'#f4f4f6':contrastInk(color) } as CSSProperties}>
+  return <main className="floating-recorder" data-phase={state.phase} aria-label="Grabadora flotante" onContextMenu={menu} style={{ transform: `scale(${scale})`, transformOrigin: 'top left', '--folder-scale': scale, '--folder-color': color, '--folder-ink': contrastInk(color), '--metallic-ink':(settings?.metallicOriginal??true)?'#f4f4f6':contrastInk(color) } as CSSProperties}>
     <MotionConfig reducedMotion="user"><div className="float-rig" data-artwork={settings?.dictationArtwork??'original'} onMouseDown={drag}>
       {settings?.dictationArtwork==='realistic'?<RealisticFolder color={settings?.artworkColors?.realistic} time={time} mode={recording?'listening':state.phase==='processing'?'transcribing':state.phase==='done'?'complete':'idle'} fallback={<ControlledFolder color="black" customColor={color} visualState={visual} recordingStep={recording ? step : undefined} pattern={settings?.pattern ?? 'wave'} size="md" />}/>:settings?.dictationArtwork==='metallic'?<IndicatorArtwork kind="folder" original={settings.metallicOriginal??true} color={color} active={state.phase==='recording'||state.phase==='processing'}/>:<ControlledFolder color="black" customColor={color} visualState={visual} recordingStep={recording ? step : undefined} pattern={settings?.pattern ?? 'wave'} size="md" />}
       <FolderControls color="black" customColor={color} open={open} placement={settings?.placement ?? 'right'} muted={state.muted} paused={state.phase === 'paused'} onMute={() => void run('recording_action', { action: 'mute' })} onPause={() => void run('recording_action', { action: 'pause' })} onStop={() => void run('recording_action', { action: 'stop' })} />
@@ -95,7 +112,10 @@ export default function FloatingRecorder() {
         {!recording && state.phase !== 'processing' && <button aria-label="Grabar" title="Grabar" disabled={busy || !native} onClick={() => run('recording_action', { action: 'start' })}><Mic /></button>}
         {state.phase === 'done' && <button aria-label="Copiar transcripción" title={copied ? 'Copiado' : 'Copiar transcripción'} onClick={async () => { if (await run('copy_recording')) setCopied(true); }}>{copied ? <Check /> : <Copy />}</button>}
       </div>
-      {(error || state.error) && <button className="float-error" role="alert" title={error || state.error} onClick={() => run('open_recording_details')}><AlertCircle size={14} /><span>{error || state.error}</span></button>}
+      {(error || state.error) && <div className="float-error" role="alert">
+        <button className="float-error-text" title={error || state.error} onClick={() => run('open_recording_details')}><AlertCircle /><span>{error || state.error}</span></button>
+        <button className="float-error-close" aria-label={t('Cerrar grabadora', 'Close recorder')} title={t('Cerrar', 'Close')} onClick={close}><X /></button>
+      </div>}
     </div></MotionConfig>
   </main>;
 }

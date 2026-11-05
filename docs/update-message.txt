@@ -1,3 +1,1 @@
-Nueva tarjeta de Novedades: te muestra lo nuevo de cada versión al abrir Configuración.
-Volvé a verla cuando quieras en Actualizaciones › Ver novedades.
-Incluye el motor local, la nueva guía inicial y las capturas de Kazu.
+Novedades más prolija: la primera página ahora muestra el dictado escribiéndose solo, con el cursor siguiendo al texto.

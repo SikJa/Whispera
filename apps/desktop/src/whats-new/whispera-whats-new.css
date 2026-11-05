@@ -39,3 +39,16 @@
   .whispera-wn-overlay,
   .whispera-wn-root .at-animate-pop { animation: none; }
 }
+
+/* Dictado: el texto se escribe solo y el cursor lo sigue (Kevin recortaba el texto con
+   clip-path, que dejaba el cursor al final de la frase mientras escribía). */
+.whispera-wn-root .syka-wn-input .syka-wn-typed {
+  display: inline-block;
+  overflow: hidden;
+  max-width: 280px;
+  clip-path: none;
+  animation: whispera-wn-type 1300ms steps(40, end) 260ms both;
+}
+@keyframes whispera-wn-type {
+  from { max-width: 0; }
+}

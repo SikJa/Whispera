@@ -1,4 +1,4 @@
-import { Fragment, type CSSProperties } from "react";
+import { type CSSProperties } from "react";
 import { Icon } from "./whats-new-icon";
 import { useWhatsNewMessages } from "./whats-new-messages";
 import type { WhatsNewPageId } from "./whats-new-pages";
@@ -26,18 +26,13 @@ function ArtIcon({ name }: { name: string }) {
 
 /** Dictado local: la caja de dictado de Kevin, con el motor de esta PC. */
 function DictationArt({ t }: { t: Translate }) {
-  const words = t("art.dictated").split(" ");
+  // The composer writing itself (Kevin's typed text and caret), not the breathing glow.
   return (
-    <div className="syka-wn-composer syka-wn-glass syka-wn-voice">
-      <p className="syka-wn-dictated">
-        {words.map((word, index) => (
-          <Fragment key={index}>
-            <span className="syka-wn-word" style={cssVars({ "--i": index })}>
-              {word}
-            </span>{" "}
-          </Fragment>
-        ))}
-      </p>
+    <div className="syka-wn-composer syka-wn-glass">
+      <div className="syka-wn-input">
+        <span className="syka-wn-typed">{t("art.dictated")}</span>
+        <span className="syka-wn-caret" />
+      </div>
       <div className="syka-wn-actions">
         <span className="syka-wn-wave">
           {WAVE_LEVELS.map((level, index) => (

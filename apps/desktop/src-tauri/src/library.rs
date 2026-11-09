@@ -131,6 +131,15 @@ fn retain_and_save(store: &Store, previous: Vec<Value>, mut items: Vec<Value>, c
     if previous != items { store.put("library_items", &items)?; }
     Ok(items)
 }
+/// Expiry window in hours (0 keeps everything) and the library entries still alive,
+/// serialized so screen retention can tell which capture sessions are in use.
+pub(crate) fn screen_retention(store: &Store) -> Result<(i64, Vec<String>), String> {
+    let config = settings(store)?;
+    let mut items = rows(store)?;
+    retain_items(&mut items, &config);
+    let hours = config["autoDeleteHours"].as_i64().unwrap_or(48).clamp(0, 8760);
+    Ok((hours, items.iter().map(Value::to_string).collect()))
+}
 fn retain_items(items: &mut Vec<Value>, config: &Value) {
     let limit = config["historyLimit"]
         .as_u64()

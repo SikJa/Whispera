@@ -1,1 +1,1 @@
-Novedades más prolija: la primera página ahora muestra el dictado escribiéndose solo, con el cursor siguiendo al texto.
+Las grabaciones de pantalla vencidas ahora se borran solas del disco. Los videos fijados y las recuperaciones pendientes se conservan.

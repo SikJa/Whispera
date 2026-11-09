@@ -83,6 +83,35 @@ pub fn clean(store: &Store, recordings: &Path, now: DateTime<Utc>) -> Result<(us
     Ok((removed, history_removed))
 }
 
+/// Removes finished screen-capture sessions from disk once they expire. The library
+/// only drops its entries, so without this the videos would stay behind forever.
+/// Sessions still referenced by the library or awaiting recovery are kept.
+pub fn clean_screen(root: &Path, hours: i64, live: &[String], now: DateTime<Utc>) -> Result<usize, String> {
+    if hours == 0 || !root.exists() { return Ok(0); }
+    if is_link(&fs::symlink_metadata(root).map_err(|e| e.to_string())?) {
+        return Err("Enlace inesperado en screen-recordings".into());
+    }
+    let cutoff = now - Duration::hours(hours);
+    let canonical_root = root.canonicalize().map_err(|e| e.to_string())?;
+    let mut removed = 0;
+    for entry in fs::read_dir(root).map_err(|e| e.to_string())? {
+        let folder = entry.map_err(|e| e.to_string())?.path();
+        let id = folder.file_name().and_then(|s| s.to_str()).unwrap_or("").to_owned();
+        if uuid::Uuid::parse_str(&id).is_err() { continue; }
+        let Ok(metadata) = fs::symlink_metadata(&folder) else { continue; };
+        if !metadata.is_dir() || is_link(&metadata) { continue; }
+        if folder.join("recovery-error.txt").exists() || live.iter().any(|item| item.contains(&id)) { continue; }
+        let mut latest = DateTime::<Utc>::MIN_UTC;
+        if newest(&folder, &mut latest).is_err() || latest >= cutoff { continue; }
+        if folder.canonicalize().map_err(|e| e.to_string())?.parent() != Some(canonical_root.as_path()) {
+            return Err("Sesion de video fuera de la carpeta esperada".into());
+        }
+        // A file still open elsewhere must not stop the remaining sessions.
+        if fs::remove_dir_all(&folder).is_ok() { removed += 1; }
+    }
+    Ok(removed)
+}
+
 pub fn start(app: &tauri::AppHandle) {
     let _ = app.state::<Store>().event("Retencion automatica interna: 48 horas; revision cada hora");
     let app = app.clone();
@@ -98,6 +127,13 @@ pub fn start(app: &tauri::AppHandle) {
                         Err(error) => { let _ = store.event(&format!("Retencion 48h no completada: {error}")); }
                         _ => {}
                     }
+                    if let Ok(root) = app.path().app_cache_dir().map(|path| path.join("screen-recordings")) {
+                        match crate::library::screen_retention(&store).and_then(|(hours, live)| clean_screen(&root, hours, &live, Utc::now())) {
+                            Ok(sessions) if sessions > 0 => { let _ = store.event(&format!("Retencion de video: {sessions} sesiones eliminadas")); }
+                            Err(error) => { let _ = store.event(&format!("Retencion de video no completada: {error}")); }
+                            _ => {}
+                        }
+                    }
                 }
             };
         }
@@ -108,6 +144,41 @@ pub fn start(app: &tauri::AppHandle) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    fn screen_session(root: &Path, id: &str, extra: Option<&str>) -> std::path::PathBuf {
+        let folder = root.join(id);
+        fs::create_dir_all(folder.join("part-0000")).unwrap();
+        fs::write(folder.join("video.mp4"), b"video").unwrap();
+        if let Some(name) = extra { fs::write(folder.join(name), b"x").unwrap(); }
+        folder
+    }
+    #[test]
+    fn screen_retention_removes_only_expired_unused_sessions() {
+        let root = std::env::temp_dir().join(format!("whispera-screen-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&root).unwrap();
+        let [expired, pinned, recovery] = [(); 3].map(|_| uuid::Uuid::new_v4().to_string());
+        let expired_dir = screen_session(&root, &expired, None);
+        let pinned_dir = screen_session(&root, &pinned, None);
+        let recovery_dir = screen_session(&root, &recovery, Some("recovery-error.txt"));
+        let foreign = screen_session(&root, "no-uuid", None);
+        let live = vec![format!("{{\"pinned\":true,\"paths\":[\"C:/x/{pinned}/video.mp4\"]}}")];
+        let later = Utc::now() + Duration::days(3);
+        assert_eq!(clean_screen(&root, 48, &live, later).unwrap(), 1);
+        assert!(!expired_dir.exists());
+        assert!(pinned_dir.exists() && recovery_dir.exists() && foreign.exists());
+        fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
+    fn screen_retention_keeps_recent_sessions_and_honors_disabled_expiry() {
+        let root = std::env::temp_dir().join(format!("whispera-screen-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&root).unwrap();
+        let id = uuid::Uuid::new_v4().to_string();
+        let folder = screen_session(&root, &id, None);
+        assert_eq!(clean_screen(&root, 48, &[], Utc::now()).unwrap(), 0);
+        assert_eq!(clean_screen(&root, 0, &[], Utc::now() + Duration::days(30)).unwrap(), 0);
+        assert!(folder.exists());
+        assert_eq!(clean_screen(&root.join("no-existe"), 48, &[], Utc::now()).unwrap(), 0);
+        fs::remove_dir_all(root).unwrap();
+    }
     #[test]
     fn migration_preserves_restored_history_with_original_dates() {
         let root = std::env::temp_dir().join(format!("whispera-retention-{}", uuid::Uuid::new_v4()));

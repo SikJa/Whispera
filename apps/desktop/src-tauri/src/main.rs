@@ -650,7 +650,7 @@ fn main() {
             permissions::platform_permissions, permissions::platform_request_permission,
             replay::replay_preferences, replay::replay_status, replay::replay_create_folder, replay::replay_save_preferences, replay::replay_save,
             video_trim::video_trim_open, video_trim::video_trim_context, video_trim::video_trim_close, video_trim::video_trim_save,
-            tray::tray_menu_state, tray::tray_menu_fit, tray::tray_menu_action,
+            tray::tray_menu_state, tray::tray_menu_fit, tray::tray_menu_action, tray::recorder_menu, tray::recorder_close,
             updates::updater_status, updates::updater_check, updates::updater_install,
             library::library_state,
             library::library_collect,

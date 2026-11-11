@@ -23,6 +23,7 @@ suites.push('video-recovery');
 suites.push('video-processing');
 suites.push('whats-new');
 suites.push('idle-heartbeat','ink-performance','ink-layer','capture-entry');
+suites.push('floating-menu','folder-text');
 const failures=[];
 try {
   for (const name of suites) {

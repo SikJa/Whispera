@@ -24,6 +24,10 @@
   animation: tm-in 180ms var(--tm-ease);
 }
 @keyframes tm-in { from { opacity: 0; transform: translateY(8px); } }
+/* The folder's menu opens under the cursor, so it settles downward instead. */
+.tm-card[data-mode="folder"] { transform-origin: top left; animation-name: tm-in-down; }
+.tm-card[data-mode="folder"] > .tm-group:first-child { border-top: 0; padding-top: 0; }
+@keyframes tm-in-down { from { opacity: 0; transform: translateY(-6px); } }
 
 /* Head: name, version and what Whispera is doing right now. */
 .tm-head { display: flex; align-items: center; gap: 12px; padding: 4px 4px 12px; }
@@ -57,7 +61,8 @@ button:focus-visible { box-shadow: 0 0 0 2px color-mix(in srgb, var(--app-accent
 .tm-tile-icon { display: grid; place-items: center; height: 20px; color: var(--app-ink); opacity: .8; }
 .tm-tile[data-live="true"] .tm-tile-icon { color: var(--tm-live); opacity: 1; }
 .tm-tile-label { font-size: 13px; font-weight: 500; line-height: 16px; }
-.tm-tile .tm-keys { justify-content: center; flex-wrap: nowrap; }
+/* A combo longer than the tile wraps instead of spilling past its edges. */
+.tm-tile .tm-keys { justify-content: center; flex-wrap: wrap; max-width: 100%; }
 
 .tm-group { display: flex; flex-direction: column; gap: 2px; padding: 4px 0; border-top: 1px solid var(--tm-hairline); }
 .tm-tiles + .tm-group { border-top: 0; padding-top: 0; }

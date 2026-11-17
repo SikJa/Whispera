@@ -1,1 +1,1 @@
-Las grabaciones de pantalla vencidas ahora se borran solas del disco. Los videos fijados y las recuperaciones pendientes se conservan.
+Las grabaciones de pantalla ya no se cortan cuando la computadora se traba un momento: el hueco queda en silencio y la grabación sigue. Si una grabación falla igual, Whispera arma el video con lo grabado, lo agrega a la biblioteca y lo transcribe solo. La grabadora ya arranca bien al primer intento, y deshacer y rehacer están a mano en la barra de dibujo.

@@ -704,6 +704,7 @@ fn main() {
             screen::screen_reveal,
             screen::screen_pending,
             screen::screen_pending_reveal,
+            screen::screen_pending_recover,
             onboarding::setup_info,
             open_groq_console,
             shortcuts::save_all_shortcuts,

@@ -1100,8 +1100,30 @@ pub async fn screen_start(
         let startup_generation = screen.frozen_generation.load(Ordering::SeqCst);
         let thread = std::thread::spawn(move || {
             let recovery_dir = dir.clone();
+            let recovery_binary = binary.clone();
             capture(region, prefs, binary, dir, state.clone(), stop_rx, ready, transcribe_microphone);
-            let failed = state.lock().map(|s| s.phase == "error").unwrap_or(false);
+            let mut failed = state.lock().map(|s| s.phase == "error").unwrap_or(false);
+            // A failed part usually still has its video and audio on disk: rebuild it
+            // right away so the video and its transcript reach the library as usual.
+            if failed && recovery_dir.join("recovery-error.txt").is_file() {
+                match recover_session(&recovery_binary, &recovery_dir, transcribe_microphone) {
+                    Ok(output) => {
+                        let copied = copy_file(&output);
+                        if let Ok(mut status) = state.lock() {
+                            let cause = std::mem::take(&mut status.error);
+                            status.phase = "idle".into();
+                            status.path = output.to_string_lossy().into();
+                            status.copied = copied.is_ok();
+                            status.notice = format!("La grabacion se recupero automaticamente ({cause}).");
+                        }
+                        let _ = history_app.state::<Store>().event("Grabacion recuperada automaticamente");
+                        failed = false;
+                    }
+                    Err(error) => {
+                        let _ = history_app.state::<Store>().event(&format!("Recuperacion automatica del video: {error}"));
+                    }
+                }
+            }
             if failed && transcribe_microphone {
                 let engine = history_app.state::<crate::engine::Engine>();
                 let recovery = crate::capture_finalize::preserve_microphone(&recovery_dir, &engine.recorder.root);
@@ -1352,23 +1374,26 @@ struct AudioTrack {
     channels: u16,
     written: u64,
     fault: Arc<Mutex<String>>,
+    dropped: Arc<AtomicU64>,
     scratch: Vec<u8>,
 }
+// About 20 s of 10 ms device buffers: a busy writer thread catches up instead of losing audio.
+const AUDIO_QUEUE: usize = 2048;
 fn samples<T: Copy>(
     data: &[T],
     convert: impl Fn(T) -> f32,
     time: Instant,
     tx: &mpsc::SyncSender<(Instant, Vec<i16>)>,
-    fault: &Mutex<String>,
+    dropped: &AtomicU64,
 ) {
     let values = data
         .iter()
         .map(|s| (convert(*s).clamp(-1., 1.) * 32767.).round() as i16)
         .collect();
+    // A full queue drops this buffer only. Every buffer carries its capture time,
+    // so the writer fills the gap with silence and the recording continues.
     if tx.try_send((time, values)).is_err() {
-        if let Ok(mut err) = fault.lock() {
-            *err = "El audio no pudo escribirse a tiempo".into();
-        }
+        dropped.fetch_add(1, Ordering::Relaxed);
     }
 }
 impl AudioTrack {
@@ -1391,10 +1416,11 @@ impl AudioTrack {
             device.default_input_config()
         }
         .map_err(|e| e.to_string())?;
-        let (tx, rx) = mpsc::sync_channel(256);
+        let (tx, rx) = mpsc::sync_channel(AUDIO_QUEUE);
         let fault = Arc::new(Mutex::new(String::new()));
         let errors = fault.clone();
-        let callback_fault = fault.clone();
+        let dropped = Arc::new(AtomicU64::new(0));
+        let callback_dropped = dropped.clone();
         let on_error = move |e: cpal::StreamError| {
             if let Ok(mut err) = errors.lock() {
                 *err = e.to_string();
@@ -1406,33 +1432,33 @@ impl AudioTrack {
         let stream = match config.sample_format() {
             cpal::SampleFormat::F32 => device.build_input_stream(
                 &cfg,
-                move |d: &[f32], info| samples(d, |v| v, clock.end(info,d.len(),cfg.sample_rate.0,cfg.channels), &tx, &callback_fault),
+                move |d: &[f32], info| samples(d, |v| v, clock.end(info,d.len(),cfg.sample_rate.0,cfg.channels), &tx, &callback_dropped),
                 on_error,
                 None,
             ),
             cpal::SampleFormat::I16 => device.build_input_stream(
                 &cfg,
-                move |d: &[i16], info| samples(d, |v| v as f32 / 32768., clock.end(info,d.len(),cfg.sample_rate.0,cfg.channels), &tx, &callback_fault),
+                move |d: &[i16], info| samples(d, |v| v as f32 / 32768., clock.end(info,d.len(),cfg.sample_rate.0,cfg.channels), &tx, &callback_dropped),
                 on_error,
                 None,
             ),
             cpal::SampleFormat::U16 => device.build_input_stream(
                 &cfg,
                 move |d: &[u16], info| {
-                    samples(d, |v| (v as f32 - 32768.) / 32768., clock.end(info,d.len(),cfg.sample_rate.0,cfg.channels), &tx, &callback_fault)
+                    samples(d, |v| (v as f32 - 32768.) / 32768., clock.end(info,d.len(),cfg.sample_rate.0,cfg.channels), &tx, &callback_dropped)
                 },
                 on_error,
                 None,
             ),
             cpal::SampleFormat::I32 => device.build_input_stream(
                 &cfg,
-                move |d: &[i32], info| samples(d, |v| v as f32 / 2_147_483_648., clock.end(info,d.len(),cfg.sample_rate.0,cfg.channels), &tx, &callback_fault),
+                move |d: &[i32], info| samples(d, |v| v as f32 / 2_147_483_648., clock.end(info,d.len(),cfg.sample_rate.0,cfg.channels), &tx, &callback_dropped),
                 on_error,
                 None,
             ),
             cpal::SampleFormat::F64 => device.build_input_stream(
                 &cfg,
-                move |d: &[f64], info| samples(d, |v| v as f32, clock.end(info,d.len(),cfg.sample_rate.0,cfg.channels), &tx, &callback_fault),
+                move |d: &[f64], info| samples(d, |v| v as f32, clock.end(info,d.len(),cfg.sample_rate.0,cfg.channels), &tx, &callback_dropped),
                 on_error,
                 None,
             ),
@@ -1455,22 +1481,22 @@ impl AudioTrack {
             channels: cfg.channels,
             written: 0,
             fault,
+            dropped,
             scratch: Vec::with_capacity(8192),
         })
     }
     #[cfg(target_os = "macos")]
     fn new(system: bool, dir: &Path) -> Result<Self, String> {
-        let (tx, rx) = mpsc::sync_channel(256);
+        let (tx, rx) = mpsc::sync_channel(AUDIO_QUEUE);
         let fault = Arc::new(Mutex::new(String::new()));
-        let callback_fault = fault.clone();
+        let dropped = Arc::new(AtomicU64::new(0));
+        let callback_dropped = dropped.clone();
         let stream = crate::screen_capture::macos::AudioStream::new(system, Box::new(move |time, values| {
-            if tx.try_send((time, values)).is_err() {
-                if let Ok(mut error) = callback_fault.lock() { *error = "El audio no pudo escribirse a tiempo".into(); }
-            }
+            if tx.try_send((time, values)).is_err() { callback_dropped.fetch_add(1, Ordering::Relaxed); }
         }))?;
         let path = dir.join(if system { "system.pcm" } else { "microphone.pcm" });
         let file = File::create(&path).map_err(|e| e.to_string())?;
-        Ok(Self { _stream: Some(stream), rx, file, path, rate: 48000, channels: 2, written: 0, fault, scratch: Vec::with_capacity(8192) })
+        Ok(Self { _stream: Some(stream), rx, file, path, rate: 48000, channels: 2, written: 0, fault, dropped, scratch: Vec::with_capacity(8192) })
     }
     fn silence(&mut self, samples: u64) -> Result<(), String> {
         let zeros = [0u8; 8192];
@@ -1511,6 +1537,10 @@ impl AudioTrack {
         #[cfg(target_os = "macos")]
         { self._stream.take(); }
         self.drain(start)?;
+        let lost = self.dropped.load(Ordering::Relaxed);
+        if lost > 0 {
+            let _ = fs::write(self.path.with_extension("gaps.txt"), format!("{lost} bloques de audio descartados y rellenados con silencio\n"));
+        }
         let target = (seconds * self.rate as f64).round() as u64 * self.channels as u64;
         if target > self.written {
             self.silence(target - self.written)?;
@@ -1518,6 +1548,81 @@ impl AudioTrack {
         self.file.set_len(target * 2).map_err(|e| e.to_string())?;
         self.file.sync_all().map_err(|e| e.to_string())
     }
+}
+// One capture part: copy the video stream and mix the raw PCM tracks into AAC.
+fn mux_command(binary: &Path, video: &Path, tracks: &[(PathBuf, u32, u16)], output: &Path, log: &Path) -> Result<Command, String> {
+    let mut mux = command(binary);
+    mux.args(["-hide_banner", "-loglevel", "error", "-y", "-i"]).arg(video);
+    for (path, rate, channels) in tracks {
+        mux.args(["-f", "s16le", "-ar", &rate.to_string(), "-ac", &channels.to_string(), "-i"]).arg(path);
+    }
+    mux.args(["-map", "0:v:0", "-c:v", "copy"]);
+    if tracks.len() == 2 {
+        mux.args([
+            "-filter_complex",
+            "[1:a][2:a]amix=inputs=2:duration=longest:normalize=0,alimiter=limit=0.95[a]",
+            "-map",
+            "[a]",
+            "-c:a",
+            "aac",
+            "-b:a",
+            "192k",
+        ]);
+    } else if tracks.len() == 1 {
+        mux.args(["-map", "1:a:0", "-c:a", "aac", "-b:a", "192k"]);
+    }
+    // Resume can reopen a different Windows default device. Keep the encoded
+    // audio format stable so all segments concatenate without resampling video.
+    if !tracks.is_empty() {
+        mux.args(["-ar", "48000", "-ac", "2"]);
+    }
+    mux.args(["-movflags", "+faststart"])
+        .arg(output)
+        .stdin(Stdio::null())
+        .stderr(Stdio::from(File::create(log).map_err(|e| e.to_string())?));
+    Ok(mux)
+}
+// Concatenate finished part MP4s without re-encoding.
+fn join_segments(binary: &Path, dir: &Path, segments: &[PathBuf], output: &Path, seconds: f64) -> Result<(), String> {
+    let manifest = segments
+        .iter()
+        .map(|path| {
+            format!(
+                "file '{}'\n",
+                path.strip_prefix(dir)
+                    .unwrap()
+                    .to_string_lossy()
+                    .replace('\\', "/")
+            )
+        })
+        .collect::<String>();
+    let list = dir.join("segments.txt");
+    fs::write(&list, manifest).map_err(|e| e.to_string())?;
+    let mut join = command(binary);
+    join.args([
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-y",
+            "-f",
+            "concat",
+            "-safe",
+            "1",
+            "-i",
+        ])
+        .arg(&list)
+        .args(["-c", "copy", "-movflags", "+faststart"])
+        .arg(output)
+        .stdin(Stdio::null())
+        .stderr(Stdio::from(
+            File::create(dir.join("join.log")).map_err(|e| e.to_string())?,
+        ));
+    let mut encoder = crate::encoder_job::Encoder::spawn(&mut join)?;
+    wait_encoder(&mut encoder.child, seconds)?;
+    if fs::metadata(output).map_err(|e| e.to_string())?.len() == 0 {
+        return Err("El video quedo vacio".into());
+    }
+    Ok(())
 }
 fn finish_process(child: &mut Child) -> Result<(), String> {
     if let Some(mut stdin) = child.stdin.take() {
@@ -1643,44 +1748,7 @@ fn capture(
         if segments.len() == 1 {
             fs::rename(&segments[0], &output).map_err(|e| e.to_string())?;
         } else {
-            let manifest = segments
-                .iter()
-                .map(|path| {
-                    format!(
-                        "file '{}'\n",
-                        path.strip_prefix(&dir)
-                            .unwrap()
-                            .to_string_lossy()
-                            .replace('\\', "/")
-                    )
-                })
-                .collect::<String>();
-            let list = dir.join("segments.txt");
-            fs::write(&list, manifest).map_err(|e| e.to_string())?;
-            let mut join = command(&binary);
-            join.args([
-                    "-hide_banner",
-                    "-loglevel",
-                    "error",
-                    "-y",
-                    "-f",
-                    "concat",
-                    "-safe",
-                    "1",
-                    "-i",
-                ])
-                .arg(&list)
-                .args(["-c", "copy", "-movflags", "+faststart"])
-                .arg(&output)
-                .stdin(Stdio::null())
-                .stderr(Stdio::from(
-                    File::create(dir.join("join.log")).map_err(|e| e.to_string())?,
-                ));
-            let mut encoder = crate::encoder_job::Encoder::spawn(&mut join)?;
-            wait_encoder(&mut encoder.child, elapsed)?;
-            if fs::metadata(&output).map_err(|e| e.to_string())?.len() == 0 {
-                return Err("El video quedo vacio".into());
-            }
+            join_segments(&binary, &dir, &segments, &output, elapsed)?;
             for path in segments {
                 let _ = fs::remove_file(path);
             }
@@ -1736,6 +1804,81 @@ pub fn screen_pending_reveal(app: tauri::AppHandle, id: String) -> Result<(), St
     crate::platform::reveal_path(&root.join(id))
 }
 
+// Rebuilds a failed session from the originals it kept: finished part MP4s are
+// reused, parts that stopped before muxing are muxed now. Originals are never deleted.
+fn recover_session(binary: &Path, dir: &Path, transcribe: bool) -> Result<PathBuf, String> {
+    let mut segments = Vec::new();
+    for part in crate::capture_finalize::parts(dir)? {
+        let finished = fs::read_dir(&part).map_err(|e| e.to_string())?.filter_map(Result::ok).map(|e| e.path())
+            .find(|p| p.extension().is_some_and(|e| e == "mp4")
+                && p.file_name().is_some_and(|n| n.to_string_lossy().starts_with("Whispera-"))
+                && fs::metadata(p).is_ok_and(|m| m.len() > 0));
+        let segment = match finished {
+            Some(path) => path,
+            None => {
+                let video = part.join("video.mkv");
+                if !fs::metadata(&video).is_ok_and(|m| m.len() > 0) { continue; }
+                let audio: Vec<_> = ["system", "microphone"].iter()
+                    .map(|name| (*name, part.join(format!("{name}.pcm"))))
+                    .filter(|(_, path)| fs::metadata(path).is_ok_and(|m| m.len() > 0))
+                    .map(|(name, path)| { let (rate, channels) = crate::capture_finalize::track_format(&part, name); (path, rate, channels) })
+                    .collect();
+                let output = part.join("Whispera-recuperado.mp4");
+                let mut mux = mux_command(binary, &video, &audio, &output, &part.join("recover.log"))?;
+                let mut encoder = crate::encoder_job::Encoder::spawn(&mut mux)?;
+                wait_encoder(&mut encoder.child, 0.)?;
+                if !fs::metadata(&output).is_ok_and(|m| m.len() > 0) { return Err("El video recuperado quedo vacio".into()); }
+                output
+            }
+        };
+        if transcribe {
+            crate::video_timing::record_part_duration(&segment, &part);
+            let has_speech = fs::read_dir(&part).map_err(|e| e.to_string())?.filter_map(Result::ok)
+                .any(|e| e.file_name().to_string_lossy().starts_with("speech-") && e.path().extension().is_some_and(|x| x == "wav"));
+            let microphone = part.join("microphone.pcm");
+            if !has_speech && fs::metadata(&microphone).is_ok_and(|m| m.len() > 0) {
+                let (rate, channels) = crate::capture_finalize::track_format(&part, "microphone");
+                if let Err(error) = crate::video_transcript::prepare(binary, &microphone, rate, channels) {
+                    let _ = fs::write(part.join("speech-error.txt"), error);
+                }
+            }
+        }
+        segments.push(segment);
+    }
+    if segments.is_empty() { return Err("No quedo video para recuperar en los originales".into()); }
+    let output = dir.join(format!("Whispera-{}.mp4", chrono::Local::now().format("%Y-%m-%d_%H-%M-%S")));
+    let seconds = segments.iter().filter_map(|path| crate::video_timing::mp4_seconds(path)).sum();
+    join_segments(binary, dir, &segments, &output, seconds)?;
+    let _ = fs::remove_file(dir.join("recovery-error.txt"));
+    Ok(output)
+}
+
+#[tauri::command]
+pub async fn screen_pending_recover(app: tauri::AppHandle, id: String) -> Result<String, String> {
+    uuid::Uuid::parse_str(&id).map_err(|_| "Identificador invalido")?;
+    let root = app.path().app_local_data_dir().map_err(|e| e.to_string())?.join("screen-recordings");
+    if !crate::capture_finalize::pending(&root)?.iter().any(|p| p.id == id) { return Err("Recuperacion no disponible".into()); }
+    let dir = root.join(&id);
+    let binary = ffmpeg(&app)?;
+    let transcribe = crate::video_transcript::recording_enabled(&app.state::<Store>());
+    let work_dir = dir.clone();
+    let output = tauri::async_runtime::spawn_blocking(move || recover_session(&binary, &work_dir, transcribe))
+        .await.map_err(|e| e.to_string())??;
+    let store = app.state::<Store>();
+    // The failed card becomes the finished video; without one, the video is added like a new capture.
+    crate::library::finish_processing_video(&store, &dir, Some(&output), "")?;
+    crate::library::remember_file(&store, &output)?;
+    if transcribe {
+        if let Err(error) = crate::video_transcript::enqueue(&store, &output) {
+            let _ = store.event(&format!("Transcripcion de video: {error}"));
+        }
+    }
+    if let Err(error) = crate::capture_history::remember(&store, "video", &output) { let _ = store.event(&error); }
+    let _ = copy_file(&output);
+    let _ = app.emit("library-changed", ());
+    Ok(output.to_string_lossy().into_owned())
+}
+
 fn wait_encoder(child: &mut Child, seconds: f64) -> Result<(), String> {
     let deadline = Instant::now() + crate::capture_finalize::budget(seconds);
     loop {
@@ -1767,18 +1910,6 @@ fn record(
     elapsed: f64,
     transcribe_microphone: bool,
 ) -> Result<(Option<PathBuf>, CaptureControl, f64), String> {
-    let mut tracks = Vec::new();
-    if ["system", "both"].contains(&prefs.audio.as_str()) {
-        tracks.push(AudioTrack::new(true, &dir)?);
-    }
-    if ["microphone", "both"].contains(&prefs.audio.as_str()) {
-        tracks.push(AudioTrack::new(false, &dir)?);
-    }
-    for track in &tracks {
-        if track.path.file_name().is_some_and(|name| name == "microphone.pcm") {
-            crate::capture_finalize::remember_microphone(dir, track.rate, track.channels)?;
-        }
-    }
     let video = dir.join("video.mkv");
     let log = File::create(dir.join("capture.log")).map_err(|e| e.to_string())?;
     let mut capture_command = command(&binary);
@@ -1836,6 +1967,20 @@ fn record(
     capture_command.arg(&video)
         .stdin(Stdio::piped())
         .stderr(Stdio::from(log));
+    // Open the audio only once the capture command is ready: choosing the hardware
+    // encoder runs FFmpeg probes that take seconds on a cold start, and nothing drains
+    // the audio queue meanwhile.
+    let mut tracks = Vec::new();
+    if ["system", "both"].contains(&prefs.audio.as_str()) {
+        tracks.push(AudioTrack::new(true, &dir)?);
+    }
+    if ["microphone", "both"].contains(&prefs.audio.as_str()) {
+        tracks.push(AudioTrack::new(false, &dir)?);
+    }
+    for track in &tracks {
+        let name = track.path.file_stem().and_then(|name| name.to_str()).unwrap_or("audio");
+        crate::capture_finalize::remember_format(dir, name, track.rate, track.channels)?;
+    }
     let mut encoder = crate::encoder_job::Encoder::spawn(&mut capture_command)?;
     let child = &mut encoder.child;
     #[cfg(target_os = "macos")]
@@ -1958,47 +2103,8 @@ fn record(
         "Whispera-{}.mp4",
         chrono::Local::now().format("%Y-%m-%d_%H-%M-%S")
     ));
-    let mut mux = command(&binary);
-    mux.args(["-hide_banner", "-loglevel", "error", "-y", "-i"])
-        .arg(&video);
-    for track in &tracks {
-        mux.args([
-            "-f",
-            "s16le",
-            "-ar",
-            &track.rate.to_string(),
-            "-ac",
-            &track.channels.to_string(),
-            "-i",
-        ])
-        .arg(&track.path);
-    }
-    mux.args(["-map", "0:v:0", "-c:v", "copy"]);
-    if tracks.len() == 2 {
-        mux.args([
-            "-filter_complex",
-            "[1:a][2:a]amix=inputs=2:duration=longest:normalize=0,alimiter=limit=0.95[a]",
-            "-map",
-            "[a]",
-            "-c:a",
-            "aac",
-            "-b:a",
-            "192k",
-        ]);
-    } else if tracks.len() == 1 {
-        mux.args(["-map", "1:a:0", "-c:a", "aac", "-b:a", "192k"]);
-    }
-    // Resume can reopen a different Windows default device. Keep the encoded
-    // audio format stable so all segments concatenate without resampling video.
-    if !tracks.is_empty() {
-        mux.args(["-ar", "48000", "-ac", "2"]);
-    }
-    mux.args(["-movflags", "+faststart"])
-        .arg(&output)
-        .stdin(Stdio::null())
-        .stderr(Stdio::from(
-            File::create(dir.join("encode.log")).map_err(|e| e.to_string())?,
-        ));
+    let audio: Vec<_> = tracks.iter().map(|track| (track.path.clone(), track.rate, track.channels)).collect();
+    let mut mux = mux_command(&binary, &video, &audio, &output, &dir.join("encode.log"))?;
     let mut mux_encoder = crate::encoder_job::Encoder::spawn(&mut mux)?;
     let mux_child = &mut mux_encoder.child;
     wait_encoder(mux_child, seconds)?;
@@ -2081,6 +2187,56 @@ mod tests {
         assert!(!screen.busy());
     }
     use super::*;
+    #[test]
+    fn full_audio_queue_drops_one_buffer_without_failing_the_recording() {
+        let (tx, rx) = mpsc::sync_channel(1);
+        let dropped = AtomicU64::new(0);
+        let now = Instant::now();
+        samples(&[0.5f32, -0.5], |v| v, now, &tx, &dropped);
+        samples(&[0.25f32, -0.25], |v| v, now + Duration::from_millis(10), &tx, &dropped);
+        assert_eq!(dropped.load(Ordering::Relaxed), 1);
+        assert_eq!(rx.try_recv().unwrap().1, vec![16384, -16384]);
+    }
+    #[test]
+    fn failed_session_is_rebuilt_with_audio_and_speech_from_its_originals() {
+        let binary = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../node_modules/ffmpeg-static").join(if cfg!(target_os = "macos") { "ffmpeg" } else { "ffmpeg.exe" });
+        let session = std::env::temp_dir().join(format!("whispera-recover-{}", uuid::Uuid::new_v4()));
+        let run = |args: &[&str], output: &Path| {
+            assert!(command(&binary).args(["-hide_banner", "-loglevel", "error", "-y"]).args(args).arg(output).status().unwrap().success());
+        };
+        let tone: Vec<u8> = (0..48000 * 2).map(|i: i32| (((i / 2) as f64 * 440. * std::f64::consts::TAU / 48000.).sin() * 8000.) as i16).flat_map(i16::to_le_bytes).collect();
+        let source = ["-f", "lavfi", "-i", "testsrc=size=64x48:rate=30:duration=1", "-c:v", "libx264", "-pix_fmt", "yuv420p"];
+        // Part 0 finished normally; part 1 stopped before muxing (the failure being recovered).
+        for index in 0..2 {
+            let part = session.join(format!("part-{index:04}"));
+            fs::create_dir_all(&part).unwrap();
+            run(&source, &part.join("video.mkv"));
+            fs::write(part.join("microphone.pcm"), &tone).unwrap();
+            crate::capture_finalize::remember_microphone(&part, 48000, 2).unwrap();
+        }
+        let first = session.join("part-0000");
+        fs::write(first.join("system.pcm"), &tone).unwrap();
+        let audio = vec![(first.join("system.pcm"), 48000, 2), (first.join("microphone.pcm"), 48000, 2)];
+        let mut mux = mux_command(&binary, &first.join("video.mkv"), &audio, &first.join("Whispera-1.mp4"), &first.join("encode.log")).unwrap();
+        assert!(mux.status().unwrap().success());
+        fs::remove_file(first.join("video.mkv")).unwrap();
+        let second = session.join("part-0001");
+        fs::write(second.join("system.pcm"), &tone).unwrap();
+        fs::write(session.join("recovery-error.txt"), "El audio no pudo escribirse a tiempo").unwrap();
+
+        let output = recover_session(&binary, &session, true).unwrap();
+        let seconds = crate::video_timing::mp4_seconds(&output).unwrap();
+        assert!((seconds - 2.).abs() < 0.2, "joined duration {seconds}");
+        let probe = command(&binary).args(["-hide_banner", "-i"]).arg(&output).output().unwrap();
+        assert!(String::from_utf8_lossy(&probe.stderr).contains("Audio: aac"), "recovered video keeps its sound");
+        for part in [&first, &second] {
+            assert!(part.join("speech-0000.wav").is_file(), "every part has microphone speech for the transcript");
+            assert!(crate::video_timing::part_seconds(part).is_some());
+        }
+        assert!(second.join("video.mkv").is_file() && second.join("microphone.pcm").is_file(), "originals are kept");
+        assert!(!session.join("recovery-error.txt").exists(), "the session leaves the pending list");
+        fs::remove_dir_all(session).unwrap();
+    }
     #[test]
     fn pcm_scratch_reuses_allocation_without_changing_samples() {
         let mut bytes=Vec::with_capacity(8192);

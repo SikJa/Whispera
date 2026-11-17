@@ -286,7 +286,7 @@ fn external_dock(region: Region, monitor: Region, width: u32, height: u32, gap: 
 fn tool_bounds(region: Region, monitor: Region, scale: f64, compact: bool) -> Region {
     let gap = pixels(10., scale) as i32;
     let width = pixels(50., scale).min(monitor.width.saturating_sub(2 * gap as u32));
-    let full_height = pixels(450., scale).min(monitor.height.saturating_sub(2 * gap as u32));
+    let full_height = pixels(510., scale).min(monitor.height.saturating_sub(2 * gap as u32));
     let height = if compact { pixels(96., scale).min(full_height) } else { full_height };
     let mut dock = external_dock(region, monitor, width, height, gap, true, None);
     let hud_width = pixels(420., scale);

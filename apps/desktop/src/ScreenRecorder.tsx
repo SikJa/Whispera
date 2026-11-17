@@ -1,5 +1,5 @@
 import ReplaySettings from './ReplaySettings';
-import { FolderOpen } from 'lucide-react';
+import { FolderOpen, RotateCcw } from 'lucide-react';
 import {shallowEqual} from './shallow-equal';
 import { useEffect, useRef, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
@@ -80,7 +80,7 @@ export default function ScreenRecorder() {
 
     {status.path && !occupied && <div className="screen-result"><p>{status.copied ? `Video copiado. Pegalo con ${commandKey}+V.` : 'Video disponible. Podés volver a copiarlo.'}</p><button onClick={() => void run(() => invoke('screen_copy'), 'Video copiado para pegar.')}>Copiar video</button><button onClick={() => void run(() => invoke('screen_reveal'))}>Ver archivo temporal</button></div>}
     {(message || status.error) && <p role="status" className="notice">{message || status.error}</p>}
-    {pending.length>0&&<section aria-label="Videos pendientes de recuperación"><h3>Videos pendientes de recuperación</h3>{pending.map(item=><div className="form-row" key={item.id}><p>{item.error}</p><button disabled={busy} title="Ver originales conservados" onClick={()=>void run(()=>invoke('screen_pending_reveal',{id:item.id}))}><FolderOpen size={16}/>Ver originales</button></div>)}</section>}
+    {pending.length>0&&<section aria-label="Videos pendientes de recuperación"><h3>Videos pendientes de recuperación</h3>{pending.map(item=><div className="form-row" key={item.id}><p>{item.error}</p><button disabled={busy} title="Arma el video con los originales, lo copia y lo agrega a la biblioteca con su transcripción" onClick={()=>void run(async()=>{await invoke('screen_pending_recover',{id:item.id});setPending(list=>list.filter(entry=>entry.id!==item.id));},'Video recuperado y copiado. Ya está en la biblioteca.')}><RotateCcw size={16}/>Recuperar video</button><button disabled={busy} title="Ver originales conservados" onClick={()=>void run(()=>invoke('screen_pending_reveal',{id:item.id}))}><FolderOpen size={16}/>Ver originales</button></div>)}</section>}
     <ReplaySettings/>
     {!native && <p>La captura de pantalla requiere la aplicación de {systemName}.</p>}
   </section>;

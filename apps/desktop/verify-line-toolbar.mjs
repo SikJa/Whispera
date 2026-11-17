@@ -23,7 +23,7 @@ try {
     assert.ok(red>100,`shape ${i} appears in PNG (${red} pixels)`);
   }
   await page.keyboard.press('Control+z');await page.waitForFunction(()=>window.feedback.count===5);await page.keyboard.press('Control+y');await page.waitForFunction(()=>window.feedback.count===6);
-  await page.goto((process.env.WHISPERA_TEST_URL || 'http://127.0.0.1:5190') + '/overlay.html?view=screen-tools');await page.setViewportSize({width:350,height:442});
+  await page.goto((process.env.WHISPERA_TEST_URL || 'http://127.0.0.1:5190') + '/overlay.html?view=screen-tools');await page.setViewportSize({width:350,height:510});
   await page.getByRole('button',{name:'Formas',exact:true}).click();
   for(const name of ['Rectángulo','Círculo / elipse','Triángulo','Rombo','Hexágono','Estrella'])assert.equal(await page.getByRole('button',{name,exact:true}).count(),1);
   await page.screenshot({path:'../../.local/line-shapes.png'});
@@ -38,9 +38,9 @@ try {
   await page.getByRole('textbox',{name:'Código HEX'}).fill('#12ab34');await page.getByRole('textbox',{name:'Código HEX'}).press('Enter');
   await page.waitForFunction(()=>window.calls.some(c=>c.command==='screen_editor_action'&&c.args.action.action==='color'&&c.args.action.value==='#12AB34'));
   await page.screenshot({path:'../../.local/line-custom-color.png'});
-  const area=await page.getByRole('dialog').boundingBox();assert.ok(area.x>=0&&area.y>=0&&area.x+area.width<=350&&area.y+area.height<=442,'custom palette fits without scrolling');
+  const area=await page.getByRole('dialog').boundingBox();assert.ok(area.x>=0&&area.y>=0&&area.x+area.width<=350&&area.y+area.height<=510,'custom palette fits without scrolling');
   await page.getByRole('button',{name:'Cerrar paleta'}).click();await page.getByRole('dialog').waitFor({state:'detached'});
-  const rail=await page.getByLabel('Herramientas de captura').boundingBox();assert.equal(rail.width,42);assert.ok(rail.height<=438);
+  const rail=await page.getByLabel('Herramientas de captura').boundingBox();assert.equal(rail.width,42);assert.ok(rail.height<=506);
   assert.equal(await page.locator('.capture-toolbar').evaluate(e=>e.scrollHeight>e.clientHeight),false);
   await page.getByRole('button',{name:'Contraer herramientas'}).click();await page.getByRole('button',{name:'Expandir herramientas'}).click();
   await page.setViewportSize({width:350,height:380});assert.ok((await page.getByLabel('Herramientas de captura').boundingBox()).height<=372,'short screen toolbar has no internal scroll');

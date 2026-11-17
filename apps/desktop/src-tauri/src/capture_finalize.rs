@@ -32,8 +32,32 @@ pub fn pending(root: &Path) -> Result<Vec<PendingVideo>, String> {
 }
 
 pub fn remember_microphone(part: &Path, rate: u32, channels: u16) -> Result<(), String> {
+    remember_format(part, "microphone", rate, channels)
+}
+
+// Raw PCM has no header: each track records its format so a failed part can be muxed later.
+pub fn remember_format(part: &Path, track: &str, rate: u32, channels: u16) -> Result<(), String> {
     let bytes = serde_json::to_vec(&Microphone { rate, channels }).map_err(|e| e.to_string())?;
-    fs::write(part.join("microphone-format.json"), bytes).map_err(|e| e.to_string())
+    fs::write(part.join(format!("{track}-format.json")), bytes).map_err(|e| e.to_string())
+}
+
+// Sessions recorded before system formats were stored fall back to the microphone's, then 48 kHz stereo.
+pub fn track_format(part: &Path, track: &str) -> (u32, u16) {
+    [track, "microphone"].iter()
+        .filter_map(|name| fs::read(part.join(format!("{name}-format.json"))).ok())
+        .filter_map(|bytes| serde_json::from_slice::<Microphone>(&bytes).ok())
+        .find(|format| format.rate > 0 && format.channels > 0 && format.channels <= 32)
+        .map_or((48000, 2), |format| (format.rate, format.channels))
+}
+
+// Part directories in recording order.
+pub fn parts(session: &Path) -> Result<Vec<std::path::PathBuf>, String> {
+    let mut parts: Vec<_> = fs::read_dir(session).map_err(|e| e.to_string())?
+        .filter_map(Result::ok).map(|e| e.path())
+        .filter(|p| p.is_dir() && p.file_name().is_some_and(|n| n.to_string_lossy().starts_with("part-")))
+        .collect();
+    parts.sort();
+    Ok(parts)
 }
 
 // Preserve a voice-recovery session, independently of whether MP4 muxing works.
